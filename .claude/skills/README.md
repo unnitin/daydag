@@ -7,6 +7,7 @@ All planning work is now orchestrated from this repo. Three skills, copied **ver
 | `weekly-planning-and-progress` | orchestrator (order + cross-cutting guardrails only) | `~/Documents/Claude/Scheduled/weekly-planning-and-progress/` |
 | `weekly-planning` | forward-looking: week-ahead plan + per-meeting talking points + Workstreams write-back | Cowork skills-plugin (live) |
 | `weekly-progress-reporting` | backward-looking: Goals & Progress doc + highlights email | Cowork skills-plugin (live) |
+| `weekly-feedback-scan` | private weekly VP feedback log for VP-AI & VP-Data → Drive | Cowork skills-plugin (live) |
 
 ## Which copy is live — resolved 2026-09-05
 
@@ -27,6 +28,10 @@ The real weekly note (`0817-0821.md`) uses `# Priorities` with 🔴🟡🟢 and 
 ```
 
 The Downloads copies are stale and should not be re-imported.
+
+`weekly-feedback-scan` was imported later, on 2026-09-05: it was **not present** when that directory was first listed (13 skills, no feedback one) and appeared after a sync. If a routine seems missing from this mirror, re-list before concluding it doesn't exist.
+
+**It carries the strictest handling rule of anything here** — *"send nothing to anyone… VP-AI and VP-Data must never receive anything from this workflow"* — and its content is personnel data about named reports. See SPEC §10.1 before wiring it into any loop; in particular its carry-forward items must not be written into the vault's `CoS State.md`.
 
 ### Bug fixed on import
 

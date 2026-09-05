@@ -265,27 +265,32 @@ The spec above was drafted as if the field were empty. It isn't: five Cowork rou
 | `pod-update-finalize` (+ a `pod-update-draft` not present locally) | Fri 8am | live | The draft scans #data-ai, #team_data_engineering, #createos-pod-leads for shipped work, decisions and blockers — the same sweep as §3.7 and §3.3. The pulse should **feed** the pod update, not run a parallel scan |
 | `dt-leadership-prep` | Mon | disabled | superseded by the monitor |
 | `weekly-pod-update-draft` | Thu | disabled | superseded by `pod-update-draft` |
-| **feedback routine** | unknown | **not locatable from this machine** | see below |
+| `weekly-feedback-scan` | weekly | live · **imported** | Private VP feedback log for VP-AI and VP-Data. Reads the same 7-day Slack/Gmail window as §3.3 and §3.7, so the pulse should feed it evidence rather than run a parallel scan. Its carry-forward items are open loops — but sensitive ones (§10.1) |
 
 **Position:** CoS orchestrates around these; it does not absorb them yet. Consolidating three working routines into one agent matches the "zero new tools" mission better, but it is a migration and should wait until the CoS formats have stabilized (§7 gate). What CoS owns exclusively: open loops, chase, meeting-note ingestion, the daily briefs, and the engineering pulse.
 
-### 10.1 Feedback routine — pending its definition
+### 10.1 `weekly-feedback-scan` — imported, and the strictest guardrail in the system
 
-Requested for inclusion; **no definition exists on this machine.** Not in `~/Documents/Claude/Scheduled/`, `~/Downloads`, or `~/.claude` — so it runs server-side in Cowork only, and unlike the planning skills there is no local mirror to port.
+Found in the Cowork skills directory (it synced down after the first search came up empty) and imported to `.claude/skills/weekly-feedback-scan/`. It produces Nitin's private weekly feedback log for his two direct reports — **VP-AI VP-AI (VP of AI)** and **VP-Data (VP of Data)** — calibrated against a written expectations baseline, and writes one dated Google Doc into a private Drive folder.
 
-What its artifacts show: the vault has `Feedback/<Person>/MMDD.md` — five people (Former-Report, Enablement-Lead, VP-AI, Former-Sponsor, VP-Data), but only **three files total**, the newest `Former-Sponsor/0604.md`. Contents are single lines, e.g. `Enablement-Lead/0212.md`: *"feedback on written comms = be answer first"*. So the output shape is one short note per person per occasion, and the corpus is thin and three months cold.
+Its own rule, verbatim: *"read from Slack/Gmail/Drive, write one Google Doc, send nothing to anyone. No Slack messages, no emails, no sharing the doc. VP-AI and VP-Data must never receive anything from this workflow."*
 
-That much suggests two real hooks into the CoS loops, but both are inference from three files rather than from the routine, so this section stays a stub until the definition is pasted in:
+**Reference material it depends on** (all Drive, all read every run because they evolve): VP Expectations `${GDOC_VP_EXPECTATIONS}`, feedback methodology `${GDOC_FEEDBACK_METHODOLOGY}`, and the log folder `${GDRIVE_FEEDBACK_LOG_FOLDER}` whose most recent entry supplies carry-forward items.
 
-- **Feedback given to others** → the delivery is a commitment with an owner and a date, which is chase-list shaped (§3.4).
-- **Feedback received** → durable per-person context that belongs in prep (§3.2), so a 1:1 ping can carry "last time you told them X."
+**Where it touches the CoS loops — and where it must not.**
 
-### 10.2 Goal-progress document — brought in as a source
+1. **It is the sharpest test of guardrail 5.** Everything this routine handles is personnel content about named reports. It must never reach a brief, a channel draft, a shared artifact, or any surface with an audience of more than one.
 
-`Goals & Progress` (Drive doc `${GDOC_GOALS_PRIORITIES}`) is the goal record `weekly-progress-reporting` maintains: five SMART objectives, each with key results carrying an owner, a measurement, and a **hard due date**. Snapshot and full ledger in [reference/goals-and-progress.md](reference/goals-and-progress.md).
+2. **Its carry-forward items are open loops that cannot live in the chase list.** The methodology carries unresolved items across reviews and flags anything open past two reviews for re-scope — structurally identical to §3.4. But `Fact Base/CoS State.md` is plaintext in an iCloud-synced vault that reaches every device Nitin owns, and chase entries are written to be surfaced in a morning brief. **Personnel carry-forward needs a separate, private partition** — which is an argument for the local state database (outside the vault) holding the sensitive slice, rather than folding these into the markdown file.
 
-It is a source, not a new loop — but it changes the shape of two existing ones. A key result is an ask with a named owner and a fixed deadline, so the §3.4 clock for these is the due date rather than the 2-business-day default; and several KRs are machine-observable (a release reaching production, a DSP count, a pipeline cutover), so §3.7 can often answer them without asking anyone.
+3. **The evidence sweep is duplicated work.** It scans the same 7-day Slack/Gmail window over the same channels as §3.3 and §3.7 — releases, incidents, missed dates, stakeholder friction. The pulse should hand it evidence with permalinks already attached rather than repeat the search. Note it names `#ar-tooling-dev-team`, which CLAUDE.md records as renamed to `#pod-discovery`.
 
-The reason it earns a place: **the document was last updated Aug 14, and three key results have passed their due dates since** — R1.5 to production (Aug 11), the individual-goal cascade (Aug 31), and the estate-integration roadmap (Aug 31). Four more land Sep 30, one of them the artist/contributor model that both the doc and `Workstreams#Data platform` name as the standing gate. A commitment going quiet past its date, in the artifact the sponsor reads, is the exact failure this agent exists to catch.
+4. **It shares the house evidence rule** — *"No link, no claim — if you can't cite it, cut it"* — which is principle 3 stated in the same terms, and worth reusing verbatim where the CoS loops need the same discipline.
 
-Writes go through `weekly-progress-reporting`, never directly — the doc feeds Lattice and the sponsor.
+5. **It is goal-linked.** Objective 5's Dec 31 key result is *"quarterly feedback / career-growth cadence + personnel-upgrade KPI instituted,"* and the four dimensions it tags against — Domain Expertise, Practicality, Problem Solving, Communication — are the Engineering Career Progression Framework from the goals doc. So this routine is the operating instrument for a tracked KR, not an incidental habit.
+
+**Porting note:** unattended runs deliver their summary via `PushNotification` inside `<routine_summary>` tags. That is a Cowork mechanism; under §7 Phase 2 the equivalent is a Slack DM to Nitin — the one autonomous send the agent is allowed.
+
+**Position: do not absorb this one.** Unlike the planning routines, its blast radius on failure is a person's career record, and its "send nothing" rule is easier to keep intact in a separate routine than inside an agent whose whole job is pushing messages. CoS feeds it evidence and stays out of its output.
+
+**Superseded note:** the vault's `Feedback/<Person>/MMDD.md` files (Former-Report, Enablement-Lead, VP-AI, Former-Sponsor, VP-Data — three files, newest `Former-Sponsor/0604.md`) predate this routine and cover a wider set of people. They are hand-written notes, not its output; the routine writes to Drive, not the vault.
