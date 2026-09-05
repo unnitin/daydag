@@ -95,13 +95,13 @@ Detection sources: thread replies on the original message, mentions of the owner
 
 ### 3.5 EOD wrap — 4:30pm PT
 
-Three lines: what closed today (struck items ready to move to Done), what moved (Workstreams deltas logged), tomorrow's first meeting + any prep gap ("9am w/ Sponsor, no notes from last week's session found - want me to build prep from the steering doc instead?"). Friday's wrap adds: "ready to run weekly-planning for next week?" — and on go, invokes the existing `weekly-planning` and `weekly-progress-reporting` skills rather than duplicating them.
+Three lines: what closed today (struck items ready to move to Done), what moved (Workstreams deltas logged), tomorrow's first meeting + any prep gap ("9am w/ Sponsor, no notes from last week's session found - want me to build prep from the steering doc instead?"). Friday's wrap does **not** offer to run weekly-planning — that routine already ran at 1pm (§10), so asking at 4:30pm would be stale by three and a half hours. Instead it reports the outcome: the Workstreams changelog, which of the two planning files landed, and anything still waiting on a paste or a Gmail-draft approval.
 
 ### 3.6 Sunday week-ahead — Sundays 5:30pm PT, Slack DM to ${SLACK_USER_PRINCIPAL}
 
 The only weekend push; Saturday and the rest of Sunday stay silent. Two jobs: pre-run Monday so 6:45am Monday holds no surprises, and show the shape of the week while there's still time to move something before it starts.
 
-Assembled from: the next seven days of calendar (queried day-by-day, same as 3.1), the incoming weekly note's Priorities if `weekly-planning` ran Friday, carryover items still open in the closing week's note, chase-list loops whose clock expires Mon–Wed, live watch items, and OOO/travel detection for Nitin *and* the people he's waiting on — the "CTO flying Tue" class of problem is far cheaper to catch Sunday than Tuesday morning.
+Assembled from: the next seven days of calendar (queried day-by-day, same as 3.1), the plan `weekly-planning` produced on Friday — **read, not re-derived** (§10); the week-ahead's job is the delta since Friday, not a second synthesis of the same week — carryover items still open in the closing week's note, chase-list loops whose clock expires Mon–Wed, live watch items, and OOO/travel detection for Nitin *and* the people he's waiting on — the "CTO flying Tue" class of problem is far cheaper to catch Sunday than Tuesday morning.
 
 Format (one message, same register, wider than the morning brief since it spans five days):
 
@@ -250,3 +250,31 @@ Re-entry gate if that changes: two-way Slack becoming the blocking pain, or some
 3. ~~**Weekend behavior**~~ — **decided (Sep 4)**: Sunday 5:30pm PT week-ahead push (§3.6), silent otherwise. Open sub-question: whether 5:30pm is early enough to actually move a Tuesday meeting, or whether it wants to be Sunday morning.
 4. **Engineering-pulse scope** — watch only repos/Jira projects tied to a live workstream, or every repo and board his teams touch? Narrow keeps the `shipping` block honest; wide catches the "nobody told me that shipped" case. Related: does the pulse cover team-wide activity or only work he's tracking, given rule 1 above.
 5. **Two-way Slack without a platform** — with CreateOS hosting out of scope there is no Slack app, so the connector can only send and every approval means leaving Slack for the Claude chat. Options if that grates: a minimal standalone Slack app on the home-lab box (Slack's side is not the hard part; hosting an always-on listener is), tolerate it, or reopen the platform question. Worth deciding only after ~2 weeks of Phase 2 shows how often he actually wants to reply in place.
+
+---
+
+## 10. Existing automation — what this agent must not duplicate
+
+The spec above was drafted as if the field were empty. It isn't: five Cowork routines predate this agent, three of them live. Planning is now orchestrated from this repo (`.claude/skills/`), and the CoS agent **reads their outputs rather than re-deriving them**.
+
+| Routine | Schedule | Status | Relationship to the CoS loops |
+|---|---|---|---|
+| `weekly-planning-and-progress` (orchestrates `weekly-planning` + `weekly-progress-reporting`) | Fri 1pm PT | live · **moved here** | Owns the week-ahead plan, per-meeting talking points, and the `Workstreams.md` write-back with a `base_version` conflict-safe upsert. §3.6 reads its output; §3.5 reports its outcome; §3.3's write-back reuses its conflict mechanism rather than inventing one |
+| `dt-leadership-monitor` | weekdays 7am | live | Fires 15 min after the morning brief — two competing morning pushes. Its always-required weekly update with a shifting deadline is an open loop with a clock, i.e. chase-list work (§3.4). Candidate for absorption. ⚠ built around Former-Sponsor as organizer; he has departed |
+| `pod-update-finalize` (+ a `pod-update-draft` not present locally) | Fri 8am | live | The draft scans #data-ai, #team_data_engineering, #createos-pod-leads for shipped work, decisions and blockers — the same sweep as §3.7 and §3.3. The pulse should **feed** the pod update, not run a parallel scan |
+| `dt-leadership-prep` | Mon | disabled | superseded by the monitor |
+| `weekly-pod-update-draft` | Thu | disabled | superseded by `pod-update-draft` |
+| **feedback routine** | unknown | **not locatable from this machine** | see below |
+
+**Position:** CoS orchestrates around these; it does not absorb them yet. Consolidating three working routines into one agent matches the "zero new tools" mission better, but it is a migration and should wait until the CoS formats have stabilized (§7 gate). What CoS owns exclusively: open loops, chase, meeting-note ingestion, the daily briefs, and the engineering pulse.
+
+### 10.1 Feedback routine — pending its definition
+
+Requested for inclusion; **no definition exists on this machine.** Not in `~/Documents/Claude/Scheduled/`, `~/Downloads`, or `~/.claude` — so it runs server-side in Cowork only, and unlike the planning skills there is no local mirror to port.
+
+What its artifacts show: the vault has `Feedback/<Person>/MMDD.md` — five people (Former-Report, Enablement-Lead, VP-AI, Former-Sponsor, VP-Data), but only **three files total**, the newest `Former-Sponsor/0604.md`. Contents are single lines, e.g. `Enablement-Lead/0212.md`: *"feedback on written comms = be answer first"*. So the output shape is one short note per person per occasion, and the corpus is thin and three months cold.
+
+That much suggests two real hooks into the CoS loops, but both are inference from three files rather than from the routine, so this section stays a stub until the definition is pasted in:
+
+- **Feedback given to others** → the delivery is a commitment with an owner and a date, which is chase-list shaped (§3.4).
+- **Feedback received** → durable per-person context that belongs in prep (§3.2), so a 1:1 ping can carry "last time you told them X."
