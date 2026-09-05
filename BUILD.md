@@ -1,4 +1,4 @@
-# Chief of Staff Agent — Build Plan
+# DayDAG — Build Plan
 
 > Companion to [SPEC.md](SPEC.md). Scope: Phase 1 (skill) → Phase 2 (scheduled). CreateOS hosting is out of scope per §7.
 
@@ -27,8 +27,8 @@ Everything else is assembly.
 
 | # | Ticket | Depends |
 |---|---|---|
-| M1-1 | Repo skeleton; commit SPEC.md; skill layout at `.claude/skills/chief-of-staff/` | — |
-| M1-2 | `Fact Base/CoS State.md` — schema + hand-seeded with today's real open loops | — |
+| M1-1 | Repo skeleton; commit SPEC.md; skill layout at `.claude/skills/daydag/` | — |
+| M1-2 | `DayDAG/` vault folder — `README.md`, `State.md` schema hand-seeded w/ today's real open loops, `Decisions.md`, `Watchlist.md`, empty `Proposals/` | — |
 | M1-3 | **Spike: vault write-back — local vs connector** | See above. Gates M3-3. Real risk is iCloud sync conflicts, not permissions |
 | M1-4 | Source recipes reference — exact query per source | M0-2 |
 | M1-5 | Voice + format fixtures: brief templates, 3 golden examples reviewed by Nitin | — |
@@ -74,7 +74,7 @@ Everything else is assembly.
 | # | Ticket | Depends |
 |---|---|---|
 | M5-2 | Schedule the five timed loops; pulse rides as a pre-step of three | M1-6, M4-5 |
-| M5-3 | Run log to `CoS State.md` + failure-honesty path | M0-3 |
+| M5-3 | Run log to `DayDAG/State.md` + failure-honesty path | M0-3 |
 | M5-4 | §8 measurement instrumentation + 4-week review | M5-2 |
 
 ### Open decisions — carried as tickets, not resolved up front

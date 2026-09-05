@@ -1,4 +1,4 @@
-# Chief of Staff Agent — Spec v0.1
+# DayDAG — Spec v0.1
 
 > Owner: Nitin Srivastava · Drafted: Sep 4, 2026
 > Purpose: a persistent agent that plans Nitin's day, keeps itself current from meeting notes, tracks tasks and open loops, and pushes proactive updates through Slack — built on the sources and conventions he already uses (Obsidian weekly notes + Workstreams, Slack, Google Calendar, Gmail/Gemini notes, Notion, GitHub, Jira).
@@ -143,7 +143,7 @@ Rules specific to this loop:
 
 Not a separate push. Three of Nitin's five observed Slack patterns are status-verification against engineering state ("did we merge all PRs and are ready to run e2e", "did that not get done?", "is that on the board"). This loop's job is to have the answer *before* he asks, and to fold it into pushes that already exist.
 
-**Watch list.** `Fact Base/CoS State.md` gains a `repos` block (repo · why watched · owner · linked workstream) and a `jira` block (project key · board/sprint · saved JQL · linked workstream). Editable by hand like the rest of the file; the agent proposes additions when a meeting note or Slack thread names a repo or ticket not on the list.
+**Watch list.** `DayDAG/State.md` gains a `repos` block (repo · why watched · owner · linked workstream) and a `jira` block (project key · board/sprint · saved JQL · linked workstream). Editable by hand like the rest of the file; the agent proposes additions when a meeting note or Slack thread names a repo or ticket not on the list.
 
 **Ticket keys are the spine.** A Jira key (`ABC-123`) appears in Slack messages, PR titles/branches, and meeting-note next-steps. The pulse extracts keys from all three and joins on them, which is what lets "jasmeet said he'd do the compute-engine consolidation" resolve to a ticket, a PR, and a status without Nitin holding the mapping in his head. Where the data team's Jira ticket is the unit of work, it — not the PR — is what the `shipping` block reports.
 
@@ -189,13 +189,13 @@ Substrate note: the existing `morning-sync` skill already does the open-PR/CI ha
 | Obsidian vault | read; create/append; block edits as proposed diffs | weekly note, Workstreams, Meeting Prep, Internal Links | vault-relative paths must include `Create Music Group/` prefix; connector has no delete/modify |
 | Notion | read | meeting-notes DB (reliable for notes >~1 wk old; recent ones land in Gmail first), AI tool inventory, steering docs | |
 | Granola | read | meeting transcripts/notes where Gemini notes absent | |
-| GitHub | read | engineering pulse (§3.7), code side: merges, stuck PRs, CI health; evidence for loops that name a PR | watched repos listed in `CoS State.md`; private wiki access needs browser session |
-| Atlassian / Jira | read; comments + transitions as proposals only | **plan of record for the data team** — sprint/board state, ticket status, assignee, epic rollup; the "is that on the board?" answer; evidence for chase-list loops that name a ticket | projects + JQL saved in `CoS State.md`; ticket key (`ABC-123`) is the join key to Slack/PR/meeting-note mentions; connector needs OAuth before first run |
+| GitHub | read | engineering pulse (§3.7), code side: merges, stuck PRs, CI health; evidence for loops that name a PR | watched repos listed in `DayDAG/State.md`; private wiki access needs browser session |
+| Atlassian / Jira | read; comments + transitions as proposals only | **plan of record for the data team** — sprint/board state, ticket status, assignee, epic rollup; the "is that on the board?" answer; evidence for chase-list loops that name a ticket | projects + JQL saved in `DayDAG/State.md`; ticket key (`ABC-123`) is the join key to Slack/PR/meeting-note mentions; connector needs OAuth before first run |
 | Goals & Progress doc (Drive) | read; drafts via `weekly-progress-reporting` only | the five SMART objectives and their dated key results — the sponsor-facing, Lattice-mapped record of what was committed | doc `${GDOC_GOALS_PRIORITIES}`; snapshot + KR ledger in [reference/goals-and-progress.md](reference/goals-and-progress.md). **Never written directly** |
 | Databricks | read, on-demand only | job/pipeline run status for watch items (§3.7 item 5) and status answers that need a data check | auth flakiness is known; degrade gracefully, never block a brief on it |
 | CreateOS platform | **out of scope** | — | the agent is not wired into any CreateOS service, as a source or as a host (§7). `createos-*` repos are still watched read-only via GitHub like any other repo |
 
-**Agent state file:** `Fact Base/CoS State.md` — chase list (owner · ask · quote · permalink · asked-on · last-activity · status), watch items, snoozes, watched repos (repo · why · owner · workstream), watched Jira projects, and a run log (timestamp · loop · sources reached · sources skipped). Human-readable so Nitin can edit it directly; agent re-reads before every loop.
+**Agent state file:** `DayDAG/State.md` — chase list (owner · ask · quote · permalink · asked-on · last-activity · status), watch items, snoozes, watched repos (repo · why · owner · workstream), watched Jira projects, and a run log (timestamp · loop · sources reached · sources skipped). Human-readable so Nitin can edit it directly; agent re-reads before every loop.
 
 ---
 
@@ -218,16 +218,16 @@ All output in Nitin's stored voice profile: lowercase openers, short direct sent
 
 ## 7. Implementation phases
 
-**Phase 1 — skill, manually triggered (1–2 days).** Package loops 3.1–3.8 as a `chief-of-staff` skill alongside `weekly-planning` / `weekly-progress-reporting`. Nitin triggers "run my morning" / "run ingest" / "sweep" from Claude; the skill encodes the source recipes, formats, chase-list schema, and write-back rules. Proves the formats and the ingestion classifier with zero infrastructure. Prereq: the Atlassian connector needs an OAuth pass before the pulse can read Jira; until then §3.7 runs code-side only and says so per guardrail 6.
+**Phase 1 — skill, manually triggered (1–2 days).** Package loops 3.1–3.8 as a `DayDAG` skill alongside `weekly-planning` / `weekly-progress-reporting`. Nitin triggers "run my morning" / "run ingest" / "sweep" from Claude; the skill encodes the source recipes, formats, chase-list schema, and write-back rules. Proves the formats and the ingestion classifier with zero infrastructure. Prereq: the Atlassian connector needs an OAuth pass before the pulse can read Jira; until then §3.7 runs code-side only and says so per guardrail 6.
 
-**Phase 2 — scheduled (week 1–2).** Move the five timed loops (morning brief, noon chaser, ingest sweeps, EOD wrap, Sunday week-ahead) onto scheduled runs — the engineering pulse (§3.7) rides along as a pre-step of three of them rather than a sixth schedule — Claude scheduled tasks/Cowork if available on the plan, else a cron on the home-lab box calling the API with the same MCP connectors. Slack DM becomes the primary surface; the Claude chat becomes the escalation/refinement surface. Since there is no platform observability behind this (see below), each run appends a one-line log to `Fact Base/CoS State.md`.
+**Phase 2 — scheduled (week 1–2).** Move the five timed loops (morning brief, noon chaser, ingest sweeps, EOD wrap, Sunday week-ahead) onto scheduled runs — the engineering pulse (§3.7) rides along as a pre-step of three of them rather than a sixth schedule — Claude scheduled tasks/Cowork if available on the plan, else a cron on the home-lab box calling the API with the same MCP connectors. Slack DM becomes the primary surface; the Claude chat becomes the escalation/refinement surface. Since there is no platform observability behind this (see below), each run appends a one-line log to `DayDAG/State.md`.
 
 **Phase 2 is the end state for now.** The agent runs on Nitin's own account and connectors and is not wired into any CreateOS system.
 
-**Out of scope — headless agent on the CreateOS AI platform.** Previously drafted as Phase 3 (register "CoS" as a fourth agent after Chatbot / Digest Scan / Artist Evaluation, headless execution on the existing Redis consumer-group workers, Langfuse observability, a Slack app for two-way commands). Parked deliberately: this is a personal tool, and putting it on the company platform turns it into a product with users, an on-call surface, and a data-access review — none of which the value here justifies yet. Consequences accepted while it stays out of scope:
+**Out of scope — headless agent on the CreateOS AI platform.** Previously drafted as Phase 3 (register "DayDAG" as a fourth agent after Chatbot / Digest Scan / Artist Evaluation, headless execution on the existing Redis consumer-group workers, Langfuse observability, a Slack app for two-way commands). Parked deliberately: this is a personal tool, and putting it on the company platform turns it into a product with users, an on-call surface, and a data-access review — none of which the value here justifies yet. Consequences accepted while it stays out of scope:
 
 - **No two-way Slack.** The MCP connector can only send. "done" / "snooze" / "send it" stay Claude-chat commands, not replies to the brief (§3.8). This is the biggest ergonomic cost and it is a real one — every approval means leaving Slack.
-- **No platform observability or evals.** Failure mode is Nitin noticing a brief didn't arrive. Phase 2 should therefore write a one-line run log (timestamp · loop · sources reached · sources skipped) to `Fact Base/CoS State.md` so a silent failure is at least diagnosable after the fact.
+- **No platform observability or evals.** Failure mode is Nitin noticing a brief didn't arrive. Phase 2 should therefore write a one-line run log (timestamp · loop · sources reached · sources skipped) to `DayDAG/State.md` so a silent failure is at least diagnosable after the fact.
 - **No shared state or multi-user story.** Nothing here generalizes to anyone else on the team without a rebuild.
 
 Re-entry gate if that changes: two-way Slack becoming the blocking pain, or someone else wanting the same agent.
@@ -256,18 +256,18 @@ Re-entry gate if that changes: two-way Slack becoming the blocking pain, or some
 
 ## 10. Existing automation — what this agent must not duplicate
 
-The spec above was drafted as if the field were empty. It isn't: five Cowork routines predate this agent, three of them live. Planning is now orchestrated from this repo (`.claude/skills/`), and the CoS agent **reads their outputs rather than re-deriving them**.
+The spec above was drafted as if the field were empty. It isn't: five Cowork routines predate this agent, three of them live. Planning is now orchestrated from this repo (`.claude/skills/`), and the DayDAG **reads their outputs rather than re-deriving them**.
 
-| Routine | Schedule | Status | Relationship to the CoS loops |
+| Routine | Schedule | Status | Relationship to the DayDAG loops |
 |---|---|---|---|
 | `weekly-planning-and-progress` (orchestrates `weekly-planning` + `weekly-progress-reporting`) | Fri 1pm PT | live · **moved here** | Owns the week-ahead plan, per-meeting talking points, and the `Workstreams.md` write-back with a `base_version` conflict-safe upsert. §3.6 reads its output; §3.5 reports its outcome; §3.3's write-back reuses its conflict mechanism rather than inventing one |
-| `dt-leadership-monitor` | weekdays 7am | live | Fires 15 min after the morning brief — two competing morning pushes. Its always-required weekly update with a shifting deadline is an open loop with a clock, i.e. chase-list work (§3.4). Candidate for absorption. ⚠ built around Former-Sponsor as organizer; he has departed |
+| `dt-leadership-monitor` | weekdays 7am | **to retire** | The D&T leadership call is cancelled — it was Former-Sponsor's meeting and it left with him. The routine chases a weekly update for a forum that no longer meets, so there is nothing to absorb into §3.4; disable it rather than porting it. Retiring it also removes the 6:45/7:00 competing-morning-push problem. `#dt-leadership` (`${SLACK_CH_DT_LEADERSHIP}`) stays a read-only source until it goes quiet |
 | `pod-update-finalize` (+ a `pod-update-draft` not present locally) | Fri 8am | live | The draft scans #data-ai, #team_data_engineering, #createos-pod-leads for shipped work, decisions and blockers — the same sweep as §3.7 and §3.3. The pulse should **feed** the pod update, not run a parallel scan |
 | `dt-leadership-prep` | Mon | disabled | superseded by the monitor |
 | `weekly-pod-update-draft` | Thu | disabled | superseded by `pod-update-draft` |
 | `weekly-feedback-scan` | weekly | live · **imported** | Private VP feedback log for VP-AI and VP-Data. Reads the same 7-day Slack/Gmail window as §3.3 and §3.7, so the pulse should feed it evidence rather than run a parallel scan. Its carry-forward items are open loops — but sensitive ones (§10.1) |
 
-**Position:** CoS orchestrates around these; it does not absorb them yet. Consolidating three working routines into one agent matches the "zero new tools" mission better, but it is a migration and should wait until the CoS formats have stabilized (§7 gate). What CoS owns exclusively: open loops, chase, meeting-note ingestion, the daily briefs, and the engineering pulse.
+**Position:** DayDAG orchestrates around these; it does not absorb them yet. Consolidating three working routines into one agent matches the "zero new tools" mission better, but it is a migration and should wait until the DayDAG formats have stabilized (§7 gate). What DayDAG owns exclusively: open loops, chase, meeting-note ingestion, the daily briefs, and the engineering pulse.
 
 ### 10.1 `weekly-feedback-scan` — imported, and the strictest guardrail in the system
 
@@ -277,20 +277,20 @@ Its own rule, verbatim: *"read from Slack/Gmail/Drive, write one Google Doc, sen
 
 **Reference material it depends on** (all Drive, all read every run because they evolve): VP Expectations `${GDOC_VP_EXPECTATIONS}`, feedback methodology `${GDOC_FEEDBACK_METHODOLOGY}`, and the log folder `${GDRIVE_FEEDBACK_LOG_FOLDER}` whose most recent entry supplies carry-forward items.
 
-**Where it touches the CoS loops — and where it must not.**
+**Where it touches the DayDAG loops — and where it must not.**
 
 1. **It is the sharpest test of guardrail 5.** Everything this routine handles is personnel content about named reports. It must never reach a brief, a channel draft, a shared artifact, or any surface with an audience of more than one.
 
-2. **Its carry-forward items are open loops that cannot live in the chase list.** The methodology carries unresolved items across reviews and flags anything open past two reviews for re-scope — structurally identical to §3.4. But `Fact Base/CoS State.md` is plaintext in an iCloud-synced vault that reaches every device Nitin owns, and chase entries are written to be surfaced in a morning brief. **Personnel carry-forward needs a separate, private partition** — which is an argument for the local state database (outside the vault) holding the sensitive slice, rather than folding these into the markdown file.
+2. **Its carry-forward items are open loops that cannot live in the chase list.** The methodology carries unresolved items across reviews and flags anything open past two reviews for re-scope — structurally identical to §3.4. But `DayDAG/State.md` is plaintext in an iCloud-synced vault that reaches every device Nitin owns, and chase entries are written to be surfaced in a morning brief. **Personnel carry-forward needs a separate, private partition** — which is an argument for the local state database (outside the vault) holding the sensitive slice, rather than folding these into the markdown file.
 
 3. **The evidence sweep is duplicated work.** It scans the same 7-day Slack/Gmail window over the same channels as §3.3 and §3.7 — releases, incidents, missed dates, stakeholder friction. The pulse should hand it evidence with permalinks already attached rather than repeat the search. Note it names `#ar-tooling-dev-team`, which CLAUDE.md records as renamed to `#pod-discovery`.
 
-4. **It shares the house evidence rule** — *"No link, no claim — if you can't cite it, cut it"* — which is principle 3 stated in the same terms, and worth reusing verbatim where the CoS loops need the same discipline.
+4. **It shares the house evidence rule** — *"No link, no claim — if you can't cite it, cut it"* — which is principle 3 stated in the same terms, and worth reusing verbatim where the DayDAG loops need the same discipline.
 
 5. **It is goal-linked.** Objective 5's Dec 31 key result is *"quarterly feedback / career-growth cadence + personnel-upgrade KPI instituted,"* and the four dimensions it tags against — Domain Expertise, Practicality, Problem Solving, Communication — are the Engineering Career Progression Framework from the goals doc. So this routine is the operating instrument for a tracked KR, not an incidental habit.
 
 **Porting note:** unattended runs deliver their summary via `PushNotification` inside `<routine_summary>` tags. That is a Cowork mechanism; under §7 Phase 2 the equivalent is a Slack DM to Nitin — the one autonomous send the agent is allowed.
 
-**Position: do not absorb this one.** Unlike the planning routines, its blast radius on failure is a person's career record, and its "send nothing" rule is easier to keep intact in a separate routine than inside an agent whose whole job is pushing messages. CoS feeds it evidence and stays out of its output.
+**Position: do not absorb this one.** Unlike the planning routines, its blast radius on failure is a person's career record, and its "send nothing" rule is easier to keep intact in a separate routine than inside an agent whose whole job is pushing messages. DayDAG feeds it evidence and stays out of its output.
 
 **Superseded note:** the vault's `Feedback/<Person>/MMDD.md` files (Former-Report, Enablement-Lead, VP-AI, Former-Sponsor, VP-Data — three files, newest `Former-Sponsor/0604.md`) predate this routine and cover a wider set of people. They are hand-written notes, not its output; the routine writes to Drive, not the vault.

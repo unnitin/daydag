@@ -31,7 +31,7 @@ The Downloads copies are stale and should not be re-imported.
 
 `weekly-feedback-scan` was imported later, on 2026-09-05: it was **not present** when that directory was first listed (13 skills, no feedback one) and appeared after a sync. If a routine seems missing from this mirror, re-list before concluding it doesn't exist.
 
-**It carries the strictest handling rule of anything here** — *"send nothing to anyone… VP-AI and VP-Data must never receive anything from this workflow"* — and its content is personnel data about named reports. See SPEC §10.1 before wiring it into any loop; in particular its carry-forward items must not be written into the vault's `CoS State.md`.
+**It carries the strictest handling rule of anything here** — *"send nothing to anyone… VP-AI and VP-Data must never receive anything from this workflow"* — and its content is personnel data about named reports. See SPEC §10.1 before wiring it into any loop; in particular its carry-forward items must not be written into the vault's `DayDAG/State.md`.
 
 ### Bug fixed on import
 
@@ -64,4 +64,4 @@ What remains:
 
 1. **`(x-team)` doesn't exist in the vault.** Both live skills describe tags as `(mine)/(tracking)/(x-team)`, but no note uses `(x-team)` — cross-team work is a `**Cross-teaming (…)**` sub-header under 🟢. Minor, but it is the one place the live skill still describes something the vault doesn't do. See `reference/vault-recipes.md`.
 2. **The orchestrator was not refreshed** — it still comes from `~/Documents/Claude/Scheduled/` (Jun 28) and may itself have a newer Cowork version that isn't mirrored locally.
-3. `dt-leadership-monitor` (not moved) is built around Former-Sponsor as organizer. Same departure, not yet fixed.
+3. `dt-leadership-monitor` (not moved) should be **disabled**, not fixed — the D&T leadership call is cancelled, it left with Former-Sponsor. Nothing to port.
