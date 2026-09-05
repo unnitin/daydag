@@ -191,6 +191,7 @@ Substrate note: the existing `morning-sync` skill already does the open-PR/CI ha
 | Granola | read | meeting transcripts/notes where Gemini notes absent | |
 | GitHub | read | engineering pulse (§3.7), code side: merges, stuck PRs, CI health; evidence for loops that name a PR | watched repos listed in `CoS State.md`; private wiki access needs browser session |
 | Atlassian / Jira | read; comments + transitions as proposals only | **plan of record for the data team** — sprint/board state, ticket status, assignee, epic rollup; the "is that on the board?" answer; evidence for chase-list loops that name a ticket | projects + JQL saved in `CoS State.md`; ticket key (`ABC-123`) is the join key to Slack/PR/meeting-note mentions; connector needs OAuth before first run |
+| Goals & Progress doc (Drive) | read; drafts via `weekly-progress-reporting` only | the five SMART objectives and their dated key results — the sponsor-facing, Lattice-mapped record of what was committed | doc `${GDOC_GOALS_PRIORITIES}`; snapshot + KR ledger in [reference/goals-and-progress.md](reference/goals-and-progress.md). **Never written directly** |
 | Databricks | read, on-demand only | job/pipeline run status for watch items (§3.7 item 5) and status answers that need a data check | auth flakiness is known; degrade gracefully, never block a brief on it |
 | CreateOS platform | **out of scope** | — | the agent is not wired into any CreateOS service, as a source or as a host (§7). `createos-*` repos are still watched read-only via GitHub like any other repo |
 
@@ -278,3 +279,13 @@ That much suggests two real hooks into the CoS loops, but both are inference fro
 
 - **Feedback given to others** → the delivery is a commitment with an owner and a date, which is chase-list shaped (§3.4).
 - **Feedback received** → durable per-person context that belongs in prep (§3.2), so a 1:1 ping can carry "last time you told them X."
+
+### 10.2 Goal-progress document — brought in as a source
+
+`Goals & Progress` (Drive doc `${GDOC_GOALS_PRIORITIES}`) is the goal record `weekly-progress-reporting` maintains: five SMART objectives, each with key results carrying an owner, a measurement, and a **hard due date**. Snapshot and full ledger in [reference/goals-and-progress.md](reference/goals-and-progress.md).
+
+It is a source, not a new loop — but it changes the shape of two existing ones. A key result is an ask with a named owner and a fixed deadline, so the §3.4 clock for these is the due date rather than the 2-business-day default; and several KRs are machine-observable (a release reaching production, a DSP count, a pipeline cutover), so §3.7 can often answer them without asking anyone.
+
+The reason it earns a place: **the document was last updated Aug 14, and three key results have passed their due dates since** — R1.5 to production (Aug 11), the individual-goal cascade (Aug 31), and the estate-integration roadmap (Aug 31). Four more land Sep 30, one of them the artist/contributor model that both the doc and `Workstreams#Data platform` name as the standing gate. A commitment going quiet past its date, in the artifact the sponsor reads, is the exact failure this agent exists to catch.
+
+Writes go through `weekly-progress-reporting`, never directly — the doc feeds Lattice and the sponsor.
