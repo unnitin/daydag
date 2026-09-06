@@ -17,6 +17,9 @@ packages = ["src/daydag"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# `scripts` lives at the repo root and is not part of the installed package;
+# CI has no implicit rootdir on sys.path, so make it explicit.
+pythonpath = ["."]
 addopts = "-q --strict-markers"
 markers = [
   "guardrail: safety property from SPEC.md section 6 - never skip or xfail",

@@ -13,6 +13,11 @@ on:
 permissions:
   contents: read
   pull-requests: write
+  issues: write
+  # claude-code-action authenticates over OIDC; without id-token the run fails
+  # with "Could not fetch an OIDC token" before it reads a single line of diff.
+  id-token: write
+  actions: read
 
 concurrency:
   group: ai-review-${{ github.event.pull_request.number }}
