@@ -6,7 +6,10 @@ requires-python = ">=3.11"
 dependencies = ["python-dotenv>=1.0", "pyyaml>=6.0"]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "pytest-cov>=5.0", "ruff>=0.6", "pre-commit>=3.8"]
+# ruff is pinned EXACTLY, and .pre-commit-config.yaml pins the same version.
+# A range would let CI re-resolve to a newer formatter than the hook runs -
+# `uv pip install -e .[dev]` ignores uv.lock, so the lock is not the guard here.
+dev = ["pytest>=8.0", "pytest-cov>=5.0", "ruff==0.16.6", "pre-commit>=3.8"]
 
 [build-system]
 requires = ["hatchling"]

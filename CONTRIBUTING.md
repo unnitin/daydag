@@ -17,7 +17,7 @@ weaken the scanner.
 ```sh
 uv venv --python 3.12
 uv pip install -e ".[dev]"
-uv run pre-commit install
+uv run pre-commit install   # installs BOTH the pre-commit and pre-push hooks
 cp .env.example .env    # then fill in real values
 ```
 
@@ -103,6 +103,6 @@ should never be able to block a merge.
 
 `main` takes no direct pushes except from repo admins. Everything else goes through a PR
 that must have: CI green (secret scan, lint, tests on 3.11 and 3.12, guardrails), an
-approval, and **every review thread resolved** - including the AI panel's. The panel is
-four narrow reviewers (architecture, guardrails, security, tests); each comments only
-within its remit.
+approval, and **every review thread resolved** - including the AI reviewer's, when it is
+enabled. It makes one pass over the diff and judges all four criteria - security,
+guardrails, architecture, tests - in a single verdict.
