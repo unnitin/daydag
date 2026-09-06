@@ -16,7 +16,7 @@ PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("slack channel id", re.compile(r"\bC0[0-9A-Z]{8,}\b")),
     ("slack dm id", re.compile(r"\bD0[0-9A-Z]{8,}\b")),
     ("google file id", re.compile(r"\b1[A-Za-z0-9_-]{24,}\b")),
-    # A truncated id still leaks a prefix, e.g. `${GDOC_VP_EXPECTATIONS}\u2026`.
+    # A truncated id still leaks a prefix, e.g. `1zzQQ4xKmT7pLdW2…`.
     ("truncated google file id", re.compile(r"\b1[A-Za-z0-9_-]{9,}\u2026")),
     ("uuid (notion/atlassian)", re.compile(r"\b[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}\b")),
     ("databricks workspace id", re.compile(r"\b\d{16}\b")),
