@@ -19,7 +19,10 @@ ok()   { printf '   \033[32mpass\033[0m  %s\n' "$1"; }
 bad()  { printf '   \033[31mFAIL\033[0m  %s\n' "$1"; fail=1; }
 
 step "secret scan (every tracked file, as CI does)"
-if git ls-files -z | xargs -0 python3 scripts/scan_secrets.py; then
+# Tracked files PLUS untracked, non-ignored ones. Scanning only `ls-files` meant
+# a brand-new file was invisible until staged - it passed preflight locally and
+# failed in CI, which is the exact gap this script exists to close (#53).
+if git ls-files --cached --others --exclude-standard -z | xargs -0 python3 scripts/scan_secrets.py; then
   ok "no real identifiers"
 else
   bad "real identifiers found - move them to .env, do not weaken the scanner"

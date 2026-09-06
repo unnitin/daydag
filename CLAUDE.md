@@ -67,6 +67,8 @@ Other frequent names: ML-Lead (lead ML, first-party models), Stakeholder-1, Eng-
 
 **GitHub:** org `CreateMusicGroup`. Active repos for the progress loop: `createos-discovery-services` (prod Deal Modeler), `createos-lead-generation` (first-party ML, ML-Lead), `createos-analytics` (Luminate exploration, locked), `createos-ai-platform` (agent platform; has a wiki). Pods use GitHub issue boards with wave parent issues. Use `gh` CLI (assume authenticated on Nitin's machine). Private wiki pages don't fetch anonymously.
 
+**Atlassian/Jira:** authorized Sep 6, 2026, `createmusic.atlassian.net`, cloud id in `${ATLASSIAN_CLOUD_ID}`. **Read-only token** (`read:jira-work`) - the agent cannot transition or comment on anyone's ticket, by construction. The data team's live board is **`CDI`**; `DED`/`CING`/`DCTF` returned nothing in 14 days. Bound every JQL - an unbounded 4-project query returned 125k chars and blew the output limit.
+
 **Notion:** meeting-notes DB is reliable for notes older than ~1 week; the last few days land in Gmail (Gemini) first — check Gmail before declaring a meeting note missing. Finding a person's docs: filter `created_by_user_ids` (VP-AI: `${NOTION_USER_JONATHAN}`) + date range beats keyword search.
 
 **Google Calendar:** query **day-by-day** — full-week pulls exceed output limits. Watch for OOO/flight events; a half-day "flight Thu" can hide a multi-week OOO (confirm real return dates via Gmail "Upcoming OOO" notices).
