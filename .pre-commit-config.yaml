@@ -28,3 +28,14 @@ repos:
         language: system
         pass_filenames: true
         stages: [pre-commit]
+
+      # Pre-push runs what CI runs. Reviews happen before this, in a session -
+      # an LLM review cannot run in a git hook, and does not need to: the
+      # deterministic half is what catches the "green locally, red in CI" class.
+      - id: preflight
+        name: preflight - CI-equivalent checks before pushing
+        entry: bash scripts/preflight.sh --fast
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
