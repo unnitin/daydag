@@ -373,7 +373,7 @@ def test_eviction_between_plan_and_apply_says_so(note):
 
 
 @pytest.mark.parametrize("tail", ["\n", ""], ids=["trailing-newline", "no-trailing-newline"])
-def test_the_diff_of_any_note_applies_with_git_apply(vault, tmp_path, tail):
+def test_the_diff_of_any_note_applies_with_git_apply(vault, tmp_path, git_env, tail):
     """The proposal has to survive the round trip, not just look like a patch.
 
     A note whose last line has no newline is the case that fuses two hunk lines
@@ -390,6 +390,7 @@ def test_the_diff_of_any_note_applies_with_git_apply(vault, tmp_path, tail):
         cwd=vault.root,
         capture_output=True,
         text=True,
+        env=git_env,
     )
     assert result.returncode == 0, result.stderr
     assert n.read().text == body.replace("- [ ] **Compute**", "- [x] **Compute**")
