@@ -70,3 +70,17 @@ def test_evidence_marks_movement_but_never_closes_a_loop():
 def test_every_reported_item_carries_a_permalink(fake_repo):
     p = Pulse(mirrors=[Mirror.attach(fake_repo, cursor="HEAD~2")])
     assert all(item.permalink for item in p.items())
+
+
+@pytest.mark.guardrail
+def test_a_mirror_reads_its_own_repo_whatever_the_environment_says(fake_repo, monkeypatch):
+    """Guardrail 6 again: a mirror that reads the wrong repo reports confidently.
+
+    git exports GIT_DIR into hooks, and a scheduled loop can inherit it from
+    anywhere. Inherited, it overrides cwd and the mirror silently answers about
+    a different repository.
+    """
+    monkeypatch.setenv("GIT_DIR", str(fake_repo.parent / "not-the-mirror"))
+    monkeypatch.setenv("GIT_WORK_TREE", str(fake_repo.parent))
+    m = Mirror.attach(fake_repo, cursor="HEAD~2")
+    assert [c.title for c in m.merges_since_cursor()] == ["Merge PR #412", "Merge PR #413"]
