@@ -5,21 +5,21 @@ from daydag.pulse import Pulse
 
 
 def test_sweep_is_recognised():
-    assert handle("sweep", sender="U0ZZ9XXQ4T2") == "sweeping"
+    assert handle("sweep", sender="the-principal") == "sweeping"
 
 
 def test_status_returns_a_status_string():
-    out = handle("status discovery", sender="U0ZZ9XXQ4T2")
+    out = handle("status discovery", sender="the-principal")
     assert out == "status for discovery"
 
 
 def test_draft_returns_a_draft_string():
-    out = handle("draft a note to the sponsor", sender="U0ZZ9XXQ4T2")
+    out = handle("draft a note to the sponsor", sender="the-principal")
     assert out == "drafted: a note to the sponsor"
 
 
 def test_freeform_messages_are_interpreted():
-    out = handle("could you look into the migration", sender="U0ZZ9XXQ4T2")
+    out = handle("could you look into the migration", sender="the-principal")
     assert "interpreting instruction" in out
 
 
@@ -41,6 +41,6 @@ def test_close_loop_if_merged_leaves_open_loops_alone():
 
 
 def test_handle_returns_a_string():
-    result = handle("sweep", sender="U0ZZ9XXQ4T2")
+    result = handle("sweep", sender="the-principal")
     assert isinstance(result, str)
-    assert result == handle("sweep", sender="U0ZZ9XXQ4T2")
+    assert result == handle("sweep", sender="the-principal")
