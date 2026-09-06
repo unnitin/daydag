@@ -45,8 +45,20 @@ log outside this vault, not here.
 #: A pending decision line, e.g. "- [3] draft nudge to VP-Data? no"
 _DECISION = re.compile(r"^- \[(?P<id>\d+)\]\s+(?P<text>.*?)\s*$", re.MULTILINE)
 
-#: Answers a human may write after a decision, longest first so "snooze 1w" wins.
-_ANSWERS = ("snooze", "yes", "no", "parked")
+#: An answer a human may write beside a decision: a whole word, at one end of
+#: the line or the other - a hand edit lands either before the text or after it.
+#:
+#: Both restrictions are there because the two failure directions are not equal.
+#: A missed answer means the decision is asked again; a phantom one means it is
+#: silently dropped and never seen. The substring form read "not", "now" and
+#: "nothing" as a "no" nobody wrote, and read the word "parked" mid-sentence as
+#: an answer - the words most likely to appear in a question about whether to
+#: do something.
+_ANSWER_WORDS = r"snooze|yes|no|parked"
+_ANSWER = re.compile(
+    rf"^\s*({_ANSWER_WORDS})\b|\b({_ANSWER_WORDS})[\s.,!?;:)\]]*$",
+    re.IGNORECASE,
+)
 
 
 class StateFolder:
@@ -94,9 +106,14 @@ class StateFolder:
     ) -> None:
         """Rewrite ``State.md`` wholesale. It is derived, so it is replaced.
 
-        Anything sensitive is filtered here rather than at the call site: the
-        vault is plaintext on every device, so this is the boundary that has to
-        hold even when a caller forgets.
+        Sensitive ``chase`` and ``watch`` items are filtered here rather than at
+        the call site: the vault is plaintext on every device, so this is the
+        boundary that has to hold even when a caller forgets.
+
+        ``notes_gaps`` is *not* filtered - it is a list of bare strings with no
+        sensitivity tag to read, so a meeting whose own title is sensitive has
+        to be withheld by its caller. Giving it the same shape as the other two
+        is the fix; until then the gap is stated rather than assumed away.
         """
         lines = ["# State", "", "## Chase list", ""]
         for item in chase:
@@ -107,6 +124,11 @@ class StateFolder:
             lines.append(f"- {owner} · {ask}".rstrip(" ·"))
         lines += ["", "## Watch items", ""]
         for item in watch:
+            # Watch items come from the same log as chase items and carry the
+            # same tag; filtering one list and not the other leaked a private
+            # carry-forward straight into a synced markdown file.
+            if item.get("sensitivity") == "private":
+                continue
             lines.append(f"- {item.get('what', '')}")
         gaps = list(notes_gaps)
         if gaps:
@@ -157,13 +179,10 @@ class DecisionQueue:
         for match in _DECISION.finditer(self._read()):
             if match["id"] != str(item_id):
                 continue
-            tail = match["text"].strip()
-            for answer in _ANSWERS:
-                if tail.casefold().endswith(answer) or tail.casefold().startswith(answer):
-                    return answer
-                if f" {answer}" in tail.casefold():
-                    return answer
-            return None
+            found = _ANSWER.search(match["text"].strip())
+            if found is None:
+                return None
+            return (found.group(1) or found.group(2)).casefold()
         return None
 
     def status(self, item_id: str) -> str:

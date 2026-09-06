@@ -16,6 +16,17 @@ def test_merges_since_last_run_uses_the_stored_cursor(fake_repo):
     assert [c.title for c in merged] == ["Merge PR #412", "Merge PR #413"]
 
 
+def test_a_mirror_reads_its_own_path_not_whatever_GIT_DIR_names(fake_repo, tmp_path, monkeypatch):
+    """`cwd` does not win against `GIT_DIR`, and git hands every hook a `GIT_DIR`.
+
+    Without this the pulse reports another repository's history as the mirror's,
+    with links that resolve to the wrong project.
+    """
+    monkeypatch.setenv("GIT_DIR", str(tmp_path / "somewhere-else"))
+    m = Mirror.attach(fake_repo, cursor="HEAD~2")
+    assert [c.title for c in m.merges_since_cursor()] == ["Merge PR #412", "Merge PR #413"]
+
+
 def test_cursor_advances_only_after_a_successful_read(fake_repo):
     m = Mirror.attach(fake_repo, cursor="HEAD~2")
     before = m.cursor

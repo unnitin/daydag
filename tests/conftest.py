@@ -6,7 +6,7 @@ import pytest
 
 
 @pytest.fixture
-def fake_repo(tmp_path):
+def fake_repo(tmp_path, git_env):
     """A tiny bare-ish repo with two merge commits, for cursor tests."""
     repo = tmp_path / "r.git"
     repo.mkdir()
