@@ -13,6 +13,7 @@ never closes it - merged is not the same as what was asked for.
 
 from __future__ import annotations
 
+import os
 import subprocess
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -81,6 +82,11 @@ class Mirror:
             capture_output=True,
             text=True,
             check=False,
+            # GIT_DIR and friends override cwd. git exports them into its own
+            # hooks and a scheduled loop can inherit them from anywhere, so an
+            # unscrubbed env means the mirror confidently answers about some
+            # other repository - guardrail 6's "reports as of" made a lie.
+            env={k: v for k, v in os.environ.items() if not k.startswith("GIT_")},
         )
         if result.returncode != 0:
             raise PulseError(f"git {' '.join(args)} failed: {result.stderr.strip()}")
