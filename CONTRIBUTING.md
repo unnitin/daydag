@@ -85,24 +85,34 @@ actually has:
 - a guardrail-marked test weakened, skipped, or xfailed
 - a real identifier outside `.env` - the repo is public
 
-### Why not in CI
+### Why review is local, not in CI
 
-It was, briefly, and never completed a single review across four distinct
-failure modes. The worst was silent: the action exits *successfully* when it
-skips, so four required checks went green having read nothing. A review layer
-that fails open is worse than none, because it looks like coverage.
+An LLM reviewer ran in CI for exactly as long as it took to prove it does not
+work here. Seven attempts, four distinct failure modes: a missing `id-token`
+permission; a silent skip that exited *successfully*, turning four required
+checks green having read nothing; an empty API credit balance; and finally an
+identical failure on a subscription token - model resolved, first call refused
+at ~2s, `total_cost_usd: 0`, reason hidden by the action.
 
-`.github/workflows/ai-review.yml` is still in the repo, disabled, with its
-reviewer prompts intact. If it is ever revived: land it **optional**, prove it
-against a branch with planted defects (a hardcoded id, a second writer, a
-weakened guardrail test) before trusting it, and only make it required once it
-has produced findings worth acting on. A check that has never caught anything
-should never be able to block a merge.
+The likeliest remaining cause is not fixable in this repo: the account is an
+organisation seat, and `claude setup-token` documents itself as requiring a
+Pro/Max subscription. Organisations can restrict programmatic access.
+
+The workflow is **deleted, not disabled**. A disabled workflow is a thing people
+re-enable without re-reading why it was turned off, and a permanently-red check
+is as corrosive as a permanently-green one: both teach you to stop reading the
+signal.
+
+If it is ever revived the conditions are unchanged, and were expensive to learn:
+land it **optional**, prove it against a branch of planted defects that CI cannot
+catch, and make it required only once it has caught something real. The branch
+`canary/planted-defects` exists for exactly that.
+
+CodeQL covers the half a machine is genuinely better at - dataflow, untrusted
+input reaching a subprocess - and needs no credential at all.
 
 ## Merging
 
 `main` takes no direct pushes except from repo admins. Everything else goes through a PR
 that must have: CI green (secret scan, lint, tests on 3.11 and 3.12, guardrails), an
-approval, and **every review thread resolved** - including the AI reviewer's, when it is
-enabled. It makes one pass over the diff and judges all four criteria - security,
-guardrails, architecture, tests - in a single verdict.
+approval, and **every review thread resolved**.
