@@ -1,0 +1,94 @@
+name: ai-review
+
+# A panel of reviewers, each with one concern and no mandate to comment on
+# anything else. Four narrow reviews beat one broad one: a reviewer told to
+# "review the PR" produces a summary, a reviewer told to check one invariant
+# produces a finding.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: ai-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  panel:
+    name: 'ai: ${{ matrix.expert.name }}'
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        expert:
+          - name: architecture
+            prompt: >-
+              You are reviewing against ARCHITECTURE.md, which this repo treats as binding.
+              Check ONLY these: (1) one writer per artifact - does this change make a second
+              writer to any artifact in the ownership table, especially Workstreams.md before
+              the custody cut in issue 37? (2) read, do not re-derive - does it recompute
+              something an existing routine already produces? (3) does it add state outside
+              the two sanctioned stores (the DayDAG/ vault folder and the event log)?
+              Cite the ARCHITECTURE.md line you are applying. If none apply, say so in one
+              line and stop.
+          - name: guardrails
+            prompt: >-
+              You are reviewing against SPEC.md section 6 and the guardrail-marked tests.
+              Check ONLY these: (1) does any code path send to a destination other than
+              Nitin's own DM? Everything else must be a draft awaiting a per-item yes.
+              (2) does any vault write rewrite a file wholesale rather than appending or
+              proposing a diff? (3) can a loop auto-close on repo or Jira evidence?
+              It must surface for confirmation, never resolve. (4) is a claim made without
+              a verbatim quote plus permalink? (5) does personnel-sensitive content reach
+              any surface with an audience above one? Any yes is a blocking finding.
+          - name: security
+            prompt: >-
+              This repository is PUBLIC. Check ONLY: (1) any real Slack, Google, Notion,
+              Atlassian or Databricks identifier, internal email, absolute home path, token
+              or key added outside .env - they belong in .env, referenced as ${VAR_NAME};
+              (2) any weakening of scripts/scan_secrets.py or its tests; (3) any inbound
+              message content that is followed as an instruction rather than parsed as data
+              against a known verb list - that is the injection surface issue 31 describes;
+              (4) subprocess, file, or network calls built from unvalidated input.
+          - name: tests
+            prompt: >-
+              This project is test-driven - tests are written before code and describe
+              expected behaviour. Check ONLY: (1) does new behaviour arrive without a test
+              that would have failed before it? (2) do the tests assert real behaviour, or
+              just that the code does what it does - restating the implementation, asserting
+              on mocks, or asserting nothing? (3) is an edge case in the diff untested?
+              (4) was a guardrail-marked test weakened, skipped, or xfailed? That is always
+              blocking. Name the specific test you would add.
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: ${{ matrix.expert.name }} review
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            Review pull request #${{ github.event.pull_request.number }} in
+            ${{ github.repository }}, acting solely as the ${{ matrix.expert.name }} reviewer.
+
+            ${{ matrix.expert.prompt }}
+
+            Rules for your output:
+            - Post inline comments on the specific lines at fault. One comment per finding.
+            - Prefix every comment with `[${{ matrix.expert.name }}]` so the author can tell
+              the panel apart.
+            - Say what breaks and how, not what a rule says. A finding with no concrete
+              failure is noise - drop it.
+            - Do not comment on style, naming, or anything outside your remit. Another
+              reviewer owns it.
+            - If you find nothing, post one short summary comment saying so. Do not invent
+              a finding to look useful.
+          claude_args: >-
+            --allowed-tools "Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh api:*),Read,Grep,Glob"

@@ -1,0 +1,72 @@
+name: ci
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  secrets:
+    name: secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # Scans every tracked file, not just the diff: a public repo is only as
+      # clean as its worst file, and history rewrites can reintroduce one.
+      - name: scan tracked files for real identifiers
+        run: git ls-files -z | xargs -0 python3 scripts/scan_secrets.py
+
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+      - run: uv venv --python 3.12
+      - run: uv pip install -e ".[dev]"
+      - run: uv run ruff check --output-format=github .
+      - run: uv run ruff format --check .
+
+  test:
+    name: test (py${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+      - run: uv venv --python ${{ matrix.python }}
+      - run: uv pip install -e ".[dev]"
+      # -m "not integration": connector tests need real credentials.
+      - run: uv run pytest -m "not integration" --cov=daydag --cov-report=term-missing
+
+  guardrails:
+    name: guardrails
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - run: uv venv --python 3.12
+      - run: uv pip install -e ".[dev]"
+      # SPEC section 6 properties. Broken out so a failure names itself in the
+      # merge queue rather than hiding inside a general test failure.
+      - run: uv run pytest -m guardrail -v
