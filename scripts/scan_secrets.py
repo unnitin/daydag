@@ -16,6 +16,8 @@ PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("slack channel id", re.compile(r"\bC0[0-9A-Z]{8,}\b")),
     ("slack dm id", re.compile(r"\bD0[0-9A-Z]{8,}\b")),
     ("google file id", re.compile(r"\b1[A-Za-z0-9_-]{24,}\b")),
+    # A truncated id still leaks a prefix, e.g. `${GDOC_VP_EXPECTATIONS}\u2026`.
+    ("truncated google file id", re.compile(r"\b1[A-Za-z0-9_-]{9,}\u2026")),
     ("uuid (notion/atlassian)", re.compile(r"\b[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}\b")),
     ("databricks workspace id", re.compile(r"\b\d{16}\b")),
     ("internal email", re.compile(r"\b[\w.%+-]+@createmusicgroup\.com\b")),
@@ -30,6 +32,8 @@ ALLOW = re.compile(
     r"^(U0{9}|C0{9}|D0{9}|0{16}|0{8}(-0{4}){3}-0{12}|1?0{24,})$"
     r"|USERID|CHANNELID|CHANGEME|example\.com|gemini-notes@google\.com"
 )
+# The scanner's own fixtures must contain pattern-shaped values. They are
+# synthetic - verified by tests/test_scan_secrets.py itself.
 SKIP_FILES = {".env.example", "scripts/scan_secrets.py", "tests/test_scan_secrets.py"}
 SKIP_SUFFIXES = {".lock", ".png", ".jpg", ".gif", ".pdf"}
 
