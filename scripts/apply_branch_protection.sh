@@ -47,11 +47,7 @@ gh api -X POST "/repos/$REPO/rulesets" --input - <<'JSON'
           { "context": "lint" },
           { "context": "test (py3.11)" },
           { "context": "test (py3.12)" },
-          { "context": "guardrails" },
-          { "context": "ai: architecture" },
-          { "context": "ai: guardrails" },
-          { "context": "ai: security" },
-          { "context": "ai: tests" }
+          { "context": "guardrails" }
         ]
       }
     }
@@ -64,6 +60,14 @@ echo "applied. main now requires:"
 echo "  - a pull request with 1 approval"
 echo "  - every review thread resolved  (this is the 'reviews resolved before merge' rule)"
 echo "  - ci: secret scan, lint, test 3.11 + 3.12, guardrails"
-echo "  - ai panel: architecture, guardrails, security, tests"
+echo "  - ai panel: DISABLED (see below)"
 echo "  - no force-push, no deletion"
 echo "  - bypass: repository admins only (actor_id 5 = admin role)"
+echo
+echo "The AI panel is off. Its four checks are not required and the workflow is"
+echo "disabled, because it never completed a single review: it failed on missing"
+echo "OIDC permission, passed vacuously via the workflow-validation skip, failed"
+echo "on an empty API credit balance, then failed identically on a subscription"
+echo "token. Re-enable with:"
+echo "  gh workflow enable ai-review.yml --repo unnitin/daydag"
+echo "  then re-add the four \"ai: *\" contexts above and re-run this script."

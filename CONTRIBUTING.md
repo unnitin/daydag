@@ -48,7 +48,18 @@ Work happens on parallel paths cut from `main`, one per independent surface:
 They are parallel because they own separate modules and share only `daydag.config`. Keep
 it that way - if two paths need the same new helper, it belongs on `main` first.
 
-## The AI review panel
+## The AI review panel — currently OFF
+
+The workflow is disabled (`gh workflow disable ai-review.yml`) and its four
+checks are no longer required, because it never completed a single review. In
+order: missing `id-token` permission, then a vacuous pass via the
+workflow-validation skip, then an empty API credit balance, then an identical
+failure on a subscription token. CI still gates every PR.
+
+Re-enable with `gh workflow enable ai-review.yml`, re-add the four `ai: *`
+contexts in `scripts/apply_branch_protection.sh`, and re-run that script.
+
+The notes below still apply when it comes back.
 
 The panel authenticates with a **Claude Code OAuth token**, not an API key. API
 credit is a separate balance that a Pro or Max subscription does not fund, so an
