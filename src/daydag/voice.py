@@ -1,0 +1,123 @@
+"""Voice and format fixtures for every push (SPEC section 5).
+
+The voice rules here are derived from what Nitin actually writes, not from a
+style guide, which is why they are testable at all. A drift is a bug.
+
+One rule is invisible in most editors and worth stating loudly: the sanctioned
+warning sign is plain U+26A0, not the emoji-presentation U+26A0 U+FE0F. The
+vault uses the former; the difference shows up there and nowhere else.
+"""
+
+from __future__ import annotations
+
+import re
+from enum import Enum
+from typing import Any
+
+#: The only emoji allowed in agent output. Note the plain U+26A0.
+SANCTIONED_EMOJI = frozenset({"🔴", "🟡", "🟢", "✓", "⭐", "⚠"})
+
+#: Em dash and en dash. Hyphens are house style; these are not.
+_DASHES = re.compile("[\u2014\u2013]")  # em dash, en dash
+
+#: U+FE0F turns a sanctioned text-presentation glyph into its emoji twin.
+#: Invisible in most editors, visible in the vault - so it is caught explicitly
+#: rather than left to the pictographic range below.
+_VARIATION_SELECTOR = "\ufe0f"
+
+#: Anything pictographic that is not on the sanctioned list.
+_EMOJI = re.compile(
+    "[\U0001f300-\U0001faff\U00002600-\U000027bf\U0001f900-\U0001f9ff\u2b00-\u2bff]"
+)
+
+#: Minimal data that renders each push into a realistic string, so the voice
+#: fixtures exercise the interpolated form and not just the stripped skeleton.
+SAMPLE_DATA: dict[str, dict[str, object]] = {
+    "morning_brief": {"day": "tue", "count": 4},
+    "eod_wrap": {"closed": 2, "moved": 3},
+    "week_ahead": {},
+    "ingest_digest": {"meeting": "the 2pm call", "summary": "2 commitments"},
+    "prep_ping": {"meeting": "pod steering"},
+    "nudge": {
+        "owner": "VP-Data",
+        "quote": "can you pick this up?",
+        "permalink": "https://example.com/p/1",
+    },
+}
+
+#: Register that reads as corporate rather than as him.
+_CORPORATE = (
+    "at your earliest convenience",
+    "please advise",
+    "kindly",
+    "as per",
+    "circle back",
+    "reach out to",
+    "touch base",
+    "per my last",
+)
+
+
+class Push(Enum):
+    """Every surface the agent renders. Each needs a template and a fixture."""
+
+    MORNING_BRIEF = "morning_brief"
+    EOD_WRAP = "eod_wrap"
+    WEEK_AHEAD = "week_ahead"
+    INGEST_DIGEST = "ingest_digest"
+    PREP_PING = "prep_ping"
+    NUDGE = "nudge"
+
+
+def voice_violations(text: str) -> list[str]:
+    """Every way ``text`` departs from the house voice.
+
+    Returns a list rather than a bool so a caller can say *what* is wrong -
+    a template failing this should name the rule, not just fail.
+    """
+    found: list[str] = []
+    if _VARIATION_SELECTOR in text:
+        found.append("emoji-presentation variant (U+FE0F) - use the plain glyph")
+    if _DASHES.search(text):
+        found.append("em/en dash - use a hyphen")
+    for match in _EMOJI.finditer(text):
+        char = match.group(0)
+        if char not in SANCTIONED_EMOJI:
+            found.append(f"unsanctioned emoji {char!r}")
+    lowered = text.casefold()
+    for phrase in _CORPORATE:
+        if phrase in lowered:
+            found.append(f"corporate register: {phrase!r}")
+    return found
+
+
+# Templates are deliberately plain strings, not a template engine: they are
+# fixtures first and output second, and a diff on them should be readable.
+_TEMPLATES: dict[Push, str] = {
+    Push.MORNING_BRIEF: "morning. {day} - {count} meetings",
+    Push.EOD_WRAP: "wrap: {closed} closed, {moved} moved",
+    Push.WEEK_AHEAD: "week ahead - shape of it below",
+    Push.INGEST_DIGEST: "logged from {meeting}: {summary}. anything wrong, lmk",
+    Push.PREP_PING: "{meeting} in 30 - talking points in thread",
+    Push.NUDGE: "hey {owner} - following up on this: {quote} ({permalink})",
+}
+
+
+def render(kind: Push, data: dict[str, Any]) -> str:
+    """Render one push.
+
+    Empty sections are omitted entirely rather than labelled - SPEC 3.7 rule 3
+    says a quiet day produces no block, because a line saying nothing happened
+    is noise that trains the reader to skim.
+    """
+    if kind is Push.NUDGE and not (data or {}).get("permalink"):
+        # Invariant 3: evidence or silence. Structural, not advisory - a nudge
+        # that cannot be sourced must not render at all.
+        raise ValueError("a nudge needs a permalink; quote alone is not evidence")
+
+    body = _TEMPLATES[kind]
+    filled = {k: v for k, v in (data or {}).items() if v not in (None, "", [], {})}
+    for key, value in filled.items():
+        body = body.replace("{" + key + "}", str(value))
+    # Unfilled placeholders are dropped rather than rendered as literals.
+    return re.sub(r"\s*\{[a-z_]+\}", "", body).strip()
