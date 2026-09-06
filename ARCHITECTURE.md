@@ -85,7 +85,7 @@ Split by what the data physically is. **Git objects hold code and history; nothi
 
 | Question the pulse asks | Answer lives in | Mechanism |
 |---|---|---|
-| what merged since the last run | git objects | `git log <last-sha>..origin/main --merges --first-parent` on a local mirror |
+| what merged since the last run | git objects | `git log <last-sha>..HEAD --first-parent` on a local mirror — **not** `--merges`, which misses every squash-merged PR, and squash is permitted by the ruleset |
 | what does the code actually say now | git objects | `git grep` / `git show` on the mirror |
 | which PRs are stuck, who owes a review | GitHub API | `gh pr list --json`, review timestamps |
 | is main red, did the nightly fail | GitHub API | `gh run list`, check-suite conclusions |
@@ -95,7 +95,7 @@ So: **clone, and also keep the API.** The clones are not a replacement for API a
 
 **Shape of the clones.**
 
-- **Bare mirrors, not working trees** — `git clone --mirror` into `~/.local/share/daydag/repos/<repo>.git`. `log`, `diff`, `show` and `grep <rev>` all work bare; a checkout buys nothing and invites the agent to think it can edit.
+- **Bare mirrors, not working trees** — `git clone --mirror` into `${MIRROR_DIR}/<owner>/<repo>.git` (owner included: repo names are unique per org, and a flat layout would merge two orgs' histories into one directory). `log`, `diff`, `show` and `grep <rev>` all work bare; a checkout buys nothing and invites the agent to think it can edit.
 - **Read-only by construction** — `git remote set-url --push origin no_push` on every mirror. The agent never holds a credential that can write to a pod's repo, which is invariant 4 enforced at the transport rather than in a prompt.
 - **Refresh is the pulse pre-step** — one `git fetch --prune` per watched repo at 6:40 / 16:25 / Sun 17:25, same trigger as the API half. Repos come from `DayDAG/Watchlist.md`; a new repo on that list is cloned on first sight.
 - **Cursors, not scans** — last-seen SHA per repo per branch in the event log. That's what makes "merges since last run" cheap and what keeps §3.7 rule 1 honest (state changes, not a commit log).
@@ -110,7 +110,7 @@ So: **clone, and also keep the API.** The clones are not a replacement for API a
 
 Jira is the data team's plan of record; GitHub Projects is where pods that never moved to Jira still live. Both are read-only to DayDAG (ownership table), both feed the same `shipping` block, and both are joined to Slack, PRs and meeting notes on the **ticket key** — `ABC-123` in a branch name, a PR title, a Slack line, a meeting-note next-step. That join is the whole point; it's what turns "jasmeet said he'd do the compute-engine consolidation" into a ticket, a PR and a status without Nitin holding the mapping in his head.
 
-What's watched lives in `DayDAG/Watchlist.md`: a `jira` block (project key · board/sprint · saved JQL · linked workstream) and a `projects` block (org project number · linked workstream).
+What's watched lives in `DayDAG/Watchlist.md`: a `jira` block (project key · board/sprint · saved JQL · linked workstream) and a `projects` block (org project number · linked workstream). The `repos` block feeds the mirrors — one bullet per repo, `owner/repo` or its github url, with anything after a `·` treated as notes; the marker `wiki` on a line also mirrors that repo's `<repo>.wiki.git`. A bullet that isn't a recognisable slug is skipped, because that file is hand-edited and a typo should cost one repo, not the pulse.
 
 Two mechanical notes worth writing down before someone rediscovers them:
 
