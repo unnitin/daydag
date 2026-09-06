@@ -73,5 +73,5 @@ def test_consumers_are_matched_to_producers():
 
 def test_consuming_something_nobody_emits_is_an_error():
     consumer = {"name": "pod-update", "daydag": {"consumes": ["evidence.nope"]}}
-    with pytest.raises(RegistryError, match="evidence.nope"):
+    with pytest.raises(RegistryError, match=r"evidence\.nope"):
         Registry.load([consumer])
