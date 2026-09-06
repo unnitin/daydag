@@ -16,8 +16,14 @@ def folder(tmp_path):
 
 def test_create_lays_out_the_four_files_and_two_dirs(folder):
     names = {p.name for p in folder.root.iterdir()}
-    assert names == {"README.md", "State.md", "Decisions.md", "Watchlist.md",
-                     "Proposals", "Archive"}
+    assert names == {
+        "README.md",
+        "State.md",
+        "Decisions.md",
+        "Watchlist.md",
+        "Proposals",
+        "Archive",
+    }
 
 
 def test_state_is_regenerated_each_loop(folder):
