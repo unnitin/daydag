@@ -48,6 +48,27 @@ Work happens on parallel paths cut from `main`, one per independent surface:
 They are parallel because they own separate modules and share only `daydag.config`. Keep
 it that way - if two paths need the same new helper, it belongs on `main` first.
 
+## The AI review panel
+
+The panel authenticates with a **Claude Code OAuth token**, not an API key. API
+credit is a separate balance that a Pro or Max subscription does not fund, so an
+API key on a subscription-only account fails every request with "credit balance
+is too low" - which surfaces as all four `ai:` checks failing.
+
+To (re)issue the token:
+
+```sh
+claude setup-token
+gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo unnitin/daydag
+```
+
+**A PR that edits anything under `.github/workflows/` gets no real review.** The
+action refuses to run when the workflow on the branch differs from the version on
+`main` - a deliberate guard against a PR rewriting the workflow to exfiltrate
+secrets. It exits *successfully* when it skips, so the four `ai:` checks go green
+having done nothing. Treat a workflow-touching PR as unreviewed regardless of the
+ticks, and review it by hand.
+
 ## Merging
 
 `main` takes no direct pushes except from repo admins. Everything else goes through a PR
