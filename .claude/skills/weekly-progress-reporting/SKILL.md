@@ -1,6 +1,6 @@
 ---
 name: weekly-progress-reporting
-description: "Produce the weekly Data & AI progress report: update the Priorities doc's Progress tab against goals, then draft the highlights email to the current sponsor (Sponsor). Use for progress report, goals-doc update, weekly update"
+description: "Produce the weekly Data & AI progress report: update the Priorities doc's Progress tab against goals, then draft the highlights email to the current sponsor. Use for progress report, goals-doc update, weekly update"
 ---
 
 ---

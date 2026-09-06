@@ -1,6 +1,6 @@
 ---
 name: weekly-feedback-scan
-description: Run Nitin's weekly feedback scan for his two VPs — VP-AI VP-AI (VP of AI) and VP-Data (VP of Data). Scans the past 7 days of Slack and Gmail for evidence of progress and coaching moments, calibrates against their expectations baseline, and writes a dated Feedback Log Google Doc to the private Drive folder. Use whenever Nitin asks for a feedback scan, a feedback log, "how are VP-AI and VP-Data doing", weekly VP feedback, direct-report progress review, or when this runs as the scheduled weekly routine. Do NOT use for the team-wide progress report to sponsors (that's weekly-progress-reporting) or for planning Nitin's own week (weekly-planning).
+description: Run Nitin's weekly feedback scan for his two VPs — VP-AI and VP-Data. Scans the past 7 days of Slack and Gmail for evidence of progress and coaching moments, calibrates against their expectations baseline, and writes a dated Feedback Log Google Doc to the private Drive folder. Use whenever Nitin asks for a feedback scan, a feedback log, "how are VP-AI and VP-Data doing", weekly VP feedback, direct-report progress review, or when this runs as the scheduled weekly routine. Do NOT use for the team-wide progress report to sponsors (that's weekly-progress-reporting) or for planning Nitin's own week (weekly-planning).
 ---
 
 # Weekly Feedback Scan — VP-AI & VP-Data
@@ -11,7 +11,7 @@ Produce Nitin's private weekly feedback log for his two direct reports. This log
 
 | Person | Email | Role | Bar |
 |---|---|---|---|
-| VP-AI VP-AI | ${EMAIL_VP_AI} | VP of AI | Tenured BCG Project Leader: owns the answer end-to-end — delivery quality, predictable releases, verified (not asserted) quality; growing edge is strategic/Principal-facing contribution |
+| VP-AI | ${EMAIL_VP_AI} | VP of AI | Tenured BCG Project Leader: owns the answer end-to-end — delivery quality, predictable releases, verified (not asserted) quality; growing edge is strategic/Principal-facing contribution |
 | VP-Data | ${EMAIL_VP_DATA} | VP of Data | Early BCG Principal: judged on outcomes of work he doesn't personally touch — portfolio direction, senior stakeholders coming to him, institution-building, commercial framing |
 
 The key calibration: VP-AI is measured on the quality and reliability of delivery he directly drives (with Principal-facing stretch); VP-Data is measured on direction-setting, senior-relationship ownership, and the strength of people/systems he builds — without a delivery discount. Feedback that would be praise at one level can be developmental at the other (e.g., VP-Data personally fixing a pipeline is a portfolio-ownership flag, not a win).

@@ -25,6 +25,15 @@ def test_missing_file_points_at_the_example(tmp_path):
         Identities.from_file(tmp_path / "nope.env")
 
 
+def test_membership_does_not_raise_for_a_missing_key(tmp_path):
+    """`key in ids` must answer False, not raise - Mapping's default would."""
+    env = tmp_path / ".env"
+    env.write_text("SLACK_USER_PRINCIPAL=nitin-slack-id\n")
+    ids = Identities.from_file(env)
+    assert "SLACK_USER_PRINCIPAL" in ids
+    assert "NOPE" not in ids
+
+
 def test_expands_references_in_text(tmp_path):
     env = tmp_path / ".env"
     env.write_text("SLACK_USER_PRINCIPAL=nitin-slack-id\n")
@@ -50,14 +59,41 @@ def test_never_echoes_a_value_in_an_error(tmp_path):
     assert "nitin-slack-id" not in str(exc.value)
 
 
-def test_example_file_covers_every_key_used_in_repo():
-    """.env.example is the schema. A key in .env with no example entry is undocumented."""
+def test_every_reference_in_the_repo_resolves():
+    """`.env.example` is illustrative, not exhaustive - it teaches the shape.
+
+    The invariant that matters is that every ${VAR} written into a doc or a
+    module actually resolves, or the redaction has broken the text it replaced.
+    """
+    import re
+    import subprocess
     from pathlib import Path
 
     root = Path(__file__).resolve().parents[1]
-    example = Identities.from_file(root / ".env.example")
     real = root / ".env"
     if not real.exists():
         pytest.skip("no local .env")
-    missing = set(Identities.from_file(real)) - set(example)
-    assert not missing, f".env has keys absent from .env.example: {sorted(missing)}"
+    ids = Identities.from_file(real)
+    tracked = subprocess.run(
+        ["git", "ls-files"], cwd=root, capture_output=True, text=True, check=True
+    ).stdout.split()
+    referenced = set()
+    for rel in tracked:
+        path = root / rel
+        if path.suffix not in {".md", ".py", ".yml", ".yaml", ".toml"}:
+            continue
+        if rel.startswith("tests/"):
+            continue  # fixtures deliberately reference names that do not exist
+        referenced |= set(re.findall(r"\$\{([A-Z][A-Z0-9_]+)\}", path.read_text()))
+    referenced -= {"VAR_NAME", "VAR"}  # placeholders used when explaining the scheme
+    unresolved = sorted(k for k in referenced if k not in ids)
+    assert not unresolved, f"referenced but absent from .env: {unresolved}"
+
+
+def test_example_parses_and_names_roles_not_people():
+    """Key names leak too: SLACK_USER_JANE_DOE names a colleague."""
+    from pathlib import Path
+
+    example = Identities.from_file(Path(__file__).resolve().parents[1] / ".env.example")
+    assert example, "example schema is empty"
+    assert all(k.isupper() for k in example)

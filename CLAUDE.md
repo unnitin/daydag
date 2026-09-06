@@ -12,7 +12,7 @@ A persistent agent for Nitin Srivastava (SVP Data & AI, Create Music Group) that
 
 ## 2. People and org map
 
-Ownership map (from the weekly notes, stable): **VP-AI (VP-AI)** → A&R Discovery + AI Platform · **Enablement-Lead** → Agentic Enablement (Kiwi / CreateOS Labs) · **VP-Data** → Data Platform, Ingestion, DevOps, Security. Everything else sits with Nitin directly. **Sponsor** is the executive sponsor/audience (Former-Sponsor departed). **CTO** is the newly named CTO (relocating to Vancouver as of early Sep). Cross-teaming partners: **Analytics-Partner** (analytics/data product), **CTO**, **Gov-Lead** (governance/roadmap).
+Ownership map (from the weekly notes, stable): **VP-AI** → A&R Discovery + AI Platform · **Enablement-Lead** → Agentic Enablement (Kiwi / CreateOS Labs) · **VP-Data** → Data Platform, Ingestion, DevOps, Security. Everything else sits with Nitin directly. **Sponsor** is the executive sponsor/audience (Former-Sponsor departed). **CTO** is newly named (relocating to Vancouver as of early Sep). Cross-teaming partners: **Analytics-Partner** (analytics/data product), **CTO**, **Gov-Lead** (governance/roadmap).
 
 Slack user IDs (search by ID, never display name):
 
@@ -21,8 +21,8 @@ Slack user IDs (search by ID, never display name):
 | Nitin (the principal) | `${SLACK_USER_PRINCIPAL}` | DM target for all agent output |
 | VP-Data | `${SLACK_USER_VP_DATA}` | VP Data Engineering |
 | VP-AI | `${SLACK_USER_VP_AI}` | A&R Discovery + AI Platform lead |
-| CTO | `${SLACK_USER_CTO}` | CTO |
-| Sponsor (Sponsor) | `${SLACK_USER_SPONSOR}` | Exec sponsor |
+| CTO | `${SLACK_USER_CTO}` | Chief Technology Officer |
+| Sponsor | `${SLACK_USER_SPONSOR}` | Exec sponsor |
 | Gov-Lead | `${SLACK_USER_GOV_LEAD}` | Governance/roadmap |
 | Modeler-Owner | `${SLACK_USER_MODELER_OWNER}` | Deal Modeler owner |
 | Eng-Sr | `${SLACK_USER_ENG_SR}` | Sr engineer (Toptal) |

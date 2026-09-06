@@ -271,7 +271,7 @@ The spec above was drafted as if the field were empty. It isn't: five Cowork rou
 
 ### 10.1 `weekly-feedback-scan` — imported, and the strictest guardrail in the system
 
-Found in the Cowork skills directory (it synced down after the first search came up empty) and imported to `.claude/skills/weekly-feedback-scan/`. It produces Nitin's private weekly feedback log for his two direct reports — **VP-AI VP-AI (VP of AI)** and **VP-Data (VP of Data)** — calibrated against a written expectations baseline, and writes one dated Google Doc into a private Drive folder.
+Found in the Cowork skills directory (it synced down after the first search came up empty) and imported to `.claude/skills/weekly-feedback-scan/`. It produces Nitin's private weekly feedback log for his two direct reports — **VP-AI** and **VP-Data** — calibrated against a written expectations baseline, and writes one dated Google Doc into a private Drive folder.
 
 Its own rule, verbatim: *"read from Slack/Gmail/Drive, write one Google Doc, send nothing to anyone. No Slack messages, no emails, no sharing the doc. VP-AI and VP-Data must never receive anything from this workflow."*
 

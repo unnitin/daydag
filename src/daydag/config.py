@@ -53,6 +53,11 @@ class Identities(Mapping[str, str]):
                 f"{key} is not set in {self._source.name}. Add it there; see .env.example."
             ) from None
 
+    def __contains__(self, key: object) -> bool:
+        # Mapping's default routes through __getitem__ and would surface a
+        # ConfigError instead of False, breaking `key in ids`.
+        return key in self._values
+
     def __iter__(self) -> Iterator[str]:
         return iter(self._values)
 
