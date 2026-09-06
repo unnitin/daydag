@@ -183,9 +183,9 @@ Substrate note: the existing `morning-sync` skill already does the open-PR/CI ha
 
 | Source | Access | Used for | Notes |
 |---|---|---|---|
-| Google Calendar | read; propose changes | day plan, prep triggers, OOO detection | query day-by-day; watch for OOO/flight events (a half-day "flight Thu" can hide a multi-week OOO) |
+| Google Calendar | read; propose changes | day plan, prep triggers, OOO detection | day-by-day **confirmed by measurement** — a 5-day pull returned 156,681 chars and exceeded the output limit. Watch for OOO/flight events (a half-day "flight Thu" can hide a multi-week OOO) |
 | Slack | read all; **send: DM to Nitin only**; drafts elsewhere | overnight deltas, open-loop detection, chase, delivery channel | channel IDs from `Fact Base/Internal Links.md`; person-scoped search via `from:<@USER_ID>` (display names unreliable); Nitin = ${SLACK_USER_PRINCIPAL} |
-| Gmail | read; drafts only | Gemini meeting notes (from:gemini-notes@google.com — search by sender + body keywords, not subject), exec threads, external follow-ups | |
+| Gmail | read; drafts only | Gemini meeting notes (from:gemini-notes@google.com — subject IS structured: `Notes: “<title>” <date>`; parse it, see audit), exec threads, external follow-ups | |
 | Obsidian vault | read; create/append; block edits as proposed diffs | weekly note, Workstreams, Meeting Prep, Internal Links | vault-relative paths must include `Create Music Group/` prefix; connector has no delete/modify |
 | Notion | read | meeting-notes DB (reliable for notes >~1 wk old; recent ones land in Gmail first), AI tool inventory, steering docs | |
 | Granola | read | meeting transcripts/notes where Gemini notes absent | |
