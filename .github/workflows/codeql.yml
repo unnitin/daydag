@@ -1,0 +1,57 @@
+name: codeql
+
+# Deterministic static analysis, not an LLM reviewer. It compiles the code into
+# a database and runs queries against it — no model reads the source, and there
+# is no credential to expire, which is why this works where the Anthropic
+# reviewer has not.
+#
+# Free on public repositories, including the Actions minutes.
+#
+# It complements rather than replaces `scripts/scan_secrets.py`: the scanner
+# catches identifiers that must not be published, CodeQL catches dataflow —
+# untrusted input reaching a subprocess, a path built from unvalidated data.
+# Both matter here, and neither sees what the other does.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly, so a newly published query finds old code. Queries improve after
+    # a commit lands; without this, code is only ever checked against the rules
+    # that existed the day it was written.
+    - cron: "17 6 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: analyze (python)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write   # required to upload results to the Security tab
+      actions: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: initialize codeql
+        uses: github/codeql-action/init@v3
+        with:
+          languages: python
+          # security-extended adds lower-severity and precision queries beyond
+          # the default set. This repo handles untrusted input from Slack and
+          # email and shells out to git, so the extra coverage is the point.
+          queries: security-extended
+
+      - name: analyze
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:python"
