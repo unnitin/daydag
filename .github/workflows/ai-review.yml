@@ -78,7 +78,10 @@ jobs:
       - name: ${{ matrix.expert.name }} review
         uses: anthropics/claude-code-action@v1
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Bills against the Claude subscription rather than API credit, which
+          # is a separate balance a Pro/Max plan does not fund. Generated with
+          # `claude setup-token`; see CONTRIBUTING.md.
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           prompt: |
             Review pull request #${{ github.event.pull_request.number }} in
             ${{ github.repository }}, acting solely as the ${{ matrix.expert.name }} reviewer.
