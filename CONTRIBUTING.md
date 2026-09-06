@@ -88,8 +88,16 @@ actually has:
 ### CodeQL
 
 `.github/workflows/codeql.yml` runs GitHub's static analysis on every PR and
-weekly on `main`. It is not an LLM reviewer - it compiles the code and queries
-it, so there is no credential to expire and no model reading the source.
+weekly on `main`. Detection is deterministic - it compiles the code
+and queries it, so no model is involved in finding an alert and there is no
+credential to expire.
+
+**Fix suggestions are a different matter.** Copilot Autofix is enabled by
+default on public repositories using CodeQL and generates suggested patches with
+an LLM (GPT-5.3-Codex, an OpenAI model), sending code and alert context to do
+so. It is a repo-level setting, not part of this workflow: disable it under
+Settings -> Code security if the codebase should not leave GitHub. Detection is
+unaffected; only the suggested patches stop.
 
 It complements `scripts/scan_secrets.py` rather than duplicating it: the scanner
 catches identifiers that must not be published, CodeQL catches dataflow -

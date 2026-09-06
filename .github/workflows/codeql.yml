@@ -1,9 +1,16 @@
 name: codeql
 
-# Deterministic static analysis, not an LLM reviewer. It compiles the code into
-# a database and runs queries against it — no model reads the source, and there
-# is no credential to expire, which is why this works where the Anthropic
-# reviewer has not.
+# DETECTION is deterministic: CodeQL compiles the code into a database and runs
+# queries against it. No model is involved in finding an alert, and there is no
+# credential to expire — which is why this works where the Anthropic reviewer
+# has not.
+#
+# FIX SUGGESTIONS are not. Copilot Autofix is enabled BY DEFAULT on every public
+# repository using CodeQL, and generates suggested fixes with an LLM (GPT-5.3-
+# Codex, an OpenAI model), sending code and alert context to do it. That is a
+# separate, repo-level setting this workflow does not control — disable it under
+# Settings → Code security if the codebase should not leave GitHub. Detection
+# keeps working either way; only the suggested patches go away.
 #
 # Free on public repositories, including the Actions minutes.
 #
