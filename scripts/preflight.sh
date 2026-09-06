@@ -8,7 +8,7 @@
 # hid the first bug.
 #
 #   bash scripts/preflight.sh          # full, CI-equivalent (slower, ~30s)
-#   bash scripts/preflight.sh --fast   # reuse .venv, skip the rebuild
+#   bash scripts/preflight.sh --fast   # reuse .venv; 3.12 only, no 3.11 leg
 set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
@@ -30,7 +30,9 @@ if [ "$FAST" = "--fast" ] && [ -x .venv/bin/python ]; then
   step "using existing .venv (--fast)"
 else
   step "building a throwaway venv (CI parity)"
-  VENV=$(mktemp -d)/venv
+  VENV_ROOT=$(mktemp -d)
+  trap 'rm -rf "$VENV_ROOT"' EXIT   # the venv leaked a temp dir per run
+  VENV="$VENV_ROOT/venv"
   uv venv -q --python 3.12 "$VENV"
   VIRTUAL_ENV="$VENV" uv pip install -q -e ".[dev]"
   PY="$VENV/bin/python"; RUFF="$VENV/bin/ruff"
@@ -42,7 +44,24 @@ step "lint"
 "$RUFF" format --check -q . && ok "ruff format" || bad "ruff format - run: ruff format ."
 
 step "tests"
-"$PY" -m pytest -q -m "not integration" && ok "suite" || bad "suite"
+"$PY" -m pytest -q -m "not integration" && ok "suite (3.12)" || bad "suite (3.12)"
+
+# CI runs a 3.11 + 3.12 matrix, so a 3.11-only failure can pass a 3.12-only
+# check. NOTE the honest limit: --fast skips this leg, and the pre-push hook
+# uses --fast for speed. The hook is a 3.12 gate; run the full form (no flag)
+# before opening a PR, which is what CONTRIBUTING tells you to do.
+if [ "$FAST" != "--fast" ]; then
+  step "tests on 3.11 (CI matrix parity)"
+  V311_ROOT=$(mktemp -d)
+  trap 'rm -rf "${VENV_ROOT:-}" "${V311_ROOT:-}"' EXIT   # both, even on a failed install
+  V311="$V311_ROOT/venv"
+  if uv venv -q --python 3.11 "$V311" 2>/dev/null; then
+    VIRTUAL_ENV="$V311" uv pip install -q -e ".[dev]"
+    "$V311/bin/python" -m pytest -q -m "not integration" && ok "suite (3.11)" || bad "suite (3.11)"
+  else
+    printf '   \033[33mskip\033[0m  python 3.11 unavailable locally; CI still gates it\n'
+  fi
+fi
 
 step "guardrails (SPEC section 6)"
 "$PY" -m pytest -q -m guardrail && ok "guardrails" || bad "guardrails - never weaken these to pass"

@@ -1,23 +1,40 @@
+# `pre-commit install` alone installs only the pre-commit hook type, so the
+# pre-push preflight silently never ran for anyone following CONTRIBUTING.
+default_install_hook_types: [pre-commit, pre-push]
+
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
     hooks:
       - id: trailing-whitespace
+        stages: [pre-commit]
       - id: end-of-file-fixer
+        stages: [pre-commit]
       - id: check-yaml
+        stages: [pre-commit]
       - id: check-toml
+        stages: [pre-commit]
       - id: check-merge-conflict
+        stages: [pre-commit]
       - id: check-added-large-files
+        stages: [pre-commit]
         args: ["--maxkb=500"]
       - id: detect-private-key
         exclude: ^tests/test_scan_secrets\.py$
+        stages: [pre-commit]
 
+  # Pinned to the SAME exact version pyproject pins, so the hook, preflight
+  # and CI cannot disagree on formatting. Bump both together or not at all.
+  # (Not `language: system`: that needs ruff on PATH, which fails for anyone
+  # committing from a GUI client or a shell without the venv activated.)
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.6.9
+    rev: v0.16.6
     hooks:
       - id: ruff
         args: [--fix]
+        stages: [pre-commit]
       - id: ruff-format
+        stages: [pre-commit]
 
   # The repo is public. This is the hook that matters most.
   - repo: local
