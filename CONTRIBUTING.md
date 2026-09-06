@@ -48,37 +48,56 @@ Work happens on parallel paths cut from `main`, one per independent surface:
 They are parallel because they own separate modules and share only `daydag.config`. Keep
 it that way - if two paths need the same new helper, it belongs on `main` first.
 
-## The AI review panel — currently OFF
+## Review before you push
 
-The workflow is disabled (`gh workflow disable ai-review.yml`) and its four
-checks are no longer required, because it never completed a single review. In
-order: missing `id-token` permission, then a vacuous pass via the
-workflow-validation skip, then an empty API credit balance, then an identical
-failure on a subscription token. CI still gates every PR.
+Reviews happen locally, before the push - not in CI. Two layers, and they are
+different kinds of check:
 
-Re-enable with `gh workflow enable ai-review.yml`, re-add the four `ai: *`
-contexts in `scripts/apply_branch_protection.sh`, and re-run that script.
-
-The notes below still apply when it comes back.
-
-The panel authenticates with a **Claude Code OAuth token**, not an API key. API
-credit is a separate balance that a Pro or Max subscription does not fund, so an
-API key on a subscription-only account fails every request with "credit balance
-is too low" - which surfaces as all four `ai:` checks failing.
-
-To (re)issue the token:
+**1. Deterministic - automated, blocks the push.**
 
 ```sh
-claude setup-token
-gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo unnitin/daydag
+bash scripts/preflight.sh          # CI-equivalent: throwaway venv, ~30s
+bash scripts/preflight.sh --fast   # reuse .venv, a few seconds
 ```
 
-**A PR that edits anything under `.github/workflows/` gets no real review.** The
-action refuses to run when the workflow on the branch differs from the version on
-`main` - a deliberate guard against a PR rewriting the workflow to exfiltrate
-secrets. It exits *successfully* when it skips, so the four `ai:` checks go green
-having done nothing. Treat a workflow-touching PR as unreviewed regardless of the
-ticks, and review it by hand.
+Runs exactly what CI runs: secret scan over every tracked file, ruff check and
+format, the suite on a clean install, and the guardrail tests on their own. It
+is wired as a `pre-push` hook, so `git push` runs the `--fast` form for you.
+
+It builds a **throwaway venv** by default rather than reusing yours, because
+"it passed locally" has already been untrue twice: the editable install put
+`src/daydag` on `sys.path` but not the repo root, and `setup-uv` needed a
+lockfile that did not exist. Both passed in a warm venv and failed in CI.
+
+**2. Judgement - you invoke it, costs nothing.**
+
+Run `/code-review` in your Claude Code session before opening the PR. That is
+the review layer. It reads the diff with the repo's context already loaded,
+which is when a fix is cheapest - and it bills against the subscription rather
+than API credit.
+
+Worth asking it for specifically, since these are the failure modes this repo
+actually has:
+
+- a second writer to an artifact the ownership table assigns elsewhere
+- a send path that reaches anything but Nitin's own DM
+- a loop that auto-closes on repo or Jira evidence instead of surfacing
+- a guardrail-marked test weakened, skipped, or xfailed
+- a real identifier outside `.env` - the repo is public
+
+### Why not in CI
+
+It was, briefly, and never completed a single review across four distinct
+failure modes. The worst was silent: the action exits *successfully* when it
+skips, so four required checks went green having read nothing. A review layer
+that fails open is worse than none, because it looks like coverage.
+
+`.github/workflows/ai-review.yml` is still in the repo, disabled, with its
+reviewer prompts intact. If it is ever revived: land it **optional**, prove it
+against a branch with planted defects (a hardcoded id, a second writer, a
+weakened guardrail test) before trusting it, and only make it required once it
+has produced findings worth acting on. A check that has never caught anything
+should never be able to block a merge.
 
 ## Merging
 
