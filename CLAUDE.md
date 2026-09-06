@@ -63,7 +63,7 @@ Other frequent names: ML-Lead (lead ML, first-party models), Stakeholder-1, Eng-
 - `Fact Base/Internal Links.md` + `Important Links.md` — canonical Slack channel IDs, repo URLs.
 - iCloud caveat: files may be evicted placeholders; if a read returns stub content, `brctl download <path>` or open in Finder first.
 
-**Gmail:** Gemini meeting notes come from `gemini-notes@google.com` — search by **sender + body keywords + newer_than:Nd**, never by subject (Gemini uses the meeting title as body, not a consistent subject). VP-AI's AIM updates: `from:${EMAIL_VP_AI} subject:"AIM Program Update"`.
+**Gmail:** Gemini meeting notes come from `gemini-notes@google.com`. **Corrected Sep 6, 2026 by the connector audit (#2):** the subject IS consistent and structured — `Notes: “<meeting title>” <date>` — across all 201 notes in a 30-day window. Parse the subject for an exact title; it beats fuzzy body matching and resolves the back-to-back-1:1 ambiguity outright. Every note also carries the `meeting notes` label, so `label:` narrows the search further. The earlier “never search by subject” guidance was wrong. VP-AI's AIM updates: `from:${EMAIL_VP_AI} subject:"AIM Program Update"`.
 
 **GitHub:** org `CreateMusicGroup`. Active repos for the progress loop: `createos-discovery-services` (prod Deal Modeler), `createos-lead-generation` (first-party ML, ML-Lead), `createos-analytics` (Luminate exploration, locked), `createos-ai-platform` (agent platform; has a wiki). Pods use GitHub issue boards with wave parent issues. Use `gh` CLI (assume authenticated on Nitin's machine). Private wiki pages don't fetch anonymously.
 

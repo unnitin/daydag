@@ -125,7 +125,7 @@ The gap: Gemini notes arrive by email with **the meeting title in the body, not 
 
 So the link is a ledger, and calendar is the driver.
 
-1. **Every qualifying event gets a row** at the start of the day — from the day-by-day calendar pull, keyed on `(event id, instance start)` so recurring 1:1s are distinct rows. Qualifying means accepted, ≥2 attendees, not OOO/focus/hold.
+1. **Every qualifying event gets a row** at the start of the day — from the day-by-day calendar pull, keyed on `(event id, instance start)` so recurring 1:1s are distinct rows. Qualifying means **not declined**, ≥2 attendees, not OOO/focus/hold. Requiring *accepted* dropped 61% of real meetings when measured against five days of live calendar (#2) - most invites are never answered.
 2. **Ingestion attaches, it doesn't discover.** Each sweep (12:00, 17:00) tries to match unattached rows against Gemini mail from `gemini-notes@google.com`, the Notion DB, and Granola. Match score = arrival inside `[event end, +6h]` · fuzzy title against the event summary · attendee overlap. High score attaches; **ambiguous surfaces rather than guesses** (invariant 5) — two 1:1s back to back with near-identical titles is the case that breaks naive matching.
 3. **A row stays open across sweeps.** Notion lands ~a week late, so an unmatched row is re-checked, not closed. Late arrival backfills and re-runs ingestion for that meeting, which is why the ledger lives in the event log rather than being derived fresh each run.
 4. **Unmatched by the next morning becomes a brief line** — "tue: 3 meetings w/ no notes — X, Y, Z. recorded anywhere?" That is the actual guarantee. Not that every meeting has notes; that a missing one is *visible* the next morning instead of discovered a month later.

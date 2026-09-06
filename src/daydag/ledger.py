@@ -15,6 +15,7 @@ visible the next morning instead of a month later.
 from __future__ import annotations
 
 import difflib
+import re
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -31,18 +32,50 @@ ARRIVAL_WINDOW = {
 }
 DEFAULT_ARRIVAL_WINDOW = timedelta(hours=6)
 
+#: Gemini's subject line, which the issue #2 audit found to be rigidly
+#: structured: `Notes: "<meeting title>" <date>`. SPEC section 4 claimed the
+#: opposite - that the title lived in the body and the subject was inconsistent -
+#: and every one of 201 notes over 30 days contradicts it. The quotes are the
+#: typographic pair, not ASCII.
+_GEMINI_SUBJECT = re.compile(
+    r'^Notes:\s*(?:\u201c(?P<curly>[^\u201d]+)\u201d|"(?P<straight>[^"]+)")(?:\s|$)'
+)
+
+
+def title_from_gemini_subject(subject: str) -> str | None:
+    """The exact meeting title from a Gemini subject, or None if it is not one.
+
+    Returning None rather than a best guess matters: an unparseable subject
+    falls back to fuzzy matching, which knows how to surface an ambiguity.
+    A guess here would look like certainty.
+    """
+    match = _GEMINI_SUBJECT.match(subject or "")
+    if not match:
+        return None
+    return match.group("curly") or match.group("straight")
+
+
 #: Below this, a note is not confidently placed. Ties surface rather than guess.
 MATCH_THRESHOLD = 0.6
 
 #: Calendar entries that are not meetings anyone takes notes at.
 NON_MEETING_KINDS = frozenset({"ooo", "focus", "hold"})
 
+#: The only response that means the meeting did not happen for him.
+#:
+#: Measured over 5 real days (issue #2 connector audit): of 77 calendar events,
+#: 23 were "accepted" but 60 were genuine meetings - most invites are simply
+#: never answered. Requiring "accepted" dropped 61% of them, including standups
+#: with 13 and 21 attendees, and dropped them silently: a meeting with no row
+#: can never be surfaced as a notes gap, so the absence is invisible by design.
+DISQUALIFYING_RESPONSES = frozenset({"declined"})
+
 
 @dataclass(frozen=True)
 class Match:
     """A note offered to the ledger, from Gemini, Notion or Granola."""
 
-    title: str
+    title: str | None
     arrived: datetime
     attendees: list[str]
     source: str
@@ -68,8 +101,14 @@ class Row:
 
 
 def _qualifies(event: dict[str, Any]) -> bool:
+    """Whether a calendar entry is a meeting the ledger should track.
+
+    Deliberately inclusive. A false positive costs one line in a brief that
+    says "no notes"; a false negative is a meeting the system cannot see at all.
+    """
+    response = event.get("response_status", "needsAction")
     return (
-        event.get("accepted", False)
+        response not in DISQUALIFYING_RESPONSES
         and event.get("kind", "meeting") not in NON_MEETING_KINDS
         and len(event.get("attendees") or []) >= 2
     )
@@ -113,13 +152,36 @@ class Ledger:
     # -- notes attach ----------------------------------------------------
 
     def _score(self, row: Row, note: Match) -> float:
-        window = ARRIVAL_WINDOW.get(note.source, DEFAULT_ARRIVAL_WINDOW)
-        if not (row.end <= note.arrived <= row.end + window):
+        if not self._in_window(row, note):
             return 0.0
-        title = difflib.SequenceMatcher(None, row.summary.casefold(), note.title.casefold()).ratio()
+        title = difflib.SequenceMatcher(
+            None, row.summary.casefold(), (note.title or "").casefold()
+        ).ratio()
         overlap = set(row.attendees) & set(note.attendees)
         shared = len(overlap) / max(len(row.attendees), 1)
         return (title * 0.7) + (shared * 0.3)
+
+    def _exact_title_match(self, note: Match) -> Row | None:
+        """The one open row whose summary equals the note title, if exactly one.
+
+        Zero or several means the title cannot settle it, and the fuzzy path -
+        which knows how to surface an ambiguity - takes over.
+        """
+        title = (note.title or "").strip().casefold()
+        if not title:
+            return None
+        hits = [
+            row
+            for row in self._rows.values()
+            if row.note is None
+            and row.summary.strip().casefold() == title
+            and self._in_window(row, note)
+        ]
+        return hits[0] if len(hits) == 1 else None
+
+    def _in_window(self, row: Row, note: Match) -> bool:
+        window = ARRIVAL_WINDOW.get(note.source, DEFAULT_ARRIVAL_WINDOW)
+        return row.end <= note.arrived <= row.end + window
 
     def offer_note(self, note: Match) -> Row | None:
         """Attach a note to the row it belongs to, or surface that it is unclear.
@@ -129,6 +191,10 @@ class Ledger:
         indistinguishable the note attaches to neither - invariant 5 says
         surface, do not resolve.
         """
+        exact = self._exact_title_match(note)
+        if exact is not None:
+            return self._attach(exact, note)
+
         scored = sorted(
             ((self._score(row, note), row) for row in self._rows.values() if row.note is None),
             key=lambda pair: pair[0],
@@ -143,12 +209,15 @@ class Ledger:
             self._ambiguous.append(note)
             return None
 
-        best.note = note
-        if best.day_closed:
+        return self._attach(best, note)
+
+    def _attach(self, row: Row, note: Match) -> Row:
+        row.note = note
+        if row.day_closed:
             # A late arrival is new information about a meeting already reported
             # as a gap, so ingestion runs again for it.
-            self._reingest.append(best.event_id)
-        return best
+            self._reingest.append(row.event_id)
+        return row
 
     # -- what the brief asks for -----------------------------------------
 
