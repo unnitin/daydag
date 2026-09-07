@@ -26,9 +26,14 @@ _DASHES = re.compile("[\u2014\u2013]")  # em dash, en dash
 _VARIATION_SELECTOR = "\ufe0f"
 
 #: Anything pictographic that is not on the sanctioned list.
-_EMOJI = re.compile(
-    "[\U0001f300-\U0001faff\U00002600-\U000027bf\U0001f900-\U0001f9ff\u2b00-\u2bff]"
-)
+#:
+#: The ranges must not overlap. `1F900-1F9FF` was here and sits entirely inside
+#: `1F300-1FAFF`, which CodeQL flags as `py/overly-large-range`: a redundant
+#: subrange in a character class is how a filter comes to match something other
+#: than its author believes, and this class IS a filter - `voice_violations`
+#: decides from it whether a glyph is sanctioned. Keep them disjoint so the set
+#: a reader computes by eye is the set the engine matches.
+_EMOJI = re.compile("[\U0001f300-\U0001faff\U00002600-\U000027bf\u2b00-\u2bff]")
 
 #: Minimal data that renders each push into a realistic string, so the voice
 #: fixtures exercise the interpolated form and not just the stripped skeleton.
