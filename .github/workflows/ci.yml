@@ -59,6 +59,17 @@ jobs:
       # -m "not integration": connector tests need real credentials.
       - run: uv run pytest -m "not integration" --cov=daydag --cov-report=term-missing
 
+  docs:
+    name: docs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # --check so CI never writes: a generated file committed by a bot drifts
+      # from the source it was generated from, and then nobody trusts either.
+      # The build is a local step; CI only asserts it would succeed.
+      - name: build docs (check only)
+        run: python3 scripts/build_docs.py --check
+
   guardrails:
     name: guardrails
     runs-on: ubuntu-latest
