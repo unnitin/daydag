@@ -10,6 +10,7 @@ formatting.
 
 from __future__ import annotations
 
+import re
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -623,7 +624,12 @@ def test_meetings_are_ordered_by_the_instant_not_by_how_it_was_written():
     early["end"] = early["end"].astimezone(utc)
     text = _assemble(FakeSources(events=[_event("late", "3pm PT", 15), early])).render()
 
-    lines = [line for line in text.splitlines() if "calendar.example.com" in line]
+    # Match the meeting-line SHAPE, not a hostname substring. `"host" in line`
+    # is `py/incomplete-url-substring-sanitization` (high): harmless as a test
+    # filter, but it is the same expression that, used as a real check, passes
+    # `calendar.example.com.attacker.net`. Not worth teaching the pattern here,
+    # and matching the rendered form is a sharper assertion anyway.
+    lines = [line for line in text.splitlines() if re.match(r"- \d{1,2}:\d{2}\b", line)]
     assert lines[0].startswith("- 9:00"), f"ordered by string, not by instant: {lines}"
     assert "overlap" not in text, "two meetings six hours apart are not a collision"
 
