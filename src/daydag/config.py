@@ -13,6 +13,42 @@ from pathlib import Path
 
 _REFERENCE = re.compile(r"\$\{([A-Z0-9_]+)\}")
 
+#: A value that is *entirely* one reference, e.g. "${SLACK_USER_VP_DATA}".
+_WHOLE_REFERENCE = re.compile(r"^\$\{([A-Z0-9_]+)\}$")
+
+#: The principal's timezone. Configuration, not a constant: every wall-clock
+#: boundary in the system is his local one, and hardcoding a zone in a module
+#: means the agent works for exactly one person. Read from TIMEZONE in .env.
+DEFAULT_TIMEZONE = "America/Los_Angeles"
+
+
+def resolve_reference(
+    value: str, identities: Mapping[str, str] | None, *, what: str, error: type[Exception]
+) -> str:
+    """Expand a lone ``${VAR}``, or refuse it.
+
+    Docs and code carry identifiers as ``${VAR}`` because the repo is public, so
+    a reference arriving here is normal. Passing one *through* is not: as literal
+    text it is a syntactically valid query that matches nothing, which is
+    indistinguishable from a genuinely empty result.
+
+    Lives here rather than beside its caller because this is where identifiers
+    are resolved - a second copy elsewhere was already carrying its own regex.
+    """
+    reference = _WHOLE_REFERENCE.match(value.strip())
+    if not reference:
+        return value.strip()
+    key = reference.group(1)
+    if identities is None:
+        raise error(
+            f"{what} is the unresolved reference ${{{key}}}. "
+            "Pass identities= so it can be expanded; a literal ${...} matches nothing."
+        )
+    try:
+        return identities[key].strip()
+    except (KeyError, ConfigError) as exc:
+        raise error(f"{key} is not set. Add it to .env; see .env.example.") from exc
+
 
 class ConfigError(RuntimeError):
     """Raised when a required identifier is missing or unresolvable.

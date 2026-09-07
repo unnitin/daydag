@@ -40,7 +40,7 @@ from zoneinfo import ZoneInfo
 # One parser for Gemini subjects, re-exported rather than reimplemented. The
 # ledger owns it because the ledger is what a parsed title is *for*; a second
 # copy here would be a second set of bugs that disagree only on hard cases.
-from daydag.config import ConfigError
+from daydag.config import DEFAULT_TIMEZONE, resolve_reference
 from daydag.ledger import title_from_gemini_subject
 
 __all__ = [
@@ -90,43 +90,25 @@ class RecipeError(ValueError):
     """
 
 
-#: The principal's timezone. Every wall-clock boundary in this module - the
-#: calendar day, the overnight cutoff - is his local one, not UTC.
-PACIFIC = ZoneInfo("America/Los_Angeles")
+#: The principal's timezone. Sourced from config rather than written here: it is
+#: configuration, not a constant, and a zone hardcoded in a module means the
+#: agent works for exactly one person. Kept as a module name because every
+#: wall-clock boundary here - the calendar day, the overnight cutoff - is local.
+PACIFIC = ZoneInfo(DEFAULT_TIMEZONE)
 
 
 # ---------------------------------------------------------------------------
 # shared helpers
 # ---------------------------------------------------------------------------
 
-_VAR_REFERENCE = re.compile(r"^\$\{([A-Z0-9_]+)\}$")
-
 
 def _resolve(value: str, identities: Mapping[str, str] | None, *, what: str) -> str:
-    """Expand a lone ``${VAR}`` reference, or refuse it.
+    """Thin delegate to :func:`daydag.config.resolve_reference`.
 
-    Docs and code carry identifiers as ``${VAR}`` because the repo is public, so
-    a reference reaching a recipe is normal. Passing one *through* is not: as
-    literal text it is a syntactically valid query that matches nothing, which
-    is indistinguishable from a genuinely empty result.
+    Kept as a local name so call sites read the same, but the logic and its
+    regex live in config - there were two regexes for one concept before.
     """
-    reference = _VAR_REFERENCE.match(value.strip())
-    if not reference:
-        return value.strip()
-    key = reference.group(1)
-    if identities is None:
-        raise RecipeError(
-            f"{what} is the unresolved reference ${{{key}}}. "
-            "Pass identities= so it can be expanded; a literal ${...} matches nothing."
-        )
-    try:
-        resolved = identities[key]
-    except (KeyError, ConfigError) as exc:
-        # Identities raises ConfigError; a plain dict raises KeyError. Catching
-        # only KeyError meant the real config path escaped as ConfigError and
-        # skipped the caller's "couldn't check X" degrade (guardrail 6).
-        raise RecipeError(f"{key} is not set. Add it to .env; see .env.example.") from exc
-    return resolved.strip()
+    return resolve_reference(value, identities, what=what, error=RecipeError)
 
 
 #: A JQL ORDER BY is one field plus an optional direction. It was the only input
