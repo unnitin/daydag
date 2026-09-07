@@ -1,6 +1,24 @@
 ---
 name: weekly-feedback-scan
-description: Run Nitin's weekly feedback scan for his two VPs — VP-AI and VP-Data. Scans the past 7 days of Slack and Gmail for evidence of progress and coaching moments, calibrates against their expectations baseline, and writes a dated Feedback Log Google Doc to the private Drive folder. Use whenever Nitin asks for a feedback scan, a feedback log, "how are VP-AI and VP-Data doing", weekly VP feedback, direct-report progress review, or when this runs as the scheduled weekly routine. Do NOT use for the team-wide progress report to sponsors (that's weekly-progress-reporting) or for planning Nitin's own week (weekly-planning).
+description: "Run Nitin's weekly feedback scan for his two VPs — VP-AI and VP-Data. Scans the past 7 days of Slack and Gmail for evidence of progress and coaching moments, calibrates against their expectations baseline, and writes a dated Feedback Log Google Doc to the private Drive folder. Use whenever Nitin asks for a feedback scan, a feedback log, \"how are VP-AI and VP-Data doing\", weekly VP feedback, direct-report progress review, or when this runs as the scheduled weekly routine. Do NOT use for the team-wide progress report to sponsors (that's weekly-progress-reporting) or for planning Nitin's own week (weekly-planning)."
+daydag:
+  # SPEC 10.1, mechanical rather than prose. `sensitivity: private` is what lets
+  # the registry REFUSE to route this skill's output to any surface with an
+  # audience above one - a brief, a channel draft, or DayDAG/State.md, which is
+  # plaintext in an iCloud-synced vault. Its carry-forward items live in the
+  # event log instead. Do not relax this key; a guardrail test asserts it.
+  #
+  # The one artifact below is an id, not a surface. It lives on the
+  # `drive:private` surface, which is the name `route()` reasons about and one
+  # of the three in registry.PRIVATE_SURFACES - so this skill's own output is
+  # routable and nothing else is.
+  writes:
+    - drive:${GDRIVE_FEEDBACK_LOG_FOLDER}/
+  reads: [slack, gmail, drive]
+  consumes: [evidence.pulse, evidence.slack]
+  emits: []
+  schedule: "weekly"
+  sensitivity: private
 ---
 
 # Weekly Feedback Scan — VP-AI & VP-Data

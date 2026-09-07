@@ -1,6 +1,15 @@
 ---
 name: weekly-planning-and-progress
-description: Every Friday 1pm PT: read durable context, run weekly-progress-reporting then weekly-planning, and update Workstreams for Nitin (Data & AI, CMG).
+description: "Every Friday 1pm PT: read durable context, run weekly-progress-reporting then weekly-planning, and update Workstreams for Nitin (Data & AI, CMG)."
+daydag:
+  # Orchestration only: it owns the order, the two skills own every artifact.
+  # This is the row behind ARCHITECTURE's "Fri 13:00 weekly planning + progress".
+  writes: []
+  reads: [obsidian]
+  consumes: []
+  emits: []
+  schedule: "fri 13:00"
+  sensitivity: shared
 ---
 
 You are running Nitin Srivastava's weekly Data & AI workflow for Create Music Group (CMG). Run the steps IN ORDER. Today is the run date; "week ahead" = next Mon–Fri, "past week" = the Mon–Fri just ending.

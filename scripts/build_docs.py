@@ -42,11 +42,16 @@ _LINK = re.compile(r"\[[^\]]*\]\((?!https?://|mailto:|#)([^)\s]+)\)")
 REQUIRED_DOCS = ("README.md", "SPEC.md", "ARCHITECTURE.md", "BUILD.md", "CONTRIBUTING.md")
 
 
+#: Directories the link check does not descend into. ``worktrees`` rather than
+#: ``.claude``: `.claude/worktrees/` holds whole checkouts and would be scanned
+#: many times over, but `.claude/skills/` is documentation like any other and
+#: was silently exempt - a broken link in a SKILL.md sailed through CI.
+SKIP_DIRS = frozenset({".git", ".venv", "node_modules", "worktrees"})
+
+
 def markdown_files() -> list[Path]:
     return sorted(
-        path
-        for path in ROOT.rglob("*.md")
-        if not any(part in {".git", ".venv", "node_modules", ".claude"} for part in path.parts)
+        path for path in ROOT.rglob("*.md") if not any(part in SKIP_DIRS for part in path.parts)
     )
 
 

@@ -1,13 +1,37 @@
-# Planning skills — moved here from Cowork
+# Skills — the four weekly routines, plus DayDAG
 
-All planning work is now orchestrated from this repo. Three skills, copied **verbatim** on 2026-09-05:
+All planning work is orchestrated from this repo. Four skills were copied **verbatim** from Cowork on 2026-09-05; `daydag` is this repo's own.
 
 | Skill | Role | Came from |
 |---|---|---|
+| `daydag` | the day between the Fridays: briefs, ingestion, chase, pulse, on-demand commands | this repo (#4) |
 | `weekly-planning-and-progress` | orchestrator (order + cross-cutting guardrails only) | `~/Documents/Claude/Scheduled/weekly-planning-and-progress/` |
 | `weekly-planning` | forward-looking: week-ahead plan + per-meeting talking points + Workstreams write-back | Cowork skills-plugin (live) |
 | `weekly-progress-reporting` | backward-looking: Goals & Progress doc + highlights email | Cowork skills-plugin (live) |
 | `weekly-feedback-scan` | private weekly VP feedback log for VP-AI & VP-Data → Drive | Cowork skills-plugin (live) |
+
+## Every skill here carries a `daydag:` manifest
+
+Frontmatter block: `writes` / `reads` / `consumes` / `emits` / `schedule` / `sensitivity`. The Skill loader ignores it; `daydag.manifests` reads it and hands the set to `daydag.registry`, which refuses to load two writers for one artifact and refuses to route a `sensitivity: private` skill anywhere with an audience above one. Run `python -m daydag.manifests` to see the ownership table and schedule as declared; `scripts/preflight.sh` runs the same check on every push.
+
+Three consequences worth knowing before you edit one:
+
+- **`weekly-feedback-scan` is `sensitivity: private`** and stays that way. SPEC §10.1 is the strictest rule in the repo and this key is what makes it mechanical. A guardrail test asserts it.
+- **`Fact Base/Workstreams.md` is `weekly-planning`'s** until the custody cut (#37). Adding it to another skill's `writes:` is a startup error, on purpose.
+- **The block is validated strictly.** An unknown key or an unknown `sensitivity` fails to load, because both of those failures are otherwise silent: `write:` for `writes:` leaves an artifact unowned, and `privat` reads as "not private".
+
+Two limits worth knowing rather than rediscovering:
+
+- **`writes:` holds artifact ids, `route()` takes surfaces.** Different namespaces. `weekly-feedback-scan` writes the artifact `drive:${GDRIVE_FEEDBACK_LOG_FOLDER}/` onto the surface `drive:private`; nothing derives one from the other yet, so passing an artifact id to `route()` gets a refusal that looks like a guardrail firing and is really a category error. `slack:dm-nitin` is a surface only - it is the one place every skill may land output, so no skill declares it as an artifact.
+- **Ids are matched exactly.** A trailing `/` records that a skill owns a folder; it does not authorise the files inside it, and it does not collide with a sibling skill declaring one of those files. Prefix matching is a registry change, not a manifest one.
+
+### Skill vs reference file vs code
+
+The question #4 raised, now answerable because all three exist. `SKILL.md` holds **instructions to an agent** — what to do, in what order, under which guardrails. `reference/` holds **durable facts a run consults** (the connector audit, vault recipes, the goals snapshot). `src/daydag/` holds **mechanism**. Tie-breakers: prose describing how a function works belongs in a module docstring; a fact that will be stale in a month belongs in `reference/`. See ARCHITECTURE's Extensibility section.
+
+### One deliberate edit to the verbatim copies
+
+`weekly-planning-and-progress` shipped frontmatter that is **not valid YAML** — an unquoted `description:` whose value contains `": "`, which parses as a nested mapping and raises. Its description is now quoted. Same treatment, pre-emptively, for `weekly-feedback-scan`. Bodies are untouched; worth fixing at the Cowork source too.
 
 ## Which copy is live — resolved 2026-09-05
 
