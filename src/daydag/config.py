@@ -10,8 +10,66 @@ from __future__ import annotations
 import re
 from collections.abc import Iterator, Mapping
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 _REFERENCE = re.compile(r"\$\{([A-Z0-9_]+)\}")
+
+#: A value that is *entirely* one reference, e.g. "${SLACK_USER_VP_DATA}".
+_WHOLE_REFERENCE = re.compile(r"^\$\{([A-Z0-9_]+)\}$")
+
+#: The principal's timezone. Configuration, not a constant: every wall-clock
+#: boundary in the system is his local one, and hardcoding a zone in a module
+#: means the agent works for exactly one person. This is the FALLBACK; the
+#: configured value is read by `timezone_for()` below.
+DEFAULT_TIMEZONE = "America/Los_Angeles"
+
+
+def timezone_for(identities: Mapping[str, str] | None = None) -> ZoneInfo:
+    """The principal's timezone, from ``TIMEZONE`` in .env, else the fallback.
+
+    An earlier version of this module claimed the value was "read from TIMEZONE
+    in .env" while nothing read it - `TIMEZONE=Europe/London` silently produced
+    Pacific day boundaries. The comment was the whole feature. This is it made
+    true; an unknown zone name is refused rather than silently falling back,
+    because a typo would otherwise present as correct-looking wrong times.
+    """
+    if identities is None:
+        return ZoneInfo(DEFAULT_TIMEZONE)
+    name = identities.get("TIMEZONE", DEFAULT_TIMEZONE) or DEFAULT_TIMEZONE
+    try:
+        return ZoneInfo(name.strip())
+    except ZoneInfoNotFoundError as exc:
+        raise ConfigError(
+            f"TIMEZONE={name.strip()!r} is not a known IANA zone; see .env.example."
+        ) from exc
+
+
+def resolve_reference(
+    value: str, identities: Mapping[str, str] | None, *, what: str, error: type[Exception]
+) -> str:
+    """Expand a lone ``${VAR}``, or refuse it.
+
+    Docs and code carry identifiers as ``${VAR}`` because the repo is public, so
+    a reference arriving here is normal. Passing one *through* is not: as literal
+    text it is a syntactically valid query that matches nothing, which is
+    indistinguishable from a genuinely empty result.
+
+    Lives here rather than beside its caller because this is where identifiers
+    are resolved - a second copy elsewhere was already carrying its own regex.
+    """
+    reference = _WHOLE_REFERENCE.match(value.strip())
+    if not reference:
+        return value.strip()
+    key = reference.group(1)
+    if identities is None:
+        raise error(
+            f"{what} is the unresolved reference ${{{key}}}. "
+            "Pass identities= so it can be expanded; a literal ${...} matches nothing."
+        )
+    try:
+        return identities[key].strip()
+    except (KeyError, ConfigError) as exc:
+        raise error(f"{key} is not set. Add it to .env; see .env.example.") from exc
 
 
 class ConfigError(RuntimeError):
