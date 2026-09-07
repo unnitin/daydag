@@ -248,12 +248,58 @@ class EventLog:
         self._db.commit()
 
     def _rows(self, kind: str | None = None) -> list[tuple[str, str, dict[str, Any]]]:
+        """Decoded events, skipping any row whose payload will not parse.
+
+        Skipped rather than raised. This feeds `chase_items`, which feeds
+        `write_state` - so one torn or hand-repaired row would otherwise take
+        `State.md` down wholesale. The run log is now by far the highest-volume
+        writer into this table, and a damaged row of *its* would have blanked
+        the chase list. A row that cannot be decoded carries nothing a chase
+        list could show anyway; `payloads` hands the raw text back for callers
+        that want to say so.
+        """
         sql = "SELECT kind, sensitivity, payload FROM events"
         args: tuple[Any, ...] = ()
         if kind is not None:
             sql += " WHERE kind = ?"
             args = (kind,)
-        return [(k, s, json.loads(p)) for k, s, p in self._db.execute(sql, args)]
+        rows = []
+        for k, s, p in self._db.execute(sql, args):
+            try:
+                rows.append((k, s, json.loads(p)))
+            except ValueError:
+                continue
+        return rows
+
+    def payloads(self, kind: str) -> list[Any]:
+        """Every payload recorded under one kind, oldest first.
+
+        The read side of `record`, for callers that wrote a structured row and
+        need it back exactly as it went in. `chase_items` predates this and
+        folds the sensitivity column into each item, which is right for a chase
+        entry and wrong for anything that has to round-trip.
+
+        Ordered explicitly: a bare `SELECT` happens to come back in rowid order
+        today, and "happens to" is not a thing a run log can be built on - the
+        whole value of the log is which run came last.
+
+        A row that will not decode comes back as its **raw text** rather than
+        raising. One torn write or hand-repaired row would otherwise take the
+        whole history down from inside this comprehension, before any caller
+        could attribute the damage to a single row - and the moment a store gets
+        damaged is the moment somebody is reading it. Callers already have to
+        handle a payload that is not the shape they expect; this makes a
+        corrupt one the same case rather than a fatal one.
+        """
+        rows = []
+        for (payload,) in self._db.execute(
+            "SELECT payload FROM events WHERE kind = ? ORDER BY id", (kind,)
+        ):
+            try:
+                rows.append(json.loads(payload))
+            except ValueError:
+                rows.append(payload)
+        return rows
 
     def chase_items(self) -> list[dict[str, Any]]:
         """Chase entries, each tagged with the sensitivity that gates the vault."""
