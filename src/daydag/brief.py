@@ -205,7 +205,7 @@ RED = "🔴"
 _OTHER_TIERS = ("🟡", "🟢")
 
 #: Any ATX heading, used to scope priority by section (see red_items).
-_HEADING_ANY = re.compile(r"^#{1,6}\s+(?P<name>.+?)\s*$")
+_HEADING_ANY = re.compile(r"^(?P<hashes>#{1,6})\s+(?P<name>.+?)\s*$")
 
 #: A list item, with or without a checkbox, under any heading at all. Guardrail
 #: 2: the layout evolves (Section A-D became Priorities around 0622), so nothing
@@ -227,6 +227,7 @@ def red_items(note: str) -> list[tuple[int, str]]:
     """
     found: list[tuple[int, str]] = []
     under_red = False
+    red_level = 0
     for lineno, line in enumerate((note or "").splitlines(), 1):
         heading = _HEADING_ANY.match(line)
         if heading:
@@ -237,7 +238,16 @@ def red_items(note: str) -> list[tuple[int, str]]:
             # it only looked right because the fixtures repeated the emoji on
             # every item. A heading naming several tiers is the triage legend.
             tiers = [t for t in (RED, *_OTHER_TIERS) if t in heading["name"]]
-            under_red = tiers == [RED]
+            level = len(heading["hashes"])
+            if tiers == [RED]:
+                under_red, red_level = True, level
+            elif under_red and level <= red_level:
+                # Only a heading at the SAME level or shallower ends the
+                # section. Clearing on any heading meant a `### Ingestion`
+                # nested inside `## 🔴 High` silently dropped every item under
+                # it - the same failure this block was written to fix, one
+                # level down, and no fixture nests a heading.
+                under_red = False
             continue
         item = _ITEM.match(line)
         if not item:
@@ -256,7 +266,7 @@ def red_items(note: str) -> list[tuple[int, str]]:
 # State.md - read, because a hand edit wins over anything derived
 # --------------------------------------------------------------------------
 
-_HEADING = re.compile(r"^#{1,6}\s+(?P<name>.+?)\s*$")
+_HEADING = re.compile(r"^(?P<hashes>#{1,6})\s+(?P<name>.+?)\s*$")
 _BULLET = re.compile(r"^\s*[-*]\s+(?P<body>\S.*?)\s*$")
 _MD_LINK = re.compile(r"\[(?P<label>[^\]]*)\]\((?P<url>[^)\s]+)\)")
 #: `)` excluded so a hand-written "(see https://x)" does not capture the
@@ -268,11 +278,18 @@ def _md_section(text: str, name: str) -> list[str]:
     """Bullet bodies under the heading called ``name``, whatever its level."""
     wanted = name.casefold()
     collecting = False
+    section_level = 0
     bodies: list[str] = []
     for line in text.splitlines():
         heading = _HEADING.match(line)
         if heading:
-            collecting = heading["name"].casefold() == wanted
+            level = len(heading["hashes"])
+            if heading["name"].casefold() == wanted:
+                collecting, section_level = True, level
+            elif collecting and level <= section_level:
+                # A hand-added `### Snoozed` under `## Chase list` must not end
+                # the section. State.md is edited by a human; nesting is normal.
+                collecting = False
             continue
         bullet = _BULLET.match(line)
         if collecting and bullet:
@@ -292,7 +309,15 @@ def _split_link(body: str) -> tuple[str, str | None]:
         return (body[: link.start()] + link["label"] + body[link.end() :]).strip(" -·"), link["url"]
     bare = _BARE_URL.search(body)
     if bare:
-        return (body[: bare.start()] + body[bare.end() :]).strip(" -·"), bare["url"]
+        # Drop a bracket left wrapping nothing. Excluding `)` from the URL kept
+        # it out of the link but left "(see )" behind - half a fix reads worse
+        # than none, because it looks deliberate.
+        head, tail = body[: bare.start()], body[bare.end() :]
+        if head.rstrip().endswith("(") and tail.lstrip().startswith(")"):
+            head, tail = head.rstrip()[:-1], tail.lstrip()[1:]
+        # Collapse the gap the removal leaves: "see  for detail" reads as a
+        # typo in a brief, which spends the reader's trust on nothing.
+        return re.sub(r"\s{2,}", " ", head + tail).strip(" -·"), bare["url"]
     return body.strip(), None
 
 
@@ -564,7 +589,21 @@ def _seed_and_gaps(ledger: Ledger, events: Sequence[Mapping[str, Any]], now: dat
 
     Seeding first is the whole mechanism: a meeting with no row can never be
     surfaced as a gap, so the gap the agent reports tomorrow is created today.
+
+    A payload missing ``attendees`` is refused rather than tolerated. The
+    ledger's qualification rule reads that key, so an adapter that omits it
+    seeds ZERO rows and the notes-gap section simply vanishes - no error, no
+    "couldn't check" line, and tomorrow's gap is never created. A missing
+    ``id`` or ``end`` already raises and is therefore surfaced; the asymmetry
+    was the bug, not the strictness.
     """
+    for event in events:
+        missing = [key for key in ("id", "start", "end", "attendees") if key not in event]
+        if missing:
+            raise KeyError(
+                f"calendar record is missing {', '.join(missing)}; "
+                "the ledger cannot qualify it and the gap would vanish silently"
+            )
     ledger.seed_day(events)
     return ledger.notes_gaps(as_of=now)
 

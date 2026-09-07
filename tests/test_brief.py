@@ -739,3 +739,67 @@ def test_a_parenthesised_bare_url_does_not_capture_its_bracket():
     found = _BARE_URL.search("see (https://example.com/x) for detail")
     assert found is not None
     assert found["url"] == "https://example.com/x"
+
+
+# --- second review pass: regressions from the first pass's fixes ------------
+
+
+def test_a_nested_heading_does_not_end_the_red_section():
+    """`### Ingestion` under `## 🔴 High` must not drop the items beneath it.
+
+    The heading-scoping fix cleared the flag on ANY heading, which reintroduced
+    the very failure it was written to fix, one level down. Real notes nest.
+    """
+    note = (
+        "## 🔴 High — needs my hand this week\n"
+        "- [ ] land the discovery cutover\n"
+        "### Ingestion\n"
+        "- [ ] unblock the silver trigger\n"
+        "## 🟡 Medium\n"
+        "- [ ] not this one\n"
+    )
+    assert [text for _, text in red_items(note)] == [
+        "land the discovery cutover",
+        "unblock the silver trigger",
+    ]
+
+
+def test_a_nested_heading_does_not_end_a_state_section():
+    """State.md is hand-edited; a `### Snoozed` under `## Chase list` is normal."""
+    from daydag.brief import _md_section
+
+    text = (
+        "## Chase list\n- VP-Data · rehearsal\n"
+        "### Snoozed\n- CTO · vpc move\n"
+        "## Watch items\n- nightly\n"
+    )
+    assert _md_section(text, "Chase list") == ["VP-Data · rehearsal", "CTO · vpc move"]
+
+
+def test_removing_a_bare_url_does_not_strand_its_bracket():
+    """Excluding `)` from the URL kept it out of the link but left "(see )"."""
+    from daydag.brief import _split_link
+
+    text, url = _split_link("see (https://example.com/7) for detail")
+    assert url == "https://example.com/7"
+    assert "(" not in text and ")" not in text
+    assert text == "see for detail"
+
+
+@pytest.mark.guardrail
+def test_a_calendar_record_without_attendees_is_refused_not_ignored():
+    """Silently seeding zero rows makes tomorrow's notes gap impossible.
+
+    The ledger's qualification reads `attendees`; an adapter omitting it seeded
+    nothing and the section vanished with no error and no degrade line, while a
+    missing `id` raised and was surfaced. The asymmetry was the bug.
+    """
+    from daydag.brief import _seed_and_gaps
+    from daydag.ledger import Ledger
+
+    with pytest.raises(KeyError, match="attendees"):
+        _seed_and_gaps(
+            Ledger(),
+            [{"id": "e1", "start": NOW, "end": NOW, "summary": "standup"}],
+            now=NOW,
+        )
