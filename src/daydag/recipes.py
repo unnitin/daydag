@@ -316,9 +316,14 @@ def slack_overnight(
     # aware datetime's tzinfo is a FIXED offset, so across a DST change
     # yesterday-at-6pm came out an hour wrong and silently dropped an hour of
     # overnight Slack - the window nobody would think to check.
-    local = now.astimezone()
+    # PACIFIC, not `astimezone()` with no argument: the bare form converts to
+    # whatever the MACHINE's timezone is, so this passed on a Pacific laptop and
+    # was seven hours wrong on a UTC CI runner. The cutoff is the principal's
+    # local 6pm wherever the loop happens to run, and a real zone (not the fixed
+    # offset `now.tzinfo` carries) is what makes it survive a DST change.
+    local = now.astimezone(PACIFIC)
     cutoff = datetime.combine(
-        local.date() - _DAY, time(hour=since_hour), tzinfo=local.tzinfo
+        local.date() - _DAY, time(hour=since_hour), tzinfo=PACIFIC
     ).astimezone(now.tzinfo)
     user = _slack_id(mentioning, _USER_ID, identities, "mentioning")
     query = " ".join(
