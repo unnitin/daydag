@@ -61,7 +61,13 @@ bash scripts/preflight.sh --fast   # reuse .venv, a few seconds
 ```
 
 Runs exactly what CI runs: secret scan over every tracked file, ruff check and
-format, the suite on a clean install, and the guardrail tests on their own. It
+format, the docs check, the suite on a clean install, and the guardrail tests on
+their own.
+
+The docs check is there because this repo's recurring failure is documentation
+that asserts what the code does not do - a spec filename that had been renamed,
+a parser the docs described and nothing called. A broken link is the cheapest
+part of that to catch mechanically, so it is caught. It
 is wired as a `pre-push` hook, so `git push` runs the `--fast` form for you.
 
 It builds a **throwaway venv** by default rather than reusing yours, because

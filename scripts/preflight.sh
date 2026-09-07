@@ -46,6 +46,14 @@ step "lint"
 "$RUFF" check -q . && ok "ruff check" || bad "ruff check"
 "$RUFF" format --check -q . && ok "ruff format" || bad "ruff format - run: ruff format ."
 
+step "docs"
+if python3 scripts/build_docs.py --check >/dev/null 2>&1; then
+  ok "links resolve, modules documented"
+else
+  python3 scripts/build_docs.py --check | sed 's/^/   /'
+  bad "docs - a stale link is how a doc quietly stops being true"
+fi
+
 step "tests"
 "$PY" -m pytest -q -m "not integration" && ok "suite (3.12)" || bad "suite (3.12)"
 
