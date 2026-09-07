@@ -454,10 +454,25 @@ def test_a_real_answer_is_still_read(folder: StateFolder, answer: str):
     assert queue.status(item) == "answered"
 
 
+# Write-SHAPED constructs only. The bare nouns `^assignee$` and `^comment$` were
+# here first and fired on `JIRA_FIELDS = (..., "assignee", ...)` - a field list
+# for a READ query - and on "comment" in a set of GitHub PR activity verbs.
+# A field name is not a write, and a tripwire that cannot tell the difference
+# gets muted, which is worse than one that is slightly narrower.
+#
+# Narrower in the false-positive direction only: the Atlassian MCP write tool
+# names are added, so a real write is caught by name rather than by noun.
 JIRA_WRITE_PATTERNS = {
-    "jira transition": r"transition_issue|do_transition|^transitions$|editIssue|update_issue",
-    "jira comment": r"add_comment|createComment|issue_comment|^comment$",
-    "jira assign": r"assign_issue|^assignee$",
+    "jira transition": (
+        r"transition_issue|do_transition|editIssue|update_issue"
+        r"|transitionJiraIssue|editJiraIssue"
+    ),
+    "jira comment": (r"add_comment|createComment|issue_comment|addCommentToJiraIssue"),
+    "jira assign": r"assign_issue|assignJiraIssue",
+    "jira create": r"createJiraIssue|create_issue",
+    # The attribute-call shape mainstream Jira SDKs actually expose. Anchored to
+    # a call so a `.comment` field read is not mistaken for writing one.
+    "jira sdk call": r"\.(comment|assign|transition|update|delete)\s*\(",
 }
 
 
