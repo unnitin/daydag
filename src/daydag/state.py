@@ -119,9 +119,18 @@ class StateFolder:
         for item in chase:
             if item.get("sensitivity") == "private":
                 continue
-            owner = item.get("owner", "?")
-            ask = item.get("ask", "")
-            lines.append(f"- {owner} · {ask}".rstrip(" ·"))
+            owner = item.get("owner")
+            ask = item.get("ask")
+            if not owner and not ask:
+                # A chase item carrying neither used to render as a bare "- ?",
+                # which reads as a formatting glitch rather than as the missing
+                # data it is. The event log stores whatever a caller recorded, so
+                # the shapes can drift apart silently; say so instead (guardrail
+                # 6: name what could not be read, never quietly show nothing).
+                key = item.get("key") or "unknown"
+                lines.append(f"- ⚠ chase item {key} has no owner or ask recorded")
+                continue
+            lines.append(f"- {owner or '?'} · {ask or ''}".rstrip(" ·"))
         lines += ["", "## Watch items", ""]
         for item in watch:
             # Watch items come from the same log as chase items and carry the
