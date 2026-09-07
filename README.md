@@ -36,6 +36,7 @@ artifact is the load-bearing rule; the rest is plumbing.
 | `vault` | Targeted line edits to a note, with an iCloud-aware compare-and-swap |
 | `voice` | The house voice as assertions, and the templates for every push |
 | `recipes` | SPEC §4's prose as literal, testable queries |
+| `brief` | SPEC §3.1's morning brief: the assembler every other loop composes from |
 
 ## Working on it
 
