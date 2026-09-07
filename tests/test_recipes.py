@@ -17,7 +17,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from daydag import recipes
-from daydag.config import Identities
+from daydag.config import DEFAULT_TIMEZONE, ConfigError, Identities, timezone_for
 from daydag.ledger import title_from_gemini_subject
 from daydag.pulse import WatchedRepo
 from daydag.recipes import RecipeError
@@ -492,3 +492,40 @@ def test_a_branch_name_cannot_smuggle_a_flag_or_a_second_argument(bad):
 def test_a_pr_number_must_be_a_positive_integer(bad):
     with pytest.raises(RecipeError):
         recipes.gh_pr_checks("org/repo", bad)
+
+
+# --- regressions found by the prep-pings agent reviewing this module ---------
+
+
+@pytest.mark.guardrail
+def test_the_overnight_after_date_does_not_depend_on_the_callers_tzinfo():
+    """The same instant must produce the same query, however it is expressed.
+
+    `cutoff` is converted back to the caller's tzinfo, so a UTC-aware `now`
+    rolled its .date() forward a day - 6pm PT is 01:00 UTC. `after:` is
+    exclusive, so the window skipped the exact 6pm-to-midnight hours it exists
+    to capture, while `min_ts` still claimed them. The two disagreed silently,
+    which is the worst shape: a brief that looks complete and is not.
+    """
+    ids = {"SLACK_USER_PRINCIPAL": PRINCIPAL}
+    instant = datetime(2026, 9, 7, 8, 0, tzinfo=recipes.PACIFIC)
+    pacific = recipes.slack_overnight(
+        now=instant, mentioning="${SLACK_USER_PRINCIPAL}", identities=ids
+    )
+    utc = recipes.slack_overnight(
+        now=instant.astimezone(UTC), mentioning="${SLACK_USER_PRINCIPAL}", identities=ids
+    )
+    assert pacific.query == utc.query
+    assert pacific.min_ts == utc.min_ts
+
+
+def test_the_configured_timezone_is_actually_read():
+    """`TIMEZONE` in .env was documented as read while nothing read it."""
+    assert timezone_for({"TIMEZONE": "Europe/London"}).key == "Europe/London"
+    assert timezone_for().key == DEFAULT_TIMEZONE
+
+
+def test_an_unknown_timezone_is_refused_rather_than_silently_ignored():
+    """A typo must not present as correct-looking wrong times."""
+    with pytest.raises(ConfigError, match="not a known IANA zone"):
+        timezone_for({"TIMEZONE": "Not/AZone"})

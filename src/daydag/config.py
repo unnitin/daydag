@@ -10,6 +10,7 @@ from __future__ import annotations
 import re
 from collections.abc import Iterator, Mapping
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 _REFERENCE = re.compile(r"\$\{([A-Z0-9_]+)\}")
 
@@ -18,8 +19,29 @@ _WHOLE_REFERENCE = re.compile(r"^\$\{([A-Z0-9_]+)\}$")
 
 #: The principal's timezone. Configuration, not a constant: every wall-clock
 #: boundary in the system is his local one, and hardcoding a zone in a module
-#: means the agent works for exactly one person. Read from TIMEZONE in .env.
+#: means the agent works for exactly one person. This is the FALLBACK; the
+#: configured value is read by `timezone_for()` below.
 DEFAULT_TIMEZONE = "America/Los_Angeles"
+
+
+def timezone_for(identities: Mapping[str, str] | None = None) -> ZoneInfo:
+    """The principal's timezone, from ``TIMEZONE`` in .env, else the fallback.
+
+    An earlier version of this module claimed the value was "read from TIMEZONE
+    in .env" while nothing read it - `TIMEZONE=Europe/London` silently produced
+    Pacific day boundaries. The comment was the whole feature. This is it made
+    true; an unknown zone name is refused rather than silently falling back,
+    because a typo would otherwise present as correct-looking wrong times.
+    """
+    if identities is None:
+        return ZoneInfo(DEFAULT_TIMEZONE)
+    name = identities.get("TIMEZONE", DEFAULT_TIMEZONE) or DEFAULT_TIMEZONE
+    try:
+        return ZoneInfo(name.strip())
+    except ZoneInfoNotFoundError as exc:
+        raise ConfigError(
+            f"TIMEZONE={name.strip()!r} is not a known IANA zone; see .env.example."
+        ) from exc
 
 
 def resolve_reference(

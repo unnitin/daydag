@@ -304,16 +304,27 @@ def slack_overnight(
     # local 6pm wherever the loop happens to run, and a real zone (not the fixed
     # offset `now.tzinfo` carries) is what makes it survive a DST change.
     local = now.astimezone(PACIFIC)
-    cutoff = datetime.combine(
-        local.date() - _DAY, time(hour=since_hour), tzinfo=PACIFIC
-    ).astimezone(now.tzinfo)
+    # Keep the cutoff in the PRINCIPAL's zone and take its date from there.
+    # Converting first and then reading .date() was the bug: `cutoff` carries
+    # the caller's tzinfo, so a UTC-aware `now` rolled the date forward (6pm PT
+    # is 01:00 UTC) and, `after:` being exclusive, the window skipped the exact
+    # 6pm-to-midnight hours it exists to capture - while min_ts still claimed
+    # them. Query and cutoff disagreed silently, which reads as a complete brief.
+    cutoff_local = datetime.combine(local.date() - _DAY, time(hour=since_hour), tzinfo=PACIFIC)
+    after_day = cutoff_local.date() - _DAY
+    cutoff = cutoff_local.astimezone(now.tzinfo)
     user = _slack_id(mentioning, _USER_ID, identities, "mentioning")
     query = " ".join(
         [
             # A raw id in angle brackets is how a mention appears in message
             # text, so this finds threads he was pulled into as well as his own.
             f"<@{user}>",
-            f"after:{(cutoff.date() - _DAY).isoformat()}",
+            # local.date(), NOT cutoff.date(): `cutoff` is converted back to the
+            # caller's tzinfo, so on a UTC-aware `now` its .date() rolls forward
+            # a day - 6pm PT is 01:00 UTC. `after:` is exclusive, so the window
+            # then skipped the exact 6pm-to-midnight hours it exists to capture,
+            # while min_ts still claimed them. The two disagreed silently.
+            f"after:{after_day.isoformat()}",
             "sort:timestamp sort_dir:asc",
         ]
     )
