@@ -41,6 +41,7 @@ artifact is the load-bearing rule; the rest is plumbing.
 | `recipes` | SPEC §4's prose as literal, testable queries |
 | `payloads` | Reading a connector's answer while it is still unvalidated - `recipes` asks, this reads |
 | `brief` | SPEC §3.1's morning brief: the assembler every other loop composes from |
+| `prep` | Meeting prep pings: the one interrupt, 30 min out, qualified by the ledger |
 
 ## Working on it
 
