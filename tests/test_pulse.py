@@ -5,9 +5,11 @@ not activity") is what keeps this from reading as a productivity metric on a
 named engineer.
 """
 
+from datetime import UTC, datetime
+
 import pytest
 
-from daydag.pulse import Mirror, Pulse, PulseError
+from daydag.pulse import Item, Mirror, Pulse, PulseError
 
 
 def test_merges_since_last_run_uses_the_stored_cursor(fake_repo):
@@ -95,3 +97,82 @@ def test_a_mirror_reads_its_own_repo_whatever_the_environment_says(fake_repo, mo
     monkeypatch.setenv("GIT_WORK_TREE", str(fake_repo.parent))
     m = Mirror.attach(fake_repo, cursor="HEAD~2")
     assert [c.title for c in m.merges_since_cursor()] == ["Merge PR #412", "Merge PR #413"]
+
+
+# -- invariant 3: an item without a permalink is not a claim (#59) --------
+
+
+@pytest.mark.guardrail
+def test_an_item_without_a_permalink_is_refused_at_construction():
+    """Invariant 3, "evidence or silence", enforced where the claim enters.
+
+    `voice.render` already refuses to render a nudge with no permalink, and the
+    evidence bus refuses an observation with none. An `Item` is the thing both
+    of those are built from, so it takes the same side rather than splitting the
+    difference: raise, don't render an apology. A filtered or apologetic line
+    still occupies the reader's attention with a claim nothing can back.
+    """
+    with pytest.raises(ValueError, match="permalink"):
+        Item(title="Merge PR #412", permalink="")
+
+
+@pytest.mark.guardrail
+@pytest.mark.parametrize("blank", ["", "   ", "\t", "\n"])
+def test_whitespace_is_not_a_permalink(blank: str):
+    """A space passes `if not permalink` and renders as `- title ( )`."""
+    with pytest.raises(ValueError, match="permalink"):
+        Item(title="Merge PR #412", permalink=blank)
+
+
+def test_the_refusal_names_the_item_so_it_can_be_acted_on():
+    """A raise nobody can trace back to a source is barely better than a drop."""
+    with pytest.raises(ValueError, match="Merge PR #412"):
+        Item(title="Merge PR #412", permalink="")
+
+
+def test_a_permalink_is_stored_stripped():
+    """Trailing whitespace out of a git subject would render inside the brackets."""
+    assert Item(title="t", permalink="  /r.git#abc1234  ").permalink == "/r.git#abc1234"
+
+
+# -- #60: a stale mirror is dated, not just admitted ----------------------
+
+
+FETCHED = datetime(2026, 9, 5, 6, 40, tzinfo=UTC)
+
+
+@pytest.mark.guardrail
+def test_a_stale_mirror_line_carries_the_time_of_its_last_good_fetch(fake_repo):
+    """Issue #32 asked for "repo state as of <ts>". Undated staleness is honest
+    but unusable: twenty minutes and four days mean different things about
+    whether to trust the rest of the block."""
+    m = Mirror.attach(fake_repo, cursor="HEAD~2", last_fetched_at=FETCHED)
+    m.mark_fetch_failed()
+
+    line = Pulse(mirrors=[m]).render()
+
+    assert "2026-09-05 06:40 UTC" in line
+    assert "as of last run" not in line, "the undated wording survived"
+
+
+@pytest.mark.guardrail
+def test_a_mirror_that_never_fetched_says_so_rather_than_inventing_a_time(fake_repo):
+    """The failure direction matters: a fabricated or omitted date reads as
+    fresh. No record on file is itself the honest answer."""
+    m = Mirror.attach(fake_repo, cursor="HEAD~2")
+    m.mark_fetch_failed()
+
+    line = Pulse(mirrors=[m]).render()
+
+    assert "as of" in line
+    assert "no successful fetch on record" in line
+
+
+def test_a_successful_fetch_records_its_time_and_clears_the_staleness(fake_repo):
+    m = Mirror.attach(fake_repo, cursor="HEAD~2")
+    m.mark_fetch_failed()
+
+    m.mark_fetched(FETCHED)
+
+    assert m.stale is False
+    assert m.last_fetched_at == FETCHED

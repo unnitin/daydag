@@ -19,8 +19,9 @@ import shutil
 import subprocess
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from daydag.config import ConfigError
 
@@ -97,11 +98,39 @@ def _run_git(
 
 @dataclass(frozen=True)
 class Item:
-    """One reported state change, with the link that makes it checkable."""
+    """One reported state change, with the link that makes it checkable.
+
+    A permalink is required, and an empty one raises here rather than at the
+    point it would be printed. Invariant 3 is "evidence or silence": an item
+    built without a link used to render as ``- title ()``, which reads as a
+    formatting glitch rather than as a claim nothing can back.
+
+    Raise rather than render an explicitly-unsourced line, deliberately and
+    consistently with the rest of the package - ``voice.render`` refuses to
+    render a nudge with no permalink ("quote alone is not evidence"), and an
+    item is what a nudge would be built from. An apologetic line still spends the
+    reader's attention on a claim they can neither check nor act on, and a
+    reader who sees one learns to skim the rest. Silence is the invariant's
+    other half and it costs nothing. Refusing at construction also puts the
+    failure at the source that dropped the link rather than three frames away in
+    a renderer that only ever saw the symptom.
+    """
 
     title: str
     permalink: str
     kind: str = "merge"
+
+    def __post_init__(self) -> None:
+        permalink = (self.permalink or "").strip()
+        if not permalink:
+            # Names the item. A raise nobody can trace back to a source is only
+            # marginally better than the silent drop it replaced.
+            raise ValueError(
+                f"an item needs a permalink; a title alone is not evidence (title={self.title!r})"
+            )
+        # Stored stripped: whitespace would otherwise render inside the
+        # brackets, and nothing upstream promises a trimmed string.
+        object.__setattr__(self, "permalink", permalink)
 
 
 @dataclass
@@ -114,10 +143,41 @@ class Joined:
     mentioned_in_slack: bool = False
 
 
+#: How a fetch time is written into a report. Absolute rather than relative
+#: ("2 days ago"): a brief is read hours after it is built, and a relative age
+#: computed at build time quietly drifts. UTC is stated, not assumed.
+AS_OF_FORMAT = "%Y-%m-%d %H:%M %Z"
+
+#: What the stale line says when no successful fetch was ever recorded. Not a
+#: date and not silence: a mirror that has never once been read cleanly must not
+#: be dated as if it were fresh, and omitting the clause reads as fresh too.
+NO_FETCH_ON_RECORD = "an unknown time - no successful fetch on record"
+
+
+def _utcnow() -> datetime:
+    """The default clock. Injected everywhere it is used, so tests can wind it."""
+    return datetime.now(UTC)
+
+
+def _as_of(when: datetime | None) -> str:
+    """Render a fetch time for the degrade line."""
+    if when is None:
+        return NO_FETCH_ON_RECORD
+    # `%Z` is empty for a naive datetime, so the strip keeps a caller that
+    # supplied one from producing a trailing space inside the sentence.
+    return when.strftime(AS_OF_FORMAT).strip()
+
+
 class Mirror:
     """A bare, push-disabled clone plus the cursor into it."""
 
-    def __init__(self, path: Path, cursor: str, label: str | None = None) -> None:
+    def __init__(
+        self,
+        path: Path,
+        cursor: str,
+        label: str | None = None,
+        last_fetched_at: datetime | None = None,
+    ) -> None:
         self.path = Path(path)
         self.cursor = cursor
         #: What a failure line calls this mirror. The owner belongs in it: two
@@ -125,22 +185,44 @@ class Mirror:
         #: names neither of them.
         self.label = label or Path(path).name
         self._fetch_failed = False
+        #: When this mirror last fetched cleanly, from the event log. `None`
+        #: means nothing is on record - never "now", which would date a mirror
+        #: that has never been read successfully as if it had just been.
+        self._last_fetched_at = last_fetched_at
 
     @classmethod
-    def attach(cls, path: str | Path, cursor: str) -> Mirror:
-        return cls(Path(path), cursor)
+    def attach(
+        cls, path: str | Path, cursor: str, last_fetched_at: datetime | None = None
+    ) -> Mirror:
+        return cls(Path(path), cursor, last_fetched_at=last_fetched_at)
 
     @property
     def stale(self) -> bool:
         return self._fetch_failed
 
+    @property
+    def last_fetched_at(self) -> datetime | None:
+        return self._last_fetched_at
+
+    @property
+    def as_of(self) -> str:
+        """The "as of <ts>" half of the degrade line (issue #32, #60)."""
+        return _as_of(self._last_fetched_at)
+
     def mark_fetch_failed(self) -> None:
         """Record that this mirror could not be refreshed.
 
         Reporting a stale mirror as current is the one way this component can
-        lie convincingly, so the state is explicit rather than inferred.
+        lie convincingly, so the state is explicit rather than inferred. The
+        recorded fetch time is deliberately left alone: it dates the last run
+        that *worked*, which is the whole question a reader has.
         """
         self._fetch_failed = True
+
+    def mark_fetched(self, at: datetime) -> None:
+        """Record a clean fetch at ``at``, which also clears staleness."""
+        self._fetch_failed = False
+        self._last_fetched_at = at
 
     def _git(self, *args: str) -> str:
         result = _run_git(args, cwd=self.path)
@@ -404,6 +486,20 @@ def mirror_root(identities: Mapping[str, str]) -> Path:
 FIRST_SIGHT = "HEAD"
 
 
+class FetchLog(Protocol):
+    """The slice of the event log the pre-step needs (``state.EventLog``).
+
+    A protocol rather than an import, because the two are separate surfaces that
+    share only ``daydag.config`` by design. The pulse needs somewhere durable to
+    put "this mirror last fetched cleanly at <ts>" - it does not need the store
+    that answers "median days to answer" as well.
+    """
+
+    def record_fetch(self, repo: str, *, at: datetime) -> None: ...
+
+    def last_fetch(self, repo: str) -> datetime | None: ...
+
+
 @dataclass(frozen=True)
 class Unavailable:
     """A watched repo with no usable mirror, and why."""
@@ -446,9 +542,18 @@ class MirrorStore:
         self,
         root: str | Path,
         url_for: Callable[[WatchedRepo], str] = github_url,
+        log: FetchLog | None = None,
+        clock: Callable[[], datetime] = _utcnow,
     ) -> None:
         self.root = Path(root)
         self._url_for = url_for
+        #: Optional. Without it the pre-step still runs; the stale line just has
+        #: no date to carry, and says so rather than implying freshness.
+        self._log = log
+        #: Injected. A pre-step that reads the wall clock cannot be tested for
+        #: the property that matters - that a *failed* fetch does not advance
+        #: the date - because the assertion would have nothing to compare to.
+        self._clock = clock
 
     def path_for(self, repo: WatchedRepo) -> Path:
         return self.root / repo.mirror_subpath
@@ -471,7 +576,15 @@ class MirrorStore:
         if not self.has(repo):
             self._clone(repo, path)
         self._disable_push(repo.slug, path)
-        return Mirror(path, cursor, label=repo.slug)
+        # Seeded from the log at attach time, because the mirror that needs a
+        # date is by definition the one whose fetch is about to fail - so the
+        # value can only come from a run that already finished.
+        #
+        # `label` is also the key the fetch stamp is filed under, and this is
+        # the one place both are chosen - so the write key and the read key
+        # cannot drift into disagreeing and quietly answering `None`.
+        last = self._log.last_fetch(repo.slug) if self._log is not None else None
+        return Mirror(path, cursor, label=repo.slug, last_fetched_at=last)
 
     def _clone(self, repo: WatchedRepo, path: Path) -> None:
         """Clone into staging, disable its push url there, then move it in.
@@ -524,14 +637,33 @@ class MirrorStore:
         """``git fetch --prune`` one mirror. The pulse pre-step.
 
         A failed fetch marks the mirror stale instead of raising: the brief ships
-        with one "repo state as of last run" line rather than stalling on a repo
-        that happened to be unreachable at 6:40am.
+        with one "repo state as of <ts>" line rather than stalling on a repo that
+        happened to be unreachable at 6:40am.
+
+        A success writes its time to the log, which is what dates that line on
+        the next run that fails. Only a success writes - advancing the stamp on
+        an attempt would date four-day-old objects as fetched this morning,
+        which is precisely the convincing lie issue #60 is about.
         """
         result = _run_git(["fetch", "--prune"], cwd=mirror.path)
         if result.returncode != 0:
             mirror.mark_fetch_failed()
             return False
+        self._remember_read(mirror)
         return True
+
+    def _remember_read(self, mirror: Mirror) -> None:
+        """Stamp a clean read of ``mirror`` - a fetch or a first-sight clone.
+
+        A clone is a successful read of everything, so it stamps too. Without
+        this a repo cloned yesterday whose origin is unreachable today reports
+        "no successful fetch on record" - the strongest distrust signal there
+        is - about objects known good one day ago.
+        """
+        at = self._clock()
+        mirror.mark_fetched(at)
+        if self._log is not None:
+            self._log.record_fetch(mirror.label, at=at)
 
     @staticmethod
     def _targets(repos: Iterable[WatchedRepo]) -> list[tuple[WatchedRepo, bool]]:
@@ -578,6 +710,10 @@ class MirrorStore:
                 continue
             if newly:
                 report.cloned.append(repo.slug)
+                # A clone is a clean read of the whole repo, so it dates the
+                # mirror the same way a fetch does. Skipping it left a
+                # day-old clone reporting "no successful fetch on record".
+                self._remember_read(mirror)
             else:
                 self.refresh(mirror)
             report.mirrors.append(mirror)
@@ -677,7 +813,11 @@ class Pulse:
         lines = [f"- {item.title} ({item.permalink})" for item in self.items()]
         for mirror in self._mirrors:
             if mirror.stale:
-                lines.append(f"- {mirror.label}: could not fetch, repo state as of last run")
+                # Dated, per issue #32's "repo state as of <ts>". Undated
+                # staleness is honest and unusable: twenty minutes and four days
+                # both read as "could not fetch" and mean different things about
+                # whether to trust the rest of the block.
+                lines.append(f"- {mirror.label}: could not fetch, repo state as of {mirror.as_of}")
         for entry in self._unavailable:
             lines.append(f"- {entry.slug}: {entry.reason}")
         for line in self._unreadable:

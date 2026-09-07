@@ -25,7 +25,8 @@ more than the count. Read the marker in each test's docstring:
 
 COVERED (behavioural - real code, real assertions)
     - vault writes are additive; nothing but the derived projection is truncated
-    - every reported item carries a resolvable permalink
+    - every reported item carries a resolvable permalink, and an item with no
+      permalink is refused at construction rather than rendered unsourced
     - repo evidence marks movement and may only add a flag, never close a loop
     - sensitive items reach no file in the vault, via chase or watch
     - a pending decision never reads its own text as an answer
@@ -36,7 +37,8 @@ COVERED (behavioural - real code, real assertions)
     - a connector that raises, or answers with an overflow, degrades to a named
       "couldn't check X" line and the pre-flight run still returns a report
       (in `tests/test_smoke_run.py`, which carries its own guardrail marks)
-    - a stale mirror contributes no items and is reported as stale
+    - a stale mirror contributes no items, is reported as stale, and carries the
+      time of the last fetch that actually worked
     - untrusted Slack text is parsed for ticket keys only, never echoed or acted on
     - the vault write path joins only literal names onto the folder root
 
@@ -49,21 +51,15 @@ TRIPWIRES (no implementation exists - these fail when one lands unguarded)
       package can reach a connector on its own
 
 GAPS - not covered here, and not pretended to be
-    1. `pulse.Item` does not require a non-empty permalink at construction, so
-       an unsourced item would render as `- title ()` rather than saying it
-       could not be sourced. Guardrail 3's "says so instead of asserting" half
-       is unenforced. Fixing it belongs to `path/engineering-pulse`.
-    2. The stale-mirror line reads "as of last run", with no timestamp. Issue
-       #32 asks for "as of <ts>". Staleness is honest but not dated.
-    3. `StateFolder.write_state` filters `chase` and `watch` on sensitivity;
+    1. `StateFolder.write_state` filters `chase` and `watch` on sensitivity;
        `notes_gaps` is a list of plain strings with no sensitivity channel, so a
        meeting *title* that is itself sensitive has no way to be filtered.
-    4. `DecisionQueue.answer_for` reads an answer only as a whole word at one
+    2. `DecisionQueue.answer_for` reads an answer only as a whole word at one
        end of the line (tested below). A hand edit may land at either end, so a
        decision whose text *begins or ends* with a bare "yes"/"no" still
        self-answers. Removing that last case means fixing where an answer is
        allowed to be written, which is a decision rather than a patch.
-    5. Guardrail 4 (discrepancies surfaced, never auto-resolved) is covered for
+    3. Guardrail 4 (discrepancies surfaced, never auto-resolved) is covered for
        the ledger's ambiguous-note case in `tests/test_ledger.py`; there is no
        general discrepancy surface to test yet.
 """
@@ -73,15 +69,19 @@ from __future__ import annotations
 import ast
 import re
 import subprocess
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
-from daydag.pulse import Mirror, Pulse
+from daydag.pulse import Item, Mirror, Pulse
 from daydag.registry import PRIVATE_SURFACES, Registry, RegistryError
 from daydag.state import DecisionQueue, EventLog, StateFolder
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+
+#: A fixed "last good fetch", so the dated stale line is asserted, not guessed.
+LAST_GOOD_FETCH = datetime(2026, 9, 4, 6, 40, tzinfo=UTC)
 PACKAGE = REPO_ROOT / "src" / "daydag"
 
 #: Surfaces with an audience above one. `route` must refuse every one of these
@@ -389,6 +389,25 @@ def test_every_reported_line_carries_a_resolvable_permalink(fake_repo, git_env):
         assert "#" in line, f"unsourced claim: {line!r}"
 
 
+@pytest.mark.guardrail
+@pytest.mark.parametrize("blank", ["", "   ", "\t"])
+def test_an_item_with_no_permalink_is_refused_rather_than_rendered(blank: str):
+    """BEHAVIOURAL. The "or silence" half of invariant 3 (#59).
+
+    Was GAP 1: an `Item` built with no permalink rendered as `- title ()`, which
+    reads as a formatting glitch rather than as a claim that cannot be backed.
+    It now raises, which is the answer `voice.render` already gives a nudge with
+    no permalink and the answer the evidence bus gives an observation with none.
+
+    Raise rather than an explicitly-unsourced line, deliberately: a line saying
+    "could not source this" still spends the reader's attention on a claim
+    nothing supports, and the reader has no way to act on it. Silence is the
+    other half of the invariant, and it is the half that costs nothing.
+    """
+    with pytest.raises(ValueError, match="permalink"):
+        Item(title="Merge PR #412", permalink=blank)
+
+
 # --------------------------------------------------------------------------
 # 4. loops never auto-close on repo or Jira evidence (guardrail 4, SPEC 3.7)
 # --------------------------------------------------------------------------
@@ -639,12 +658,17 @@ def test_a_stale_mirror_contributes_nothing_it_only_reports_its_staleness(tmp_pa
     raise rather than quietly return - which is the point: a stale mirror is
     skipped, not re-read.
     """
-    broken = Mirror.attach(tmp_path / "gone.git", cursor="HEAD~2")
+    broken = Mirror.attach(tmp_path / "gone.git", cursor="HEAD~2", last_fetched_at=LAST_GOOD_FETCH)
     broken.mark_fetch_failed()
     pulse = Pulse(mirrors=[broken])
 
     assert pulse.items() == []
-    assert pulse.render().splitlines() == ["- gone.git: could not fetch, repo state as of last run"]
+    # Dated, per #60 - was GAP 2. "as of last run" is honest about staleness and
+    # useless about its size, and twenty minutes and four days mean different
+    # things about whether to trust the rest of the block.
+    assert pulse.render().splitlines() == [
+        "- gone.git: could not fetch, repo state as of 2026-09-04 06:40 UTC"
+    ]
 
 
 CONNECTOR_PATTERNS = {
