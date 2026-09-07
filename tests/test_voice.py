@@ -10,6 +10,8 @@ sign), not the emoji-presentation U+FE0F variant. The difference is invisible in
 most editors and visible in the vault.
 """
 
+import itertools
+
 import pytest
 
 from daydag.voice import SAMPLE_DATA, SANCTIONED_EMOJI, Push, render, voice_violations
@@ -108,3 +110,36 @@ def test_nudge_never_renders_without_a_permalink(data):
     """`and data` short-circuited on {} and None, rendering an unsourced nudge."""
     with pytest.raises(ValueError, match="permalink"):
         render(Push.NUDGE, data)
+
+
+@pytest.mark.guardrail
+def test_the_emoji_ranges_do_not_overlap():
+    """A redundant subrange is how a filter drifts from what its author reads.
+
+    `1F900-1F9FF` sat entirely inside `1F300-1FAFF` (CodeQL
+    `py/overly-large-range`, medium). This character class IS a filter -
+    `voice_violations` decides from it whether a glyph is sanctioned - so the
+    set a reader computes by eye must be the set the engine matches.
+    """
+    import re as _re
+
+    from daydag.voice import _EMOJI
+
+    bounds = [(ord(lo), ord(hi)) for lo, hi in _re.findall(r"(.)-(.)", _EMOJI.pattern)]
+    assert bounds, "could not parse the ranges out of the pattern"
+    ordered = sorted(bounds)
+    for (a, b), (c, d) in itertools.pairwise(ordered):
+        assert b < c, f"ranges U+{a:04X}-U+{b:04X} and U+{c:04X}-U+{d:04X} overlap"
+
+
+@pytest.mark.guardrail
+@pytest.mark.parametrize("glyph", ["🎉", "🚀", "🙂", "🤝", "🧠", "✅"])
+def test_unsanctioned_emoji_are_still_caught_after_narrowing(glyph):
+    """🧠 (U+1F9E0) lived in the removed range; the outer one must still cover it."""
+    assert voice_violations(f"nice work {glyph}")
+
+
+@pytest.mark.guardrail
+@pytest.mark.parametrize("glyph", sorted(SANCTIONED_EMOJI))
+def test_every_sanctioned_glyph_still_passes(glyph):
+    assert voice_violations(f"status {glyph} ok") == []
