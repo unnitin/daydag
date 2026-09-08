@@ -1,22 +1,39 @@
-"""Reading a payload nobody has validated yet.
+"""Reading a payload nobody has validated yet. `recipes` asks; this reads.
 
-`recipes` says how to ASK a source. This says how to read what came back, while
-it is still whatever the connector felt like returning - before any module
-downstream is allowed to assume a shape.
+USING IT
+    records(payload)            # -> list | None. None and [] are DIFFERENT
+    has(record, "id", "user")   # any of these keys, truthy
+    has_all(record, "id", "subject")    # every one of them
+    error_text(payload)         # the error it carries, flattened, or ""
+    measure(payload)            # rough size on the way back
+    first_value(row)            # first value, however the driver shaped it
+    flatten(value)              # every leaf as a string
 
-That boundary is the reason this is its own module rather than helpers inside
-the one caller that has them today. Everything else in the package is handed
-data that has already been shaped: `brief` takes a `Sequence[Mapping]` someone
-validated, `ledger` takes events, `pulse` shells git and parses its stdout.
-Only the code standing at the connector edge sees an `error` key that might be
-a string, a list, or a dict of lists - so `isinstance(..., Mapping)` belonged
-in exactly one place, and putting it here is what stops the second edge (a
-real client, an ingestion path) from writing its own copy.
+CONTRACTS
+    1. `records` returns None for "not this shape" and [] for "this shape,
+       nothing in it". Keeping them apart is the whole reason it returns an
+       optional - which of the two is a FAILURE depends on the source, and
+       that judgement belongs to the caller.
+    2. Nothing here raises. A wrong shape is the routine case at this edge, so
+       every function returns a falsy answer instead. Code that needs
+       raise-to-degrade (`runlog._text`) does its own checking on purpose.
+    3. Nothing here knows what a source MEANS. `records()` finds a list; it
+       does not know an empty one is honest for calendar and a broken query
+       for gmail.
+    4. `has` uses truthiness, so an empty string does not count as carried.
+       `has_all` exists because `any` on `("id", "subject")` let Gmail's
+       metadata-only results through on the strength of the id.
 
-Nothing here knows what any particular source *means*. `records()` finds a
-list; it does not know that an empty one is honest for calendar and a broken
-query for gmail. That judgement stays with the caller, because it is the part
-that differs per source and the part worth reading in one place.
+WHY IT EXISTS
+    This is the connector edge. Everything else in the package is handed data
+    already shaped - `brief` takes a validated `Sequence[Mapping]`, `ledger`
+    takes events, `pulse` parses git's stdout. Only code standing here sees an
+    `error` key that might be a string, a list, or a dict of lists.
+
+    It is a module rather than private helpers because a private helper is what
+    makes the SECOND edge - a real client, an ingestion path - write its own
+    copy. And a reader tested only through one caller is only ever tested
+    through that caller's vocabulary.
 """
 
 from __future__ import annotations

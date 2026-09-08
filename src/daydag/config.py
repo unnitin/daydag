@@ -1,8 +1,27 @@
-"""Identity configuration.
+"""Identity configuration: every real identifier, resolved from a local .env.
 
-Real Slack/Google/Notion/Databricks identifiers live in a gitignored `.env`
-and nowhere else - this repo is public. `.env.example` is the committed schema.
-Docs and code refer to values as ``${VAR_NAME}``; this module resolves them.
+USING IT
+    ids = Identities.from_file(Path(".env"))
+    ids["SLACK_USER_PRINCIPAL"]                 # KeyError if unset
+    resolve_reference("${VAR_NAME}", ids)       # -> the value, or KeyError
+    resolve_reference("C0ALREADY", ids)         # -> unchanged, not a reference
+    timezone_for(ids)                           # ZoneInfo, TIMEZONE or the default
+
+CONTRACTS
+    1. This repo is PUBLIC. No real identifier is committed - not in code, not
+       in docs, not in a test fixture. `.env` is gitignored; `.env.example` is
+       the committed schema and carries placeholders only.
+    2. Code and docs name a value as `${VAR_NAME}` and resolve it here. A raw
+       id in the tree is blocked by `scripts/scan_secrets.py` on every commit.
+    3. A missing reference RAISES rather than resolving to empty. An empty
+       Slack id does not fail loudly, it silently matches nothing - which is
+       the failure this module exists to convert into a stack trace.
+
+WHY IT EXISTS
+    The key NAMES are part of the secret too: `SLACK_USER_JANE_DOE` leaks a
+    colleague even when the id beside it is a placeholder. So keys are named
+    for the role or function they serve, never the person or codename behind
+    them. `.env.example`'s header carries the full rule.
 """
 
 from __future__ import annotations

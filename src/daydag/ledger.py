@@ -1,15 +1,33 @@
 """The meeting ledger: calendar drives, notes attach.
 
-The gap this closes is an absence, not a presence. Gemini mail puts the meeting
-title in the body rather than a stable subject, Notion's meeting-notes database
-lags about a week, and Granola only holds what was recorded. Nothing anywhere
-says *this meeting happened and produced no notes* - so ingestion that only
-reacts to arriving notes cannot notice one that never came.
+USING IT
+    ledger = Ledger()
+    ledger.seed_day(events)             # every qualifying event gets a row
+    ledger.offer_note(note)             # -> Match; attaches to a row
+    ledger.notes_gaps()                 # meetings that produced NO notes
+    ledger.ambiguous()                  # note matched >1 row, needs a human
+    ledger.close_day()
 
-Calendar is therefore the driver: every qualifying event gets a row at the start
-of the day, and notes attach to rows rather than being discovered on their own.
-The guarantee is not that every meeting has notes. It is that a missing one is
-visible the next morning instead of a month later.
+    title_from_gemini_subject(subject)  # 'Notes: "<title>" <date>' -> title
+
+CONTRACTS
+    1. Calendar is the DRIVER. Seed rows first; a note is only ever attached to
+       a row that already exists. Ingestion driven by arriving notes cannot
+       notice the note that never came, which is the whole point.
+    2. Qualification disqualifies on `response_status == "declined"` only. It
+       does NOT require `accepted` - about 70% of real invites are never
+       answered, and requiring it dropped 61% of real meetings silently.
+    3. An ambiguous match is SURFACED, never guessed. Back-to-back 1:1s with
+       the same person are the case that produces one.
+
+WHY IT EXISTS
+    The gap this closes is an absence, not a presence. Gemini mail puts the
+    title in a subject that has to be parsed, Notion's meeting-notes database
+    lags about a week, and Granola holds only what was recorded. Nothing
+    anywhere says "this meeting happened and produced no notes".
+
+    The guarantee is not that every meeting has notes. It is that a missing one
+    is visible the next morning instead of a month later.
 """
 
 from __future__ import annotations

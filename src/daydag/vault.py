@@ -1,38 +1,37 @@
 """Changing one existing line in an Obsidian note, safely (#6).
 
-The spike's premise was that the Obsidian connector is create/append-only, so
-the agent could never tick a checkbox in place. That premise is wrong for the
-context this repo builds against: the vault is on local disk under
-``iCloud~md~obsidian`` and is POSIX read/write. Permissions are a non-issue.
+USING IT
+    note = Vault(root).note("Weekly Notes/0908-0912.md")
+    snap = note.read()                      # raises if evicted or outside root
+    edit = note.plan_tick(snap, line_no)    # PURE: reads nothing, writes nothing
+    edit.diff()                             # unified diff, for Proposals/
+    note.apply(edit)                        # CAS against snap.digest
 
-What is left once permissions stop being interesting is three real hazards, and
-this module exists to hold all three in one place:
+CONTRACTS
+    1. Touch only what changed; leave the rest BYTE-FOR-BYTE. An edit is a byte
+       splice over the bytes that were read. Nothing here parses a note into a
+       model and prints it back out.
+    2. A write is a compare-and-swap against the sha256 of what was read. A
+       mismatch raises `ConflictError` carrying both digests and the current
+       line - surface the conflict, never resolve it.
+    3. An evicted iCloud placeholder is REFUSED, not read as empty. This is the
+       one failure that would make the agent delete content it thought was
+       absent. The message carries the `brctl download` remediation.
+    4. Planning is pure. That is what lets one code path serve both execution
+       contexts - apply locally, or render `diff()` into `DayDAG/Proposals/`
+       for a human when there is no vault on the runtime at all (#24).
+    5. Writes are atomic: temp file in the same directory, fsync, `os.replace`.
+       A crash mid-write leaves the original note untouched.
 
-1. **Wholesale rewrite.** ARCHITECTURE invariant: touch only what changed,
-   leave the rest byte-for-byte. An edit here is planned as a byte splice over
-   the bytes that were read - the untouched regions are literally the original
-   bytes, never a re-serialisation of a parsed model. Nothing in this module
-   parses a note into a structure and prints it back out.
+WHY IT EXISTS
+    The spike's premise was that the Obsidian connector is create/append-only,
+    so the agent could never tick a checkbox in place. That premise is wrong
+    for this context: the vault is on local disk under `iCloud~md~obsidian` and
+    is POSIX read/write. Permissions are a non-issue.
 
-2. **iCloud sync, not permissions.** The file can change under the agent
-   between the read and the write - Obsidian on the phone, or the sync daemon
-   landing a remote version. So a write is a compare-and-swap against the
-   sha256 of what was read; a mismatch raises :class:`ConflictError` carrying
-   both digests and the current line, per invariant 5 - surface, don't resolve.
-
-3. **Evicted placeholders.** iCloud may leave a note dataless. Read it naively
-   and it looks like an empty note, which is the one failure that would make
-   the agent *delete* content it thought was absent. Detected and refused,
-   with the ``brctl download`` remediation in the message.
-
-Plus atomicity, which is cheap: temp file in the same directory, fsync,
-``os.replace``. A crash mid-write leaves the original note untouched.
-
-**Execution context.** All of the above assumes the local-Mac context of #24.
-On a remote runtime there is no iCloud vault at all, so the same plan is
-rendered as a unified diff via :meth:`NoteEdit.diff` and lands in
-``DayDAG/Proposals/`` for a human to apply. Planning is pure - it reads nothing
-and writes nothing - which is what lets one code path serve both contexts.
+    What is left once permissions stop being interesting is three real hazards
+    - wholesale rewrite, sync racing the write, and dataless placeholders - and
+    this module exists to hold all three in one place.
 """
 
 from __future__ import annotations

@@ -1,31 +1,39 @@
-"""The morning brief (SPEC 3.1) - the one loop every other loop composes from.
+"""The morning brief (SPEC 3.1) - the loop every other loop composes from.
 
-It owns no source and no query. Calendar windows, the Slack overnight cutoff,
-the Gemini search and every vault path come from :mod:`daydag.recipes`; notes
-gaps from :mod:`daydag.ledger`; the shipping block from :mod:`daydag.pulse`;
-chase and watch from ``DayDAG/State.md``; the register from :mod:`daydag.voice`.
-What is left here is assembly - and assembly is where this project's defects
-have actually lived, because every module was right on its own.
+USING IT
+    sources = Sources(calendar=..., weekly_note=..., slack=..., gmail=...)
+    brief = assemble(now=..., identities=ids, sources=sources, ...)
+    brief.render()
+    unsourced_claims(text)      # -> claims with no permalink; must be empty
+    red_items(note)             # -> [(level, text)] under a red heading
 
-Four rules are structural rather than stylistic, and each has a test:
+CONTRACTS
+    1. Silence is information (SPEC 3.7 rule 3). An empty section is OMITTED,
+       not labelled. "no updates" trains the reader to skim, and a brief people
+       skim stops being read.
+    2. Evidence or silence (guardrail 3). Every claim renders with a permalink
+       or a file path, or says out loud that it could not be sourced.
+       `unsourced_claims` makes that mechanical rather than advisory.
+    3. Degrade, never stall (guardrail 6). A source that raises costs one
+       "couldn't check X" line and the brief still ships.
+    4. Sources are INJECTED, as an object of four methods - not as data. The
+       brief has to observe HOW it asked (one calendar day at a time, an
+       id-scoped Slack query), because those are the two failures that come
+       back as a plausible empty result rather than an error. A client built in
+       here would be a source nobody can make fail on purpose.
+    5. The weekly note may NOT EXIST. CLAUDE.md records a gap in the series, so
+       the first real run will meet one. A missing note leads the brief.
+    6. Naive datetimes are read as Pacific, never as the host zone.
+       `astimezone()` with no argument resolves to the machine's timezone and
+       passed locally while failing on UTC CI.
 
-* **Silence is information** (SPEC 3.7 rule 3). An empty section is omitted, not
-  labelled. "no updates" is a line that trains the reader to skim, and a brief
-  people skim is a brief that stops being read.
-* **Evidence or silence** (guardrail 3). Every claim renders with a permalink or
-  a file path, or says out loud that it could not be sourced.
-  :func:`unsourced_claims` makes that mechanical instead of advisory.
-* **Degrade, never stall** (guardrail 6). A source that raises costs one
-  "couldn't check X" line; the brief still ships. Every source is *injected*,
-  which is what makes that path testable at all - a client constructed in here
-  would be a source nobody can make fail on purpose.
-* **The weekly note may not exist.** CLAUDE.md records a gap in the series, so
-  the first real run will meet one. A missing note leads the brief.
+WHY IT EXISTS
+    It owns no source and no query. Windows, cutoffs and vault paths come from
+    `recipes`; notes gaps from `ledger`; shipping from `pulse`; chase and watch
+    from `DayDAG/State.md`; the register from `voice`.
 
-The reason sources arrive as an object of four methods rather than as data: the
-brief has to be able to observe *how* it asked - one calendar day at a time, an
-id-scoped Slack query - and those are the two failures that come back as a
-plausible-looking empty result rather than as an error.
+    What is left is ASSEMBLY - and assembly is where this project's defects
+    have actually lived, because every module was right on its own.
 """
 
 from __future__ import annotations
