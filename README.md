@@ -30,6 +30,7 @@ artifact is the load-bearing rule; the rest is plumbing.
 |---|---|
 | `config` | Identifiers resolved from a local `.env`. This repo is public; nothing real is committed |
 | `registry` | The ownership table as startup checks — two writers to one artifact is an error, not a convention |
+| `manifests` | Reads the `daydag:` block out of every `.claude/skills/*/SKILL.md`, so those checks run over what ships |
 | `state` | The `DayDAG/` vault folder and the SQLite event log. Two stores, opposite requirements |
 | `ledger` | Calendar-driven meeting rows, so a meeting that produced **no** notes is visible |
 | `pulse` | Repo and board state: local mirrors for history, API for review state |
@@ -71,4 +72,3 @@ ledger silently dropped 61% of meetings, the state writer filtered one list and
 not its twin, a parser the docs described was never called. That is why
 `tests/test_end_to_end.py` exists and why guardrails are marked and gated
 separately.
-

@@ -1,6 +1,16 @@
 ---
 name: weekly-progress-reporting
 description: "Produce the weekly Data & AI progress report: update the Priorities doc's Progress tab against goals, then draft the highlights email to the current sponsor. Use for progress report, goals-doc update, weekly update"
+daydag:
+  # The Progress tab of the Goals doc, plus a Gmail draft that is never sent
+  # autonomously. DayDAG reads the result rather than re-deriving progress.
+  writes:
+    - drive:${GDOC_GOALS_PRIORITIES}#progress
+    - gmail:draft-highlights
+  reads: [drive, obsidian, slack, gmail]
+  consumes: [evidence.pulse, evidence.slack]
+  emits: [progress.weekly]
+  sensitivity: shared
 ---
 
 ---

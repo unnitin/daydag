@@ -54,6 +54,18 @@ else
   bad "docs - a stale link is how a doc quietly stops being true"
 fi
 
+# The ownership table, checked against the skills that actually ship. The
+# registry's one-writer and sensitivity checks used to run only over fixtures
+# typed into a test, which is a check that cannot fail. This runs them over
+# .claude/skills/, so a second writer is caught before the push.
+step "skill manifests"
+if manifests=$("$PY" -m daydag.manifests 2>&1); then
+  ok "one writer per artifact; sensitivity declared"
+else
+  printf '%s\n' "$manifests" | sed 's/^/   /'
+  bad "manifests - see the ownership table in ARCHITECTURE.md"
+fi
+
 step "tests"
 "$PY" -m pytest -q -m "not integration" && ok "suite (3.12)" || bad "suite (3.12)"
 
