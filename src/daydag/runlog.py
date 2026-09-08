@@ -53,6 +53,7 @@ from typing import TYPE_CHECKING, Any
 
 from daydag.smoke import AUTH, FETCH, NO_PROBE, NOT_CONNECTED, OVERFLOW, REACHED, SHAPE, SKIPPED
 from daydag.smoke import FAILED as SMOKE_FAILED
+from daydag.voice import clipped
 
 if TYPE_CHECKING:  # pragma: no cover - import cycle only matters to type checkers
     from daydag.state import EventLog
@@ -122,7 +123,14 @@ UNKNOWN_AT = "unknown time"
 
 
 def _one_line(text: str) -> str:
-    return " ".join(text.split())[:FAILURE_LIMIT].rstrip()
+    """This module's budget, applied by the shared collapse-then-clip.
+
+    The mechanism is `voice.clipped`; what is local is `FAILURE_LIMIT`, which
+    is a run log line's budget and nobody else's. This was a third hand-rolled
+    copy of `" ".join(text.split())[:cap]` - `brief` and `smoke` had the other
+    two, and they were consolidated for the same reason before it existed.
+    """
+    return clipped(text, FAILURE_LIMIT)
 
 
 def _describe(failure: str | BaseException) -> str:
