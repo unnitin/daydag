@@ -14,7 +14,15 @@ import itertools
 
 import pytest
 
-from daydag.voice import SAMPLE_DATA, SANCTIONED_EMOJI, Push, render, voice_violations
+from daydag.voice import (
+    SAMPLE_DATA,
+    SANCTIONED_EMOJI,
+    Push,
+    clipped,
+    one_line,
+    render,
+    voice_violations,
+)
 
 
 @pytest.mark.guardrail
@@ -143,3 +151,52 @@ def test_unsanctioned_emoji_are_still_caught_after_narrowing(glyph):
 @pytest.mark.parametrize("glyph", sorted(SANCTIONED_EMOJI))
 def test_every_sanctioned_glyph_still_passes(glyph):
     assert voice_violations(f"status {glyph} ok") == []
+
+
+# --------------------------------------------------------------------------
+# the shared text primitives
+#
+# `brief._short` and `smoke._one_line` each hand-rolled "collapse to one line,
+# then clip" with their own cap and their own truncation rule. One idea, two
+# implementations, and the pair drifts the next time either is tuned - which is
+# the same note review left on the duplicated env-reference regex in #57.
+# --------------------------------------------------------------------------
+
+
+def test_one_line_collapses_every_kind_of_whitespace():
+    assert one_line("a\n b\t\tc  \r\nd") == "a b c d"
+    assert one_line("  padded  ") == "padded"
+    assert one_line("") == ""
+
+
+def test_one_line_takes_a_non_string_because_a_payload_is_not_always_one():
+    assert one_line(404) == "404"
+    assert one_line(None) == "None"
+
+
+def test_clipped_leaves_text_inside_the_budget_alone():
+    assert clipped("short", 40) == "short"
+
+
+def test_clipped_never_exceeds_its_budget_ellipsis_included():
+    """The ellipsis comes out of the budget, it is not added to it.
+
+    Appending after clipping is how a limit gets quietly exceeded by three
+    characters - and the caller that asked for 160 got 163 into a line it had
+    already sized.
+    """
+    out = clipped("x" * 500, 40, ellipsis="...")
+    assert len(out) == 40
+    assert out.endswith("...")
+
+
+def test_clipped_with_no_ellipsis_just_stops():
+    out = clipped("y" * 500, 40)
+    assert len(out) == 40
+    assert "." not in out
+
+
+def test_clipped_handles_a_budget_smaller_than_its_own_ellipsis():
+    """A caller reserving room for a suffix can drive the budget to nothing."""
+    assert clipped("z" * 50, 0) == ""
+    assert len(clipped("z" * 50, 2, ellipsis="...")) <= 2

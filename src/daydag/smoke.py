@@ -34,11 +34,6 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-# The bounds below describe what keeps each query small enough to answer, and
-# `recipes` is what actually keeps it there. Importing the caps rather than
-# retyping them is the difference between a description and a restatement: a
-# cap that moves takes the report's wording with it. Constants only - no query
-# is built here, and no client comes with them.
 from daydag.recipes import (
     GEMINI_LABEL,
     GEMINI_SENDER,
@@ -46,6 +41,13 @@ from daydag.recipes import (
     JIRA_FIELDS,
     JIRA_MAX_RESULTS_CAP,
 )
+
+# The bounds below describe what keeps each query small enough to answer, and
+# `recipes` is what actually keeps it there. Importing the caps rather than
+# retyping them is the difference between a description and a restatement: a
+# cap that moves takes the report's wording with it. Constants only - no query
+# is built here, and no client comes with them.
+from daydag.voice import clipped
 
 # -- statuses ---------------------------------------------------------------
 
@@ -111,9 +113,11 @@ def _one_line(text: str, room_for: str = "") -> str:
     Databricks fix got cut mid-word off the one message it exists to annotate:
     a real schema error names the tool and the endpoint and is already past the
     limit on its own.
+
+    The collapse-and-clip itself is `voice.clipped`; what stays here is this
+    module's budget and the reservation, which are the parts that are ours.
     """
-    line = " ".join(text.split())
-    return line[: max(DETAIL_LIMIT - len(room_for), 0)].rstrip()
+    return clipped(text, DETAIL_LIMIT - len(room_for))
 
 
 def _classify(text: str, default: str = "") -> tuple[str, str]:

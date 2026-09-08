@@ -41,7 +41,7 @@ from daydag.config import resolve_reference
 from daydag.ledger import Ledger, title_from_gemini_subject
 from daydag.pulse import Pulse
 from daydag.state import StateFolder
-from daydag.voice import Push, render
+from daydag.voice import Push, clipped, render
 
 __all__ = [
     "ADMISSIONS",
@@ -132,8 +132,8 @@ class Sources(Protocol):
 
 
 def _short(text: str) -> str:
-    flat = " ".join(str(text).split())
-    return flat if len(flat) <= QUOTE_CAP else flat[: QUOTE_CAP - 3].rstrip() + "..."
+    """A quote, clipped to the brief's own budget. See `voice.clipped`."""
+    return clipped(text, QUOTE_CAP, ellipsis="...")
 
 
 def _claim(text: str, *permalinks: str | None, quote: str | None = None) -> str:

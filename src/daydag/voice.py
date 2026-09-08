@@ -63,6 +63,38 @@ _CORPORATE = (
 )
 
 
+def one_line(text: Any) -> str:
+    """Any text as a single line, with runs of whitespace collapsed.
+
+    Takes a non-string because the callers feed it whatever a connector or a
+    note handed back, and `str()` at each call site is the step somebody skips.
+    """
+    return " ".join(str(text).split())
+
+
+def clipped(text: Any, limit: int, *, ellipsis: str = "") -> str:
+    """One line, no longer than ``limit``, ``ellipsis`` inside the budget.
+
+    The ellipsis comes out of the budget rather than being appended after the
+    cut: appending is how a 160-char limit quietly returns 163 into a line the
+    caller had already sized. A ``limit`` too small for the ellipsis drops it
+    rather than overshooting, and a ``limit`` of zero or less is the empty
+    string - a caller reserving room for a suffix can reach both.
+
+    The budget is the caller's, not this function's. `brief` clips a quote at
+    one width and `smoke` a failure at another; what they shared was the
+    collapse-then-clip, and only that is here.
+    """
+    line = one_line(text)
+    if limit <= 0:
+        return ""
+    if len(line) <= limit:
+        return line
+    if ellipsis and limit > len(ellipsis):
+        return line[: limit - len(ellipsis)].rstrip() + ellipsis
+    return line[:limit].rstrip()
+
+
 class Push(Enum):
     """Every surface the agent renders. Each needs a template and a fixture."""
 
