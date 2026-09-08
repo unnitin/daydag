@@ -34,6 +34,19 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+# The bounds below describe what keeps each query small enough to answer, and
+# `recipes` is what actually keeps it there. Importing the caps rather than
+# retyping them is the difference between a description and a restatement: a
+# cap that moves takes the report's wording with it. Constants only - no query
+# is built here, and no client comes with them.
+from daydag.payloads import (
+    error_text,
+    first_value,
+    has,
+    has_all,
+    measure,
+    records,
+)
 from daydag.recipes import (
     GEMINI_LABEL,
     GEMINI_SENDER,
@@ -41,12 +54,6 @@ from daydag.recipes import (
     JIRA_FIELDS,
     JIRA_MAX_RESULTS_CAP,
 )
-
-# The bounds below describe what keeps each query small enough to answer, and
-# `recipes` is what actually keeps it there. Importing the caps rather than
-# retyping them is the difference between a description and a restatement: a
-# cap that moves takes the report's wording with it. Constants only - no query
-# is built here, and no client comes with them.
 from daydag.voice import clipped
 
 # -- statuses ---------------------------------------------------------------
@@ -138,97 +145,13 @@ def _classify(text: str, default: str = "") -> tuple[str, str]:
     return (default, _one_line(text)) if default else ("", "")
 
 
-#: Where a connector puts its error when it hands one back instead of raising.
-#: The shape MCP and REST clients actually use, which the string-only reading
-#: missed entirely: a `{"error": {"code": 401}}` fell through to the plausibility
-#: check and reported "no event list came back", never mentioning the 401.
-#: "message" is deliberately absent: it is only an error when it sits under one
-#: of these, and `_flatten` already reads it there.
-_ERROR_KEYS = ("error", "errors", "errorMessages", "error_description")
-
-
-def _error_text(payload: Any) -> str:
-    """The error a payload is carrying, flattened, or ``""`` if it carries none."""
-    if not isinstance(payload, Mapping):
-        return ""
-    for key in _ERROR_KEYS:
-        if payload.get(key):
-            return " ".join(_flatten(payload[key]))
-    return ""
-
-
-def _flatten(value: Any) -> list[str]:
-    if isinstance(value, Mapping):
-        return [part for item in value.values() for part in _flatten(item)]
-    if isinstance(value, list | tuple):
-        return [part for item in value for part in _flatten(item)]
-    return [str(value)]
-
-
-def _measure(payload: Any) -> int:
-    """Roughly how much text this payload would occupy on the way back."""
-    return len(payload if isinstance(payload, str) else repr(payload))
-
-
 # -- plausibility: what each source looks like when it genuinely answered ----
-
-#: Keys a connector puts its records under. Checked in order, first list wins.
-_RECORD_KEYS = (
-    "events",
-    "items",
-    "messages",
-    "threads",
-    "issues",
-    "repositories",
-    "members",
-    "results",
-    "rows",
-    "values",
-    "data",
-)
-
-
-def _records(payload: Any) -> list[Any] | None:
-    """The record list inside a payload, or ``None`` if there is not one.
-
-    ``None`` and ``[]`` are different answers where a check can use the
-    difference: no list at all means the call did not return this source's
-    shape, an empty list means it did and matched nothing. Calendar, Jira and
-    the GitHub API branch on it separately. Gmail, Slack and Notion do not -
-    for those, zero records is a broken query either way, so both collapse to
-    one message on purpose.
-    """
-    if isinstance(payload, list):
-        return payload
-    if isinstance(payload, Mapping):
-        for key in _RECORD_KEYS:
-            value = payload.get(key)
-            if isinstance(value, list):
-                return value
-    return None
-
-
-def _has(record: Any, *keys: str) -> bool:
-    """Whether the record carries *any* of these, for keys that are alternatives."""
-    return isinstance(record, Mapping) and any(record.get(key) for key in keys)
-
-
-def _has_all(record: Any, *keys: str) -> bool:
-    """Whether the record carries *every* one of these.
-
-    Separate from `_has` because the difference is where two checks were wrong:
-    `any` on `("id", "subject")` let Gmail's metadata-only search results
-    through on the strength of the id, and the subject is the whole point.
-    """
-    return isinstance(record, Mapping) and all(record.get(key) for key in keys)
-
-
-def _first_value(row: Any) -> Any:
-    if isinstance(row, Mapping):
-        return next(iter(row.values()), None)
-    if isinstance(row, list | tuple):
-        return row[0] if row else None
-    return row
+#
+# The readers live in `daydag.payloads`: finding a record list or an error
+# object is the same job at every connector edge, and it was private here only
+# because this was the first edge to need it. What stays in this module is the
+# per-source judgement - which is the half that actually differs, and the half
+# that was wrong seven times in section 10 below.
 
 
 def _check_calendar(payload: Any) -> str | None:
@@ -238,12 +161,12 @@ def _check_calendar(payload: Any) -> str | None:
     failure - and an overflow cannot hide behind that, because the ceiling
     catches it before this runs.
     """
-    events = _records(payload)
+    events = records(payload)
     if events is None:
         return "no event list came back"
-    if not all(_has(event, "id", "summary") for event in events):
+    if not all(has(event, "id", "summary") for event in events):
         return "an entry has neither an id nor a summary, so it is not an event"
-    if not all(_has_all(event, "start") for event in events):
+    if not all(has_all(event, "start") for event in events):
         return "an event has no start, so the day cannot be ordered or prepped"
     return None
 
@@ -254,10 +177,10 @@ def _check_gmail(payload: Any) -> str | None:
     201 notes landed in a 30-day window when this was measured, so zero is a
     broken query rather than a quiet month.
     """
-    notes = _records(payload)
+    notes = records(payload)
     if not notes:
         return "no gemini note came back; 201 landed in the measured 30-day window"
-    if not all(_has_all(note, "subject") for note in notes):
+    if not all(has_all(note, "subject") for note in notes):
         return "a result has no subject, so it is metadata and carries no title"
     return None
 
@@ -268,24 +191,24 @@ def _check_slack(payload: Any) -> str | None:
     A display-name lookup does not fail, it returns nothing - so nothing can
     never be read as reached.
     """
-    if _has(payload, "id", "user"):
+    if has(payload, "id", "user"):
         return None
-    resolved = _records(payload) or []
+    resolved = records(payload) or []
     if not resolved:
         return "nothing resolved, and a display-name lookup fails silently, so ask by id"
-    if not all(_has(entry, "id", "user") for entry in resolved):
+    if not all(has(entry, "id", "user") for entry in resolved):
         return "a resolved entry carries no id"
     return None
 
 
 def _check_notion(payload: Any) -> str | None:
     """The authenticated user."""
-    if _has(payload, "id", "name", "person", "bot"):
+    if has(payload, "id", "name", "person", "bot"):
         return None
-    people = _records(payload) or []
+    people = records(payload) or []
     if not people:
         return "no authenticated user came back"
-    if not all(_has(person, "id", "name") for person in people):
+    if not all(has(person, "id", "name") for person in people):
         return "the authenticated user has no id"
     return None
 
@@ -299,26 +222,26 @@ def _check_jira(payload: Any) -> str | None:
     cost of being wrong is one "couldn't check jira" line; the cost of the other
     reading is a board reported clear that was never really queried.
     """
-    issues = _records(payload)
+    issues = records(payload)
     if issues is None:
         return "no issue list came back"
     if not issues:
         return "the bounded jql matched nothing, which is what a dormant project looks like"
-    if not all(_has(issue, "key") for issue in issues):
+    if not all(has(issue, "key") for issue in issues):
         return "an issue has no key, and the key is the join to slack and prs"
     return None
 
 
 def _check_github_api(payload: Any) -> str | None:
     """The `gh` API half: whatever the account can see."""
-    if _has(payload, "login"):
+    if has(payload, "login"):
         return None
-    repos = _records(payload)
+    repos = records(payload)
     if repos is None:
         return "no repository list came back"
     if not repos:
         return "the api answered with no repositories at all"
-    if not all(_has(repo, "name", "full_name") for repo in repos):
+    if not all(has(repo, "name", "full_name") for repo in repos):
         return "an entry names no repository"
     return None
 
@@ -347,12 +270,12 @@ def _check_warehouse(payload: Any) -> str | None:
     proof the warehouse answered, because the way this source fails is by
     handing back something unstructured that a looser check would accept.
     """
-    rows = _records(payload)
+    rows = records(payload)
     if rows is None:
         return f"no structured rows came back; {_LOGIN_FIX}"
     if not rows:
         return "select 1 returned no rows at all"
-    answer = _first_value(rows[0])
+    answer = first_value(rows[0])
     # `True == 1` in Python, so the bool is excluded explicitly. A driver
     # handing back a boolean is not the warehouse answering 1, and accepting it
     # is the same "it returned something" reading this check exists to refuse.
@@ -592,14 +515,14 @@ def _probe_once(check: Check, probe: Callable[[], Any] | None) -> Result:
         reason, detail = _classify(payload)
         if reason:
             return skipped(reason, detail)
-    elif carried := _error_text(payload):
+    elif carried := error_text(payload):
         # The error object MCP and REST clients actually use. A populated error
         # field is a failed call whether or not its wording matches a pattern,
         # so this one takes the check's default reason rather than falling
         # through to a shape complaint that never mentions the 401.
         return skipped(*_classify(carried, check.default_reason))
 
-    size = _measure(payload)
+    size = measure(payload)
     if size > OUTPUT_CEILING_CHARS:
         return skipped(
             OVERFLOW,
