@@ -37,6 +37,7 @@ artifact is the load-bearing rule; the rest is plumbing.
 | `vault` | Targeted line edits to a note, with an iCloud-aware compare-and-swap |
 | `voice` | The house voice as assertions, and the templates for every push |
 | `smoke` | One pre-flight pass over every source: reached, skipped, or never connected |
+| `runlog` | One row per run in the event log, so a brief that never arrived can still be explained |
 | `recipes` | SPEC §4's prose as literal, testable queries |
 | `payloads` | Reading a connector's answer while it is still unvalidated - `recipes` asks, this reads |
 | `brief` | SPEC §3.1's morning brief: the assembler every other loop composes from |

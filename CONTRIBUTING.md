@@ -48,6 +48,43 @@ Work happens on parallel paths cut from `main`, one per independent surface:
 They are parallel because they own separate modules and share only `daydag.config`. Keep
 it that way - if two paths need the same new helper, it belongs on `main` first.
 
+## Docstrings are read by agents
+
+The first reader of this code is an agent, and an agent needs the contract
+before it needs the reasoning. Long narrative docstrings buried the two things
+a caller actually has to know - what to call, and what must not be broken - so
+module docstrings lead with those:
+
+```
+"""One-line summary.
+
+USING IT          the shortest real call sequence, copy-pasteable
+CONTRACTS         numbered. Break one and a guarantee is gone
+WHY IT EXISTS     the reasoning. Compressed, and after the contract
+KNOWN LIMIT       what it does not do, when that is load-bearing
+"""
+```
+
+`src/daydag/runlog.py` is the worked example. Function docstrings lead with
+what the call returns, then `Args:` / `Raises:` for anything a caller can get
+wrong - `record`'s `started` and `failure` are both there because both have a
+wrong-looking-right form.
+
+Keep the reasoning. It is why review finds real defects here, and the history
+of a past bug is often the only thing that explains a guard. Compress it and
+move it below the contract; do not delete it.
+
+Two rules that follow:
+
+- **A claim in a docstring is a claim under test.** `"never"`, `"always"`,
+  `"every"` and `"exactly once"` have each been wrong at least once in this
+  repo - `Skip`'s "never a bare name" and `RunRow.line`'s "all of them the
+  agent's own words" were both false when written. Say what the code does.
+- **A guardrail should scan code, not prose.** The clock guardrail in
+  `tests/test_runlog.py` text-scanned the whole file and so fired on the
+  module docstring's own usage example. It parses the AST now. A contract that
+  cannot be written down is worse documented for the sake of a cruder check.
+
 ## Review before you push
 
 Reviews happen locally, before the push - not in CI. Two layers, and they are
