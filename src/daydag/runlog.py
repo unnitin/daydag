@@ -590,6 +590,16 @@ class RunLog:
         The failure's wording is withheld, because this line is offered to a
         plaintext file synced to every device Nitin owns. Returned rather than
         written: `State.md` has one writer and it is not this module.
+
+        ``loop`` itself is rendered VERBATIM, and it is the one part of this
+        line that is not withheld or vocabulary-gated. That is safe only while
+        a loop name is a fixed identifier the agent chose - "morning brief",
+        "noon chaser". It stops being safe the moment one is derived from data:
+        a prep loop named for its meeting would put that meeting's title into
+        a synced plaintext file, and guardrail 7 keeps exactly that out. The
+        trim on the way in bounds the length and strips newlines, so a name
+        cannot break the file's structure - it does not, and cannot, judge
+        whether the words are sensitive. Keep loop names literal.
         """
         return self._projection(loop, self.rows(loop))
 
