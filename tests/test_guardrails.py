@@ -33,6 +33,9 @@ COVERED (behavioural - real code, real assertions)
     - the registry's one-writer check fires regardless of declaration order
     - a downed source degrades to a named "could not fetch" line and the rest
       of the report still ships
+    - a connector that raises, or answers with an overflow, degrades to a named
+      "couldn't check X" line and the pre-flight run still returns a report
+      (in `tests/test_smoke_run.py`, which carries its own guardrail marks)
     - a stale mirror contributes no items and is reported as stale
     - untrusted Slack text is parsed for ticket keys only, never echoed or acted on
     - the vault write path joins only literal names onto the folder root
@@ -41,8 +44,9 @@ TRIPWIRES (no implementation exists - these fail when one lands unguarded)
     - no autonomous send path of any kind (Slack, Gmail, Calendar, drafts)
     - no Jira write path (transition, comment, assign)
     - no inbound command surface, so no injection parser and no sender check
-    - no connector client besides the git mirror, so "couldn't check X" has
-      exactly one implementation
+    - no connector client besides the git mirror: every other source is probed
+      through a callable the caller injects (`daydag.smoke`), so nothing in the
+      package can reach a connector on its own
 
 GAPS - not covered here, and not pretended to be
     1. `pulse.Item` does not require a non-empty permalink at construction, so
@@ -654,13 +658,15 @@ CONNECTOR_PATTERNS = {
 
 @pytest.mark.guardrail
 def test_no_connector_client_exists_without_a_degrade_path():
-    """TRIPWIRE. Guardrail 6 has exactly one implementation today.
+    """TRIPWIRE. No source is read by code that lives in this package.
 
-    `Mirror.mark_fetch_failed` covers git. Slack, Gmail, Notion, Calendar and
-    Databricks have no client code at all, so there is no failure mode to
-    drive. Databricks is the one with a known trap: expired OAuth surfaces as a
-    schema error rather than an auth error, so "it returned something" is not
-    proof the source was reachable.
+    `Mirror.mark_fetch_failed` covers git, and `daydag.smoke` covers everything
+    else - but only over probes the caller injects, so there is still no client
+    here and no failure mode of one to drive. That is what this holds open: the
+    day a real client lands, its degrade path has to be built rather than
+    assumed from the smoke run. Databricks is the case that proves the point,
+    since expired OAuth surfaces there as a schema error rather than an auth
+    error, so "it returned something" is not proof the source was reachable.
     """
     _self_check_scanner()
     hits = _scan(CONNECTOR_PATTERNS, include_strings=False)
