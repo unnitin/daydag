@@ -1,10 +1,10 @@
 # Skills — the four weekly routines, plus DayDAG
 
-All planning work is orchestrated from this repo. Four skills were copied **verbatim** from Cowork on 2026-09-05; `daydag` is this repo's own.
+All planning work is orchestrated from this repo. Four skills were copied **verbatim** from Cowork on 2026-09-05; `daily-loops` is this repo's own.
 
 | Skill | Role | Came from |
 |---|---|---|
-| `daydag` | the day between the Fridays: briefs, ingestion, chase, pulse, on-demand commands | this repo (#4) |
+| `daily-loops` | the day between the Fridays: briefs, ingestion, chase, pulse, on-demand commands | this repo (#4) |
 | `weekly-planning-and-progress` | orchestrator (order + cross-cutting guardrails only) | `~/Documents/Claude/Scheduled/weekly-planning-and-progress/` |
 | `weekly-planning` | forward-looking: week-ahead plan + per-meeting talking points + Workstreams write-back | Cowork skills-plugin (live) |
 | `weekly-progress-reporting` | backward-looking: Goals & Progress doc + highlights email | Cowork skills-plugin (live) |

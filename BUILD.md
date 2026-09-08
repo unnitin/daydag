@@ -27,7 +27,7 @@ Everything else is assembly.
 
 | # | Ticket | Depends |
 |---|---|---|
-| M1-1 | Repo skeleton; commit SPEC.md; skill layout at `.claude/skills/daydag/` | — |
+| M1-1 | Repo skeleton; commit SPEC.md; skill layout at `.claude/skills/daily-loops/` | — |
 | M1-2 | `DayDAG/` vault folder — `README.md`, `State.md` schema hand-seeded w/ today's real open loops, `Decisions.md`, `Watchlist.md`, empty `Proposals/` | — |
 | M1-3 | **Spike: vault write-back — local vs connector** | See above. Gates M3-3. Real risk is iCloud sync conflicts, not permissions |
 | M1-4 | Source recipes reference — exact query per source | M0-2 |

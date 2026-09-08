@@ -2,7 +2,20 @@
 name: weekly-planning-and-progress
 description: "Every Friday 1pm PT: read durable context, run weekly-progress-reporting then weekly-planning, and update Workstreams for Nitin (Data & AI, CMG)."
 daydag:
-  # Orchestration only: it owns the order, the two skills own every artifact.
+  # Orchestration only: it owns the ORDER, the two skills own every artifact,
+  # so this list is empty on purpose rather than by omission. Declaring any of
+  # them here would be a second writer on an artifact that already has one,
+  # which the registry refuses at startup - that refusal is the whole point.
+  #
+  # Where the data actually goes, so this does not have to be read as a
+  # question mark. Step 1, via `weekly-progress-reporting`:
+  #   drive:${GDOC_GOALS_PRIORITIES}#progress   (the Progress tab)
+  #   gmail:draft-highlights                    (a draft, never sent)
+  # Step 2, via `weekly-planning`:
+  #   vault:Weekly Notes/
+  #   vault:Meeting Prep/
+  #   vault:Fact Base/Workstreams.md            (moves to DayDAG at the cut, #37)
+  #
   # This is the row behind ARCHITECTURE's "Fri 13:00 weekly planning + progress".
   writes: []
   reads: [obsidian]

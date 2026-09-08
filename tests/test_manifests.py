@@ -169,7 +169,7 @@ def test_the_default_skills_directory_is_the_one_in_this_repo():
 @pytest.mark.guardrail
 def test_the_shipped_manifests_load(shipped):
     """The one-writer check, run over the real set. This is the point of #4."""
-    assert shipped.writer_of("vault:DayDAG/State.md") == "daydag"
+    assert shipped.writer_of("vault:DayDAG/State.md") == "daily-loops"
     assert shipped.writer_of("vault:Fact Base/Workstreams.md") == "weekly-planning"
 
 
@@ -189,8 +189,8 @@ def test_daydag_writes_nothing_it_does_not_own(shipped_manifests):
     (#37). A manifest that claims it early is the exact regression this catches.
     """
     owned = ("vault:DayDAG/", "local:")
-    declared = shipped_manifests["daydag"]["writes"]
-    assert declared, "daydag declares at least one artifact"
+    declared = shipped_manifests["daily-loops"]["writes"]
+    assert declared, "daily-loops declares at least one artifact"
     for artifact in declared:
         assert artifact.startswith(owned), artifact
 
@@ -228,15 +228,15 @@ def test_a_folder_id_does_not_authorise_the_files_inside_it(shipped):
     custody of the folder and nothing more. Prefix matching belongs in the
     registry (the skill-registry path); until it lands, this is the behaviour.
     """
-    assert shipped.writer_of("vault:DayDAG/Proposals/") == "daydag"
+    assert shipped.writer_of("vault:DayDAG/Proposals/") == "daily-loops"
     with pytest.raises(RegistryError, match="undeclared"):
-        shipped.check_write("daydag", "vault:DayDAG/Proposals/0906-workstreams.md")
+        shipped.check_write("daily-loops", "vault:DayDAG/Proposals/0906-workstreams.md")
 
 
 def test_the_scheduling_table_is_a_projection_of_the_manifests(shipped):
     """ARCHITECTURE's Scheduling table, derived rather than hand-kept."""
     assert set(shipped.schedule()) == {
-        "daydag",
+        "daily-loops",
         "weekly-feedback-scan",
         "weekly-planning-and-progress",
     }
@@ -245,4 +245,4 @@ def test_the_scheduling_table_is_a_projection_of_the_manifests(shipped):
 def test_the_pulse_feeds_the_weekly_routines(shipped):
     """`consumes:` is the wiring that replaces five hardcoded relationships."""
     for consumer in ("weekly-progress-reporting", "weekly-feedback-scan"):
-        assert "daydag" in shipped.producers_for(consumer)
+        assert "daily-loops" in shipped.producers_for(consumer)

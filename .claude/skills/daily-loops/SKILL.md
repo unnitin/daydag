@@ -1,5 +1,5 @@
 ---
-name: daydag
+name: daily-loops
 description: "Run a DayDAG loop for Nitin - morning brief, EOD wrap, Sunday week-ahead, meeting-note ingestion, open-loop chase, engineering pulse - or an on-demand command (sweep / prep / find / draft / status / ship / sprint / done / add / snooze). Use for \"run my morning\", \"what's owed to me\", \"ingest today's notes\", \"chase\", \"what shipped\", \"wrap up the day\", \"week ahead\". Do NOT use for the Friday planning + progress ritual (that's weekly-planning-and-progress) or the private VP feedback log (that's weekly-feedback-scan)."
 daydag:
   writes:
