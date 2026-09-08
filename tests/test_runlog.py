@@ -126,7 +126,7 @@ def test_a_run_appends_exactly_one_row(runlog, log):
     runlog.record("morning brief", _rows())
     runlog.record("noon chaser", _rows())
 
-    rows = log.payloads(RUN)
+    rows = log.recorded(RUN)
     assert len(rows) == 2
     assert [row["loop"] for row in rows] == ["morning brief", "noon chaser"]
 
@@ -152,7 +152,7 @@ def test_two_runs_of_the_same_loop_are_both_kept(runlog, log):
     first = runlog.record("morning brief", _rows())
     second = runlog.record("morning brief", _rows(jira=ConnectionError("401 unauthorized")))
 
-    kept = [RunRow.from_payload(payload) for payload in log.payloads(RUN)]
+    kept = [RunRow.from_payload(payload) for payload in log.recorded(RUN)]
     assert [row.at for row in kept] == [first.at, second.at]
     assert kept[0].skipped == () and [s.name for s in kept[1].skipped] == ["jira"]
 
@@ -164,7 +164,7 @@ def test_a_row_survives_the_round_trip_through_sqlite(tmp_path, clock):
         "morning brief", _rows(jira=ConnectionError("401 unauthorized"))
     )
 
-    reread = RunRow.from_payload(EventLog.open(path).payloads(RUN)[0])
+    reread = RunRow.from_payload(EventLog.open(path).recorded(RUN)[0])
     assert reread == written, "a row that does not survive json is not a record"
 
 
@@ -253,7 +253,7 @@ def test_a_malformed_row_still_leaves_a_run_row_behind(runlog, log):
             failure=RuntimeError("mirror fetch died"),
         )
 
-    (payload,) = log.payloads(RUN)
+    (payload,) = log.recorded(RUN)
     row = RunRow.from_payload(payload)
     assert row.outcome == FAILED
     assert row.reached == ("calendar",), "the rows it did read are still kept"
@@ -279,7 +279,7 @@ def test_any_malformed_input_still_leaves_a_run_row_behind(runlog, log, bad_rows
     with pytest.raises(Exception):  # noqa: B017 - the type is the caller's, the row is the point
         runlog.record("morning brief", bad_rows, failure=RuntimeError("mirror fetch died"))
 
-    (payload,) = log.payloads(RUN)
+    (payload,) = log.recorded(RUN)
     row = RunRow.from_payload(payload)
     assert row.outcome == FAILED
     assert "mirror fetch died" in row.failure
@@ -359,7 +359,7 @@ def test_a_run_that_fails_partway_still_writes_its_row(runlog, log):
             run.observe(_rows(jira=ConnectionError("401 unauthorized")))
             raise RuntimeError("mirror fetch died")
 
-    (payload,) = log.payloads(RUN)
+    (payload,) = log.recorded(RUN)
     row = RunRow.from_payload(payload)
     assert row.outcome == FAILED
     assert not row.completed
@@ -394,7 +394,7 @@ def test_a_run_that_dies_before_probing_anything_still_leaves_a_row(runlog, log)
         with runlog.run("morning brief"):
             raise RuntimeError("config missing")
 
-    row = RunRow.from_payload(log.payloads(RUN)[0])
+    row = RunRow.from_payload(log.recorded(RUN)[0])
     assert row.reached == () and row.skipped == ()
     assert "reached: none" in row.line()
 
@@ -403,7 +403,7 @@ def test_a_clean_run_through_the_context_manager_writes_one_ok_row(runlog, log):
     with runlog.run("morning brief") as run:
         run.observe(_rows())
 
-    (payload,) = log.payloads(RUN)
+    (payload,) = log.recorded(RUN)
     assert RunRow.from_payload(payload).outcome == OK
 
 

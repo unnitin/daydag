@@ -271,11 +271,14 @@ class EventLog:
                 continue
         return rows
 
-    def payloads(self, kind: str) -> list[Any]:
+    def recorded(self, kind: str) -> list[Any]:
         """Every payload recorded under one kind, oldest first.
 
-        The read side of `record`, for callers that wrote a structured row and
-        need it back exactly as it went in. `chase_items` predates this and
+        The read side of `record`, and named for it - `record` writes, this
+        reads back. It was `payloads`, which collided with the `daydag.payloads`
+        module for a reader seeing both in one file, and the two mean different
+        things: that module reads an unvalidated connector response, this reads
+        a row this log wrote itself. `chase_items` predates this and
         folds the sensitivity column into each item, which is right for a chase
         entry and wrong for anything that has to round-trip.
 

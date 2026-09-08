@@ -115,7 +115,7 @@ def test_a_morning_run_leaves_its_row_in_the_log_and_nothing_in_the_vault(
         folder.write_state(chase=log.chase_items(), watch=[], notes_gaps=[])
 
     # -- the row is in the log, stamped, and names what it could not read --
-    (payload,) = log.payloads(RUN)
+    (payload,) = log.recorded(RUN)
     row = RunRow.from_payload(payload)
     assert row.at == SIX_FORTY.isoformat(), "the row is stamped by the injected clock"
     assert row.completed and row.reached == ("calendar",)
@@ -152,7 +152,7 @@ def test_a_morning_that_dies_partway_still_leaves_a_row(tmp_path, morning_repo, 
             run.observe(_morning_smoke())
             Pulse(mirrors=[Mirror.attach(tmp_path / "gone.git", cursor="HEAD")]).items()
 
-    row = RunRow.from_payload(log.payloads(RUN)[0])
+    row = RunRow.from_payload(log.recorded(RUN)[0])
     assert not row.completed, "a run that raised must not be recorded as finished"
     assert row.at == SIX_FORTY.isoformat()
     assert "calendar" in row.reached, "what it did read before dying is the diagnosis"
@@ -176,7 +176,7 @@ def test_a_morning_that_bailed_before_reading_anything_is_not_a_success(tmp_path
     with runlog.run("morning brief"):
         pass
 
-    row = RunRow.from_payload(log.payloads(RUN)[0])
+    row = RunRow.from_payload(log.recorded(RUN)[0])
     assert row.outcome == UNCHECKED and not row.completed
     assert "reached: none" in row.line()
     assert runlog.last_completed_run("morning brief") is None

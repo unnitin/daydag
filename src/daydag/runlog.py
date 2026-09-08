@@ -552,7 +552,7 @@ class RunLog:
         the trouble started - answers in their place.
         """
         rows = []
-        for payload in self._log.payloads(RUN):
+        for payload in self._log.recorded(RUN):
             try:
                 rows.append(RunRow.from_payload(payload))
             except (KeyError, TypeError, AttributeError, ValueError):
