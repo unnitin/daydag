@@ -1,46 +1,53 @@
 """One row per run, so a silent failure is diagnosable after the fact.
 
-There is no platform observability behind this agent and SPEC section 7 accepts
-that deliberately, along with its consequence: **the failure mode is Nitin
-noticing a brief didn't arrive.** By then the process is gone. Nothing says
-whether the run started, which source went quiet, or whether it died halfway.
-This module is the only record that outlives the run, so it is written to be
-read exactly once - months later, by someone asking "what happened on the 8th".
+USING IT
+    log = RunLog(EventLog.open(path), clock=lambda: datetime.now(UTC))
 
-Three decisions follow from that, and each is held by a test:
+    with log.run("morning brief") as run:   # writes a row either way, re-raises
+        run.observe(report.as_rows())
 
-**The row goes in the event log, not in `State.md`.** ARCHITECTURE splits the
-stores on this: five scheduled loops appending to one iCloud-synced markdown
-file with no locking is a lost update, and the run log is the write that
-happens most. `State.md` may carry `projection_lines()` as derived lines - one
-per loop, and per loop rather than one line overall because any single line
-across five loops is a line that can report the four healthy ones while the
-brief has been dead since tuesday. Those lines withhold the failure's wording:
-everything else on them comes from a fixed vocabulary, but a connector's error
-text is whatever it chose to say, and a 403 that quotes the url it was refused
-can carry a token. That belongs in the log, which is outside the vault.
+    log.record("morning brief", report.as_rows(), started=began)  # run already over
+    log.last_run("morning brief")           # RunRow | None
+    log.rows("morning brief")               # oldest first
+    log.projection_lines(expected=LOOPS)    # lines State.md MAY carry
 
-**The rows come from `smoke.as_rows()`, never from its rendered text.** Those
-rows are `{name, source, status, reason, detail}`, all strings, in a
-deterministic order - a format designed to be appended to. Reading the reached
-and skipped sets back out of a rendered report would make the log a parser of
-its own output, and the report's wording would then be load-bearing.
+    row.outcome in (OK, DEGRADED, UNCHECKED, FAILED, UNREADABLE)
 
-**A run that fails partway still writes its row.** `RunLog.run` is a context
-manager that records on the way out whether or not the body raised, and then
-re-raises. A log that only records clean runs is missing precisely the runs
-anybody would ever open it for. The honest limit: a process killed hard - SIGKILL,
-the laptop shut - never reaches the recording code and leaves no row at all. So
-absence of a row is itself a finding, which is why the projection reports when
-the last run was rather than only that one succeeded.
+CONTRACTS - break one and the guarantee is gone
+    1. Rows live in the event log, never in the vault. `projection_*` RETURN
+       lines; `State.md` has one writer and it is not this module.
+    2. `projection_*` withhold free text. A connector's 403 can quote the url it
+       was refused and carry a token; the log keeps that, a synced file does not.
+    3. `loop` renders VERBATIM in the projection - the one part not withheld or
+       vocabulary-gated. Keep loop names literal. A name derived from a meeting
+       title puts that title into a plaintext file synced to every device.
+    4. Feed it `smoke.as_rows()`, never rendered report text. Parsing your own
+       output makes the report's wording load-bearing.
+    5. Pass the exception, not `str(exc)`. `str(RuntimeError())` is empty, and an
+       empty failure scores the run as a success.
+    6. The clock is injected, because a stamped report is otherwise unassertable.
 
-The reader degrades too. A payload written by a newer schema becomes one
-`UNREADABLE` row instead of an exception, because the moment the schema moved
-is exactly the moment somebody is reading the history.
+WHY IT EXISTS
+    There is no platform observability behind this agent, and SPEC section 7
+    accepts the consequence: the failure mode is Nitin noticing a brief did not
+    arrive. By then the process is gone and nothing says whether the run
+    started, which source went quiet, or whether it died halfway. This is the
+    only record that outlives the run, written to be read once, months later, by
+    someone asking what happened on the 8th.
 
-The clock is injected. `smoke.py` takes no clock on purpose, because a stamped
-report is non-deterministic and therefore unassertable; the stamp has to happen
-somewhere, so it happens here, where a test can pin it.
+    Per-loop projection lines rather than one line overall: any single line
+    across five loops can report the four healthy ones while the brief has been
+    dead since tuesday, which is the silence this exists to break.
+
+    Both readers degrade rather than raise. A payload from a newer schema
+    becomes one UNREADABLE row, because the moment the schema moved is exactly
+    the moment somebody is reading the history.
+
+KNOWN LIMIT
+    A process killed hard - SIGKILL, laptop shut - never reaches the recording
+    code and leaves no row. So absence of a row is itself a finding, which is
+    why the projection reports WHEN the last run was and not merely that one
+    succeeded.
 """
 
 from __future__ import annotations
@@ -476,22 +483,23 @@ class RunLog:
         started: datetime | None = None,
         failure: str | BaseException = "",
     ) -> RunRow:
-        """Write one row for a run that is already over.
+        """Write one row for a run that is already over. Returns the row.
 
-        The direct form, for a loop that has its smoke rows in hand. A loop that
-        might not survive to the end should use `run` instead, which cannot be
-        skipped by the exception.
+        Args:
+            loop: which loop ran. Rendered VERBATIM by `projection_*`, so keep
+                it a literal - see contract 3 in the module docstring.
+            rows: `smoke.as_rows()` output. Anything else raises, and the row is
+                still written before the raise.
+            started: when the run BEGAN. Without it `at` is the moment this was
+                called, which is a different meaning from `run`'s `at` - two
+                loops using the two APIs would write one field two ways and
+                their timestamps would differ by a run's duration.
+            failure: the exception, preferably, not `str(exc)` - which is empty
+                for `RuntimeError()` and scores the run as a success.
 
-        ``started`` keeps `at` meaning the same thing in both forms. `run`
-        stamps the clock on entry, so its `at` is the start; this one is called
-        after the fact, so without ``started`` its `at` is the moment it was
-        reported. A caller that knows when its run began should say so -
-        otherwise two loops using the two APIs write one field with two
-        meanings, and comparing their timestamps is off by a run's duration.
-
-        ``failure`` takes the exception itself as well as a string. Prefer the
-        exception: `str(RuntimeError())` is empty, and an empty failure scores
-        the run as a success.
+        Raises:
+            Whatever iterating ``rows`` raises, AFTER writing a row that says
+            so. Use `run` instead for a loop that might not reach this call.
         """
         run = Run(loop=loop, at=self._stamp(started))
         try:
@@ -518,16 +526,21 @@ class RunLog:
 
     @contextmanager
     def run(self, loop: str) -> Iterator[Run]:
-        """Run a loop and write its row either way.
+        """Run a loop and write its row either way. Yields a `Run` to observe into.
 
-        The failure path is the reason this is a context manager rather than a
-        pair of calls: a `record` at the end of the body is skipped by the
-        exception, and the runs that never finished are exactly the ones the log
-        exists for. `BaseException` rather than `Exception` so a scheduled run
-        cancelled or interrupted still leaves a row saying so.
+            with log.run("morning brief") as run:
+                run.observe(report.as_rows())
 
-        The failure is recorded and then re-raised. Recording is not handling -
-        swallowing it here would turn a loud failure back into a silent one.
+        ``at`` is stamped on ENTRY, so it is the run's start time.
+
+        A raise from the body is recorded and then RE-RAISED - recording is not
+        handling, and swallowing here would turn a loud failure back into a
+        silent one. `BaseException`, so a cancelled or interrupted scheduled run
+        still leaves a row.
+
+        Prefer this over `record` whenever the body might not finish: a `record`
+        at the end of a block is skipped by the exception, and the runs that
+        never finished are exactly the ones this log exists for.
         """
         run = Run(loop=loop, at=self._stamp())
         try:

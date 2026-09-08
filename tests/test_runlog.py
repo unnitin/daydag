@@ -24,6 +24,7 @@ test is a report nobody can assert anything about.
 
 from __future__ import annotations
 
+import ast
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -897,7 +898,18 @@ def test_the_module_reads_no_clock_of_its_own(runlog):
 
     A module that can call `datetime.now()` will, and the test that was supposed
     to pin the timestamp starts passing for the wrong reason.
+
+    Scanned as CODE, not as text. A substring scan of the whole file also
+    fires on the module docstring's own usage example - and a contract that
+    cannot be written down is worse documented for the sake of a cruder check.
+    Docstrings and comments cannot call anything, so dropping them costs the
+    guardrail nothing.
     """
-    body = Path(runlog_module.__file__).read_text(encoding="utf-8")
+    tree = ast.parse(Path(runlog_module.__file__).read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant):
+            node.value = ast.Constant(value="")  # a docstring, not a call
+    code = ast.unparse(tree)  # also drops every comment
+
     for banned in ("datetime.now", "utcnow", "time.time", "time.monotonic"):
-        assert banned not in body, f"{banned} in runlog.py - the clock is injected"
+        assert banned not in code, f"{banned} called in runlog.py - the clock is injected"
