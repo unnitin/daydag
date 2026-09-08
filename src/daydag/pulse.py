@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from daydag.config import ConfigError
+from daydag.recipes import PACIFIC
 
 #: Words that would turn this into a productivity metric. Asserted against.
 FORBIDDEN_IN_OUTPUT = ("commits", "lines changed", "+/-", "contributions")
@@ -160,11 +161,24 @@ def _utcnow() -> datetime:
 
 
 def _as_of(when: datetime | None) -> str:
-    """Render a fetch time for the degrade line."""
+    """Render a fetch time for the degrade line. Always carries a zone.
+
+    `last_fetch` is a Protocol returning `datetime | None` with no timezone
+    guarantee, so a store handing back a naive value is inside the contract.
+    Rendered as-is, `%Z` is empty and the line said "as of 2026-09-04 06:40" -
+    an unlabelled instant in the one sentence someone reads months later to
+    decide whether a stale repo mattered. Stripping the trailing space made it
+    tidy rather than answerable.
+
+    A naive value is the principal's wall clock, which is the convention
+    `brief._local` already holds and for the same reason: `astimezone()` on a
+    naive value adopts whatever zone the runner has. An already-aware value is
+    rendered in its own zone, untouched - a fetch recorded in UTC reads as UTC.
+    """
     if when is None:
         return NO_FETCH_ON_RECORD
-    # `%Z` is empty for a naive datetime, so the strip keeps a caller that
-    # supplied one from producing a trailing space inside the sentence.
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=PACIFIC)
     return when.strftime(AS_OF_FORMAT).strip()
 
 

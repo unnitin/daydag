@@ -22,6 +22,7 @@ from daydag.pulse import (
     Pulse,
     PulseError,
     WatchedRepo,
+    _as_of,
     _run_git,
     github_url,
     mirror_root,
@@ -672,3 +673,28 @@ def test_a_store_with_no_log_still_syncs(store, origins):
     origins.add("service-a")
     report = store.sync([WatchedRepo("ExampleOrg", "service-a")])
     assert [m.label for m in report.mirrors] == ["ExampleOrg/service-a"]
+
+
+def test_a_naive_fetch_time_still_renders_with_a_zone():
+    """The one line whose job is to say when the data was last real.
+
+    `last_fetch` is a Protocol returning `datetime | None` with no timezone
+    guarantee, so a store handing back a naive value is inside the contract.
+    Rendered as-is it produced "2026-09-04 06:40" with no zone at all - an
+    unlabelled instant in the line someone reads months later to decide
+    whether a stale repo mattered.
+
+    Naive means the principal's wall clock, which is the convention `brief`
+    already holds (`_local`: `astimezone()` on a naive value adopts the
+    runner's zone, which printed a 9am event as 2:00 under TZ=UTC). An
+    already-aware value is untouched - the UTC rendering above is asserted in
+    five places and is deliberate.
+    """
+    naive = datetime(2026, 9, 4, 6, 40)
+    rendered = _as_of(naive)
+
+    # Three parts: date, time, zone. `.split()[-1]` being truthy proves
+    # nothing - it is "06:40" when the zone is missing entirely.
+    assert len(rendered.split()) == 3, f"no zone in {rendered!r}"
+    assert rendered.startswith("2026-09-04 06:40")
+    assert _as_of(FRIDAY) == "2026-09-04 06:40 UTC", "aware values unchanged"
