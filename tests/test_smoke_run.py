@@ -526,6 +526,42 @@ def test_the_module_carries_no_client_of_its_own():
     assert imported <= {"__future__", "collections", "dataclasses", "re", "typing", "daydag"}
 
 
+def test_the_bounds_are_anchored_to_the_recipes_that_enforce_them():
+    """A bound is a restatement of `recipes` unless it is built from it.
+
+    `bound=` describes what keeps each query under the ceiling - but `recipes`
+    is what actually keeps it there. Two copies of one fact, and the prose copy
+    is the one nothing tests: raise `JIRA_MAX_RESULTS_CAP` to 500 and a hand
+    written "never all of them" still reads correct while no longer being true.
+
+    So the bounds that have a constant behind them are built from it. This
+    fails the moment a cap moves and the report keeps quoting the old one.
+
+    Asserting the cap's *value* appears in the text would not show that: a
+    hand-typed "at most 100" contains it just as well. So this moves the cap
+    and rebuilds the module, which only follows if the bound is built from it.
+    """
+    import importlib
+
+    from daydag import recipes
+    from daydag import smoke as smoke_module
+
+    original = recipes.JIRA_MAX_RESULTS_CAP
+    try:
+        recipes.JIRA_MAX_RESULTS_CAP = 4242
+        rebuilt = importlib.reload(smoke_module)
+        moved = {check.name: check.bound for check in rebuilt.CHECKS}
+        assert "4242" in moved["jira"], "the bound is a restatement, not a reference"
+    finally:
+        recipes.JIRA_MAX_RESULTS_CAP = original
+        importlib.reload(smoke_module)
+
+    bounds = {check.name: check.bound for check in smoke_module.CHECKS}
+    assert str(original) in bounds["jira"]
+    assert str(recipes.GH_LIMIT_CAP) in bounds["github api"]
+    assert recipes.GEMINI_LABEL in bounds["gmail"]
+
+
 # --------------------------------------------------------------------------
 # 10. the near-misses: a check that is nearly right reports a source as healthy
 #

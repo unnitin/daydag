@@ -34,6 +34,19 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+# The bounds below describe what keeps each query small enough to answer, and
+# `recipes` is what actually keeps it there. Importing the caps rather than
+# retyping them is the difference between a description and a restatement: a
+# cap that moves takes the report's wording with it. Constants only - no query
+# is built here, and no client comes with them.
+from daydag.recipes import (
+    GEMINI_LABEL,
+    GEMINI_SENDER,
+    GH_LIMIT_CAP,
+    JIRA_FIELDS,
+    JIRA_MAX_RESULTS_CAP,
+)
+
 # -- statuses ---------------------------------------------------------------
 
 REACHED = "reached"
@@ -386,7 +399,7 @@ CHECKS: tuple[Check, ...] = (
         name="gmail",
         source="gmail",
         reaches="gemini notes by sender and the meeting notes label",
-        bound="one sender, one label, a dated window",
+        bound=f"one sender ({GEMINI_SENDER}), the {GEMINI_LABEL!r} label, a dated window",
         plausible=_check_gmail,
     ),
     Check(
@@ -407,14 +420,17 @@ CHECKS: tuple[Check, ...] = (
         name="jira",
         source="jira",
         reaches="issues from a bounded jql on the live project",
-        bound="one project, a dated window, named fields - never all of them",
+        bound=(
+            f"one project, a dated window, {len(JIRA_FIELDS)} named fields - "
+            f"never all of them - and at most {JIRA_MAX_RESULTS_CAP} issues"
+        ),
         plausible=_check_jira,
     ),
     Check(
         name="github api",
         source="github",
         reaches="the api answering for this account",
-        bound="one page",
+        bound=f"one page, at most {GH_LIMIT_CAP}",
         plausible=_check_github_api,
     ),
     Check(
