@@ -175,11 +175,17 @@ def _names(value: Any, field: str) -> tuple[str, ...]:
 
 @dataclass(frozen=True)
 class Skip:
-    """One source that was not reached, and why. Never a bare name.
+    """One source that was not reached, and why.
 
     The reason is what makes the row actionable: `auth` sends the reader to a
     login, `overflow` to the query, `fetch` to a clone on disk. Reporting all
     three as "unavailable" sends them to all three.
+
+    A bare name is what a missing reason degrades to, not something this
+    refuses - `line()` prints the name alone rather than `jira ()`. Nothing
+    enforces a non-empty reason, because the enforcement would have to live in
+    the caller: `smoke` never emits one, and a row that arrived without a
+    reason is still worth logging as a skip that happened.
     """
 
     name: str
@@ -389,8 +395,11 @@ class Run:
 
         skipped = tuple(
             Skip(
-                name=row["name"],
-                source=row.get("source", ""),
+                # `Skip.line` already holds `reason` to smoke's closed
+                # vocabulary so a connector's own sentence cannot reach the
+                # vault. The name printed beside it had no such guard.
+                name=_one_line(row["name"]),
+                source=_one_line(row.get("source", "")),
                 reason=row.get("reason", ""),
                 detail=row.get("detail", ""),
             )
@@ -411,7 +420,14 @@ class Run:
             outcome = OK
         return RunRow(
             at=self.at,
-            loop=self.loop,
+            # Trimmed here, because `RunRow.line` says the parts it keeps are
+            # "all of them the agent's own words" - and `loop` is the caller's.
+            # `unreadable()` already trims this same field on the degraded-read
+            # path, so this was one path capped and its twin not, with the live
+            # write being the uncapped one. The newline matters more than the
+            # length: `projection_line` is offered to `State.md`, and a name
+            # carrying one breaks the file rather than just making a long line.
+            loop=_one_line(self.loop),
             outcome=outcome,
             reached=tuple(row["name"] for row in by_status[REACHED]),
             skipped=skipped,

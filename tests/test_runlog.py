@@ -415,6 +415,43 @@ def test_a_stack_trace_is_trimmed_to_something_a_line_can_carry(runlog):
     assert len(runlog.last_run().failure) <= 200, "a run log row is a line, not a traceback"
 
 
+def test_a_loop_name_is_bounded_like_every_other_word_on_the_line(runlog):
+    """`RunRow.line` claims its parts are "all of them the agent's own words".
+
+    They are caller-supplied, not the agent's: `loop` comes straight from
+    `record`/`run`, and nothing trimmed it. `RunRow.unreadable` trims the same
+    field on the degraded-read path, so this was one path capped and its twin
+    not - and the uncapped one is the live write.
+
+    The newline matters more than the length: `projection_line` is offered to
+    `State.md`, and a name carrying one breaks the file's structure rather
+    than merely making a long line.
+    """
+    runlog.record("morning\nbrief " + "X" * 2000, [])
+
+    row = runlog.last_run()
+    assert len(row.loop) <= runlog_module.FAILURE_LIMIT
+    assert "\n" not in row.loop
+    assert "\n" not in runlog.projection_line(row.loop)
+
+
+def test_a_check_name_is_bounded_too(runlog):
+    """Same claim, same gap: a skip's name renders raw into the projection.
+
+    `Skip.line` already holds `reason` to smoke's closed vocabulary because a
+    connector's own sentence must not reach the vault. The name beside it had
+    no such guard.
+    """
+    runlog.record(
+        "morning brief",
+        [{"name": "jira\n" + "Y" * 2000, "source": "jira", "status": "skipped", "reason": "auth"}],
+    )
+
+    skip = runlog.last_run().skipped[0]
+    assert len(skip.name) <= runlog_module.FAILURE_LIMIT
+    assert "\n" not in skip.name
+
+
 def test_a_later_observation_of_the_same_source_replaces_the_earlier_one(runlog):
     """A source re-probed and now answering is reached, not both at once."""
     with runlog.run("morning brief") as run:
