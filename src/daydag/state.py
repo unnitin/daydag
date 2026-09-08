@@ -22,6 +22,7 @@ import sqlite3
 import statistics
 from collections.abc import Iterable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -59,6 +60,17 @@ _ANSWER = re.compile(
     rf"^\s*({_ANSWER_WORDS})\b|\b({_ANSWER_WORDS})[\s.,!?;:)\]]*$",
     re.IGNORECASE,
 )
+
+
+def _as_utc(when: datetime) -> datetime:
+    """``when`` as an aware UTC datetime, assuming UTC if it says nothing.
+
+    One naive stamp beside one aware stamp is a ``TypeError`` on the comparison
+    between them, so the log never holds both. Assuming rather than refusing is
+    the right failure direction here: the caller is a scheduled pre-step, and a
+    missing tzinfo is a cosmetic mistake that must not stop a brief.
+    """
+    return when.replace(tzinfo=UTC) if when.tzinfo is None else when.astimezone(UTC)
 
 
 class StateFolder:
@@ -303,6 +315,57 @@ class EventLog:
             except ValueError:
                 rows.append(payload)
         return rows
+
+    # -- mirror freshness ------------------------------------------------
+
+    def record_fetch(self, repo: str, *, at: datetime) -> None:
+        """Note that ``repo``'s mirror fetched cleanly at ``at``.
+
+        Appended like everything else rather than upserted: the log is the
+        history, and "when did this repo stop fetching" is a question only the
+        rows can answer. ``last_fetch`` reads the newest back out.
+
+        Normalised to UTC on the way in. A naive stamp is *assumed* UTC rather
+        than refused, because refusing would take the pre-step down over a
+        cosmetic detail - but it is not stored naive: one naive row beside one
+        aware row makes them incomparable, and a mixed comparison is a
+        ``TypeError`` three frames inside the 6:40am run.
+        """
+        self.record("mirror_fetched", repo=repo, at=_as_utc(at).isoformat())
+
+    def last_fetch(self, repo: str) -> datetime | None:
+        """When ``repo``'s mirror last fetched cleanly, or ``None``.
+
+        ``None`` rather than "now": a mirror that has never once been read
+        successfully must not be dated as if it were fresh, which is the exact
+        lie issue #60 is about. The stale line says so in words instead.
+
+        A row whose stamp does not parse is skipped rather than raised on, and a
+        naive one is read as UTC. This file is on disk and a human can touch it;
+        a bad value there must not take the 6:40am brief down.
+
+        Filtered in SQL rather than in Python. Every mirror stamps this table
+        three times a day forever, and this is read once per watched repo per
+        run - decoding every event of every kind to answer it turns a constant
+        into a scan that grows without bound.
+        """
+        rows = self._db.execute(
+            "SELECT payload FROM events"
+            " WHERE kind = 'mirror_fetched' AND json_extract(payload, '$.repo') = ?"
+            " ORDER BY id DESC",
+            (repo,),
+        )
+        newest: datetime | None = None
+        for (payload,) in rows:
+            try:
+                # Newest by *stamp*, not by insertion order: the clock is
+                # injected, so the two are not guaranteed to agree.
+                stamp = _as_utc(datetime.fromisoformat(json.loads(payload).get("at", "")))
+            except (ValueError, TypeError):
+                continue
+            if newest is None or stamp > newest:
+                newest = stamp
+        return newest
 
     def chase_items(self) -> list[dict[str, Any]]:
         """Chase entries, each tagged with the sensitivity that gates the vault."""

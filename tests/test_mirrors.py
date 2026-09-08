@@ -9,6 +9,7 @@ network.
 
 import shutil
 import subprocess
+from datetime import UTC, datetime
 
 import pytest
 
@@ -21,12 +22,13 @@ from daydag.pulse import (
     Pulse,
     PulseError,
     WatchedRepo,
+    _as_of,
     _run_git,
     github_url,
     mirror_root,
     read_watchlist,
 )
-from daydag.state import StateFolder
+from daydag.state import EventLog, StateFolder
 
 
 @pytest.fixture
@@ -547,3 +549,156 @@ def test_a_non_mirror_directory_in_the_way_is_reported_never_deleted(store, orig
     assert (occupied / "RESTORED-FROM-BACKUP.txt").exists()
     assert [u.slug for u in report.unavailable] == ["ExampleOrg/service-a"]
     assert "in the way" in Pulse.from_sync(report).render()
+
+
+# -- when the mirror last fetched cleanly (#60) ---------------------------
+
+
+MONDAY = datetime(2026, 9, 7, 6, 40, tzinfo=UTC)
+FRIDAY = datetime(2026, 9, 4, 6, 40, tzinfo=UTC)
+
+
+@pytest.fixture
+def dated_store(tmp_path, origins, clock):
+    """The same store as `store`, wired to an event log and a controllable clock.
+
+    The clock is injected rather than read from the wall: a test that cannot
+    control time either flakes or asserts nothing.
+    """
+
+    def url_for(repo):
+        absent = tmp_path / "origins" / f"{repo.name}-absent"
+        return str(origins.get(repo.slug) or origins.get(repo.name, absent))
+
+    log = EventLog.open(":memory:")
+    return MirrorStore(tmp_path / "mirrors", url_for=url_for, log=log, clock=clock), log
+
+
+@pytest.fixture
+def clock():
+    """A hand-wound clock. `set` moves it; calling it reads it."""
+
+    class Clock:
+        now = FRIDAY
+
+        def __call__(self):
+            return self.now
+
+        def set(self, when):
+            self.now = when
+
+    return Clock()
+
+
+def test_a_successful_fetch_writes_its_time_to_the_event_log(dated_store, origins, clock):
+    store, log = dated_store
+    repo = WatchedRepo("ExampleOrg", "service-a")
+    origins.add("service-a")
+    store.sync([repo])  # first sight clones, and stamps Friday
+
+    clock.set(MONDAY)
+    store.sync([repo])  # a real fetch, which moves the stamp on
+
+    assert log.last_fetch("ExampleOrg/service-a") == MONDAY
+
+
+@pytest.mark.guardrail
+def test_a_stale_mirror_is_dated_from_the_last_run_that_worked(dated_store, origins, clock):
+    """The whole point of #60. The mirror that fails today is dated by the run
+    that last succeeded, which is a value only the log can supply."""
+    store, _ = dated_store
+    repo = WatchedRepo("ExampleOrg", "service-a")
+    origins.add("service-a")
+    store.sync([repo])
+    store.sync([repo])  # a good fetch on Friday
+    shutil.rmtree(origins["service-a"])  # origin gone by Monday
+
+    clock.set(MONDAY)
+    report = store.sync([repo])
+
+    assert report.mirrors[0].stale is True
+    rendered = Pulse.from_sync(report).render()
+    assert "2026-09-04 06:40 UTC" in rendered, "dated from a run that did not happen"
+    assert "2026-09-07" not in rendered, "a failed fetch dated itself as fresh"
+
+
+def test_a_failed_fetch_does_not_advance_the_recorded_time(dated_store, origins, clock):
+    store, log = dated_store
+    repo = WatchedRepo("ExampleOrg", "service-a")
+    origins.add("service-a")
+    store.sync([repo])
+    store.sync([repo])
+    shutil.rmtree(origins["service-a"])
+
+    clock.set(MONDAY)
+    store.sync([repo])
+
+    assert log.last_fetch("ExampleOrg/service-a") == FRIDAY
+
+
+def test_a_first_sight_clone_dates_the_mirror_too(dated_store, origins, clock):
+    """A clone is a clean read of everything, so it stamps like a fetch.
+
+    Without this, a repo cloned on Friday whose origin is unreachable on Monday
+    reported "no successful fetch on record" - the strongest distrust signal
+    there is - about objects that were known good one day earlier.
+    """
+    store, log = dated_store
+    repo = WatchedRepo("ExampleOrg", "service-a")
+    origins.add("service-a")
+
+    store.sync([repo])
+    shutil.rmtree(origins["service-a"])
+    clock.set(MONDAY)
+    report = store.sync([repo])
+
+    assert log.last_fetch("ExampleOrg/service-a") == FRIDAY
+    assert "2026-09-04 06:40 UTC" in Pulse.from_sync(report).render()
+
+
+def test_the_fetch_stamp_is_written_and_read_under_the_same_key(dated_store, origins):
+    """Write key and read key are chosen in one place (`ensure`), so they cannot
+    drift into disagreeing and silently answering "never fetched"."""
+    store, log = dated_store
+    repo = WatchedRepo("ExampleOrg", "service-a")
+    origins.add("service-a")
+
+    store.sync([repo])
+
+    assert log.last_fetch("ExampleOrg/service-a") is not None
+
+
+def test_a_store_with_no_log_still_syncs(store, origins):
+    """The log is optional wiring, not a new hard dependency of the pre-step."""
+    origins.add("service-a")
+    report = store.sync([WatchedRepo("ExampleOrg", "service-a")])
+    assert [m.label for m in report.mirrors] == ["ExampleOrg/service-a"]
+
+
+def test_a_naive_fetch_time_still_renders_with_a_zone():
+    """The one line whose job is to say when the data was last real.
+
+    `last_fetch` is a Protocol returning `datetime | None` with no timezone
+    guarantee, so a store handing back a naive value is inside the contract.
+    Rendered as-is it produced "2026-09-04 06:40" with no zone at all - an
+    unlabelled instant in the line someone reads months later to decide
+    whether a stale repo mattered.
+
+    Naive means UTC here, matching `state._as_utc`, which is the writer for
+    this field and assumes UTC when a stamp says nothing. Reading it as the
+    principal's wall clock instead - the convention `brief._local` holds for
+    calendar events - would render a naive 06:40 as "06:40 PDT", seven hours
+    off, and a confident wrong label is worse than the bare one.
+
+    An already-aware value is untouched: the UTC rendering is asserted in five
+    places and is deliberate.
+    """
+    naive = datetime(2026, 9, 4, 6, 40)
+    rendered = _as_of(naive)
+
+    # Three parts: date, time, zone. `.split()[-1]` being truthy proves
+    # nothing - it is "06:40" when the zone is missing entirely.
+    assert len(rendered.split()) == 3, f"no zone in {rendered!r}"
+    # UTC, not the principal's zone - the clock reading must not move.
+    assert rendered == "2026-09-04 06:40 UTC"
+    assert _as_of(FRIDAY) == "2026-09-04 06:40 UTC", "aware values unchanged"
