@@ -483,7 +483,25 @@ def test_a_detail_never_carries_more_than_a_line():
 
     detail = result_for(report, "gmail").detail
     assert "\n" not in detail
-    assert len(detail) <= 120
+    assert len(detail) <= smoke.DETAIL_LIMIT
+
+
+def test_a_shape_failure_is_trimmed_like_a_raised_one():
+    """The cap has to hold on the plausibility path too, not just on raises.
+
+    `_classify` trims what a probe throws, but a check's own message is built
+    from the payload - `_check_warehouse` interpolates the answer it got - and
+    that path reached `Result.detail` untrimmed. A driver handing back a page
+    of garbled text put the whole page in the line the brief ships, which is
+    the DM-sized paste `DETAIL_LIMIT` exists to prevent.
+    """
+    garbled = "ERROR: " + "x" * 800
+    report = smoke.run(probes(databricks=lambda: {"rows": [[garbled]]}))
+
+    result = result_for(report, "databricks")
+    assert result.status == smoke.SKIPPED
+    assert len(result.detail) <= smoke.DETAIL_LIMIT
+    assert all(len(line) <= 200 for line in report.degrade_lines())
 
 
 # --------------------------------------------------------------------------

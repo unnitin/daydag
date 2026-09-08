@@ -174,9 +174,12 @@ _RECORD_KEYS = (
 def _records(payload: Any) -> list[Any] | None:
     """The record list inside a payload, or ``None`` if there is not one.
 
-    ``None`` and ``[]`` are different answers and every check below treats them
-    differently: no list at all means the call did not return this source's
-    shape, an empty list means it did and matched nothing.
+    ``None`` and ``[]`` are different answers where a check can use the
+    difference: no list at all means the call did not return this source's
+    shape, an empty list means it did and matched nothing. Calendar, Jira and
+    the GitHub API branch on it separately. Gmail, Slack and Notion do not -
+    for those, zero records is a broken query either way, so both collapse to
+    one message on purpose.
     """
     if isinstance(payload, list):
         return payload
@@ -585,7 +588,14 @@ def _probe_once(check: Check, probe: Callable[[], Any] | None) -> Result:
 
     wrong = check.plausible(payload) if check.plausible else None
     if wrong:
-        return skipped(check.shape_reason, wrong)
+        # Trimmed here rather than in each check, for the same reason the vault
+        # filters sensitivity at the writer: this is the boundary that has to
+        # hold when a caller forgets. A check builds its message from the
+        # payload - `_check_warehouse` interpolates the answer it got - and an
+        # untrimmed one put a page of garbled driver output into the line the
+        # brief ships. `_classify` already trims the raise path; this is its
+        # twin, and it was the half that was missing.
+        return skipped(check.shape_reason, _one_line(wrong))
     return Result(check.name, check.source, REACHED, detail=check.reaches)
 
 
