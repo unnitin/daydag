@@ -535,7 +535,12 @@ def test_prep_exposes_no_send_path():
 def test_audience_comes_from_config_not_from_the_source(identities):
     audience = prep.Audience.from_identities(identities)
     assert SPONSOR in audience.leadership
-    assert "example.com" in audience.internal_domains
+    # Equality, not `"example.com" in ...`. The membership form is correct here
+    # (internal_domains is a frozenset, so `in` is an exact match, not a
+    # substring test) but it is indistinguishable from the substring form that
+    # CodeQL flags as py/incomplete-url-substring-sanitization - and the config
+    # under test declares exactly one domain, so equality asserts more anyway.
+    assert audience.internal_domains == frozenset({"example.com"})
 
 
 @pytest.mark.guardrail
