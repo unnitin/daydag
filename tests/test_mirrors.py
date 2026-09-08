@@ -684,11 +684,14 @@ def test_a_naive_fetch_time_still_renders_with_a_zone():
     unlabelled instant in the line someone reads months later to decide
     whether a stale repo mattered.
 
-    Naive means the principal's wall clock, which is the convention `brief`
-    already holds (`_local`: `astimezone()` on a naive value adopts the
-    runner's zone, which printed a 9am event as 2:00 under TZ=UTC). An
-    already-aware value is untouched - the UTC rendering above is asserted in
-    five places and is deliberate.
+    Naive means UTC here, matching `state._as_utc`, which is the writer for
+    this field and assumes UTC when a stamp says nothing. Reading it as the
+    principal's wall clock instead - the convention `brief._local` holds for
+    calendar events - would render a naive 06:40 as "06:40 PDT", seven hours
+    off, and a confident wrong label is worse than the bare one.
+
+    An already-aware value is untouched: the UTC rendering is asserted in five
+    places and is deliberate.
     """
     naive = datetime(2026, 9, 4, 6, 40)
     rendered = _as_of(naive)
@@ -696,5 +699,6 @@ def test_a_naive_fetch_time_still_renders_with_a_zone():
     # Three parts: date, time, zone. `.split()[-1]` being truthy proves
     # nothing - it is "06:40" when the zone is missing entirely.
     assert len(rendered.split()) == 3, f"no zone in {rendered!r}"
-    assert rendered.startswith("2026-09-04 06:40")
+    # UTC, not the principal's zone - the clock reading must not move.
+    assert rendered == "2026-09-04 06:40 UTC"
     assert _as_of(FRIDAY) == "2026-09-04 06:40 UTC", "aware values unchanged"
