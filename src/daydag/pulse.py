@@ -800,7 +800,17 @@ class Pulse:
         """
         joined = self.by_ticket(loop.get("key", ""))
         moved = joined.pr_state == "merged" or joined.pr_number is not None
-        return {**loop, "evidence_of_movement": bool(moved)}
+        # OR, never overwrite. `pulse.apply_evidence` and this one are meant to
+        # compose over the same loop, and each wrote the flag outright - so
+        # whichever ran second erased the first, and a loop whose PR provably
+        # merged went True -> False the moment the other source had nothing
+        # that run. Evidence is monotonic: finding nothing is not finding
+        # absence, and the chaser nudging work that demonstrably moved is the
+        # cost of getting that backwards.
+        return {
+            **loop,
+            "evidence_of_movement": bool(moved) or bool(loop.get("evidence_of_movement")),
+        }
 
     # -- output ----------------------------------------------------------
 

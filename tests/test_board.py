@@ -842,3 +842,36 @@ def test_a_ticket_first_seen_already_blocked_is_still_reported():
     assert "blocked" in [d.kind for d in deltas], (
         f"a newly-seen blocked ticket reported only {[d.kind for d in deltas]}"
     )
+
+
+def test_board_evidence_never_unproves_what_another_source_already_proved():
+    """`pulse.apply_evidence` and `apply_board_evidence` are meant to compose.
+
+    Both wrote `evidence_of_movement` unconditionally, so whichever ran second
+    erased the first. A loop whose PR provably merged went True -> False the
+    moment the board had no delta that run, and the chaser nudges work that
+    demonstrably moved. Evidence is monotonic: a source finding nothing is not
+    a source finding absence.
+    """
+    already = {"key": "P-1", "evidence_of_movement": True}
+
+    assert apply_board_evidence(already, [])["evidence_of_movement"] is True
+
+
+def test_board_evidence_still_sets_the_flag_when_nothing_had_it_yet():
+    moved = Ticket(
+        key="P-1",
+        summary="s",
+        status="Done",
+        owner="o",
+        permalink="http://example.invalid/P-1",
+        project="P",
+        done=True,
+        blocked=False,
+    )
+    deltas = board_deltas(
+        BoardSnapshot.of([], taken_at="2026-09-10T06:00"),
+        BoardSnapshot.of([moved], taken_at="2026-09-11T06:00"),
+    )
+
+    assert apply_board_evidence({"key": "P-1"}, deltas)["evidence_of_movement"] is True

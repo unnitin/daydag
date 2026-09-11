@@ -792,7 +792,14 @@ def apply_board_evidence(loop: dict[str, Any], deltas: Iterable[BoardDelta]) -> 
     """
     key = loop.get("key", "")
     moved = any(delta.key == key for delta in deltas)
-    return {**loop, "evidence_of_movement": bool(moved)}
+    # OR, never overwrite. `pulse.apply_evidence` and this one are meant to
+    # compose over the same loop, and each wrote the flag outright - so
+    # whichever ran second erased the first, and a loop whose PR provably
+    # merged went True -> False the moment the other source had nothing
+    # that run. Evidence is monotonic: finding nothing is not finding
+    # absence, and the chaser nudging work that demonstrably moved is the
+    # cost of getting that backwards.
+    return {**loop, "evidence_of_movement": bool(moved) or bool(loop.get("evidence_of_movement"))}
 
 
 # ---------------------------------------------------------------------------
