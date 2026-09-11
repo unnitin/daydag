@@ -496,3 +496,28 @@ def test_creation_language_pattern_does_not_fire_on_ordinary_domain_vocabulary()
     ]
     for text in ordinary:
         assert not CREATION_LANGUAGE.search(text), text
+
+
+def test_one_item_with_no_id_does_not_lose_the_rest_of_the_note():
+    """Contract 2: "never raises on a malformed item... does not crash the
+    sweep over the other nineteen items in the note".
+
+    `classify` is total and honours that. `classify_items` indexed
+    `item["item_id"]`, so a single item missing it raised KeyError and took the
+    whole batch with it - the exact failure the contract says cannot happen,
+    one layer above the function that gets it right.
+
+    An item with no id cannot be attributed to anything, so it comes back
+    unplaced rather than classified under a made-up key.
+    """
+    batch = classify_items(
+        [
+            {"item_id": "ok-1", "section": "next steps", "owner_form": "named", "modality": "will"},
+            {"section": "next steps", "owner_form": "named", "modality": "will"},
+        ]
+    )
+
+    assert len(batch) == 2, "the good item survived"
+    assert batch[0].item_id == "ok-1"
+    assert batch[1].label is None, "an item with no id is unplaced, not guessed"
+    assert "" not in as_predictions(batch), "an unusable id never reaches the scorer"

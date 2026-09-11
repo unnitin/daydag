@@ -259,8 +259,19 @@ class Classification:
 
 
 def classify_items(items: Iterable[Mapping[str, Any]]) -> list[Classification]:
-    """Every item classified, in the order given."""
-    return [Classification(item_id=str(item["item_id"]), label=classify(item)) for item in items]
+    """Every item classified, in the order given. Never raises - see contract 2.
+
+    `item["item_id"]` took the whole batch down on one item missing the field,
+    which is the failure contract 2 says cannot happen, one layer above the
+    `classify` that gets it right. An item with no id comes back UNPLACED
+    rather than under a made-up key: it cannot be attributed to anything, so a
+    label for it would be a claim about a row nobody can find.
+    """
+    out: list[Classification] = []
+    for item in items:
+        item_id = str(item.get("item_id", "") or "")
+        out.append(Classification(item_id=item_id, label=classify(item) if item_id else None))
+    return out
 
 
 def as_predictions(classifications: Iterable[Classification]) -> dict[str, str]:
