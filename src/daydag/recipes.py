@@ -62,6 +62,7 @@ __all__ = [
     "gh_pr_checks",
     "gh_recent_runs",
     "gmail_gemini_notes",
+    "is_user_id",
     "jira_jql",
     "jira_search",
     "meeting_prep",
@@ -213,6 +214,17 @@ _CONVERSATION_ID = re.compile(r"^[CDG][A-Z0-9]{6,}$")
 #: nudged outward by a day. Erring wide is deliberate: an extra day is trimmed
 #: by the caller, a missing day is invisible.
 _DAY = timedelta(days=1)
+
+
+def is_user_id(value: str) -> bool:
+    """Whether ``value`` is shaped like a Slack user id rather than a name.
+
+    Public because the shape check was only reachable by building a query, and
+    a *destination* needs it too: guardrail 1 permits exactly one, and an id
+    that is not one addresses a DM at nothing. One regex, one concept - a
+    second copy beside the caller would be a second set of bugs.
+    """
+    return bool(_USER_ID.match((value or "").strip()))
 
 
 def _slack_id(value: str, pattern: re.Pattern[str], identities, what: str) -> str:
