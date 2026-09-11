@@ -202,10 +202,19 @@ class _Payloads:
         except ValueError:
             return value
 
+    #: Every field on a calendar record that is an instant. `start` alone was
+    #: parsed and `end` was not - one field, not its twin - so the ledger got a
+    #: string, raised, and the whole notes-gap mechanism degraded to "couldn't
+    #: check the meeting ledger" on every run. That is the differentiator
+    #: quietly not working: a meeting with no row today is a gap that can never
+    #: be surfaced tomorrow.
+    _INSTANTS = ("start", "end")
+
     def _timed(self, record: Any) -> Any:
-        if not isinstance(record, Mapping) or "start" not in record:
+        if not isinstance(record, Mapping):
             return record
-        return {**record, "start": self._instant(record["start"])}
+        parsed = {name: self._instant(record[name]) for name in self._INSTANTS if name in record}
+        return {**record, **parsed} if parsed else record
 
     def _records(self, name: str) -> list[Mapping[str, Any]]:
         if name not in self._payloads:

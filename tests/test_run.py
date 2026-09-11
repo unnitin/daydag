@@ -231,3 +231,28 @@ def test_an_unparseable_timestamp_stays_all_day_rather_than_guessing(identities)
     text = run.render("morning", now=MONDAY, identities=identities, payloads=payloads)
 
     assert "Mystery" in text, "the meeting still ships"
+
+
+def test_the_ledger_gets_real_instants_for_both_ends_of_a_meeting(identities):
+    """`start` was parsed and `end` was not - one field, not its twin.
+
+    The ledger reads both, so it raised on the string and the whole notes-gap
+    mechanism degraded to "couldn't check the meeting ledger" on every run.
+    That is the differentiator quietly not working: a meeting with no row can
+    never be surfaced as a gap tomorrow.
+    """
+    payloads = _payloads(
+        calendar=[
+            {
+                "id": "e1",
+                "summary": "Pod Steering",
+                "start": "2026-09-07T09:00:00-07:00",
+                "end": "2026-09-07T10:00:00-07:00",
+                "attendees": ["a@example.com", "b@example.com"],
+            }
+        ]
+    )
+
+    text = run.render("morning", now=MONDAY, identities=identities, payloads=payloads)
+
+    assert "couldn't check the meeting ledger" not in text, text
