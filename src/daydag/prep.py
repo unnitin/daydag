@@ -1,37 +1,50 @@
-"""Meeting prep pings: the one interrupt the system allows (SPEC 3.2, issue #20).
+"""Meeting prep pings: the one interrupt the system allows (SPEC 3.2, #20).
 
-Thirty minutes before a qualifying meeting, three to five talking points drawn
-from the last ~4 weeks of that meeting's notes and the Slack around them - the
-`weekly-planning` skill's File 2 recipe, run just in time instead of on Friday.
+USING IT
+    audience = Audience.from_identities(ids)
+    reason = prep_worthy(row, audience)     # -> Reason | None; None means skip
+    due_at(row)                             # 30 min before it starts
+    sources(row, now, identities=ids, channels=chans, terms=words)
+    point("what", "why now", quote=q, permalink=link, source="slack")
+    build(row, reason, points)              # -> PrepPing
+    may_interrupt(Push.PREP)                # the ONLY kind that may
+    recipient(ids)                          # the one destination, guardrail 1
 
-Three decisions here are load-bearing and none of them are obvious.
+CONTRACTS
+    1. Qualification is the LEDGER's, narrowed - never re-derived. `Ledger`
+       already decides what is a meeting, and that rule was expensive: the #2
+       audit found requiring an `accepted` response dropped 61% of real
+       meetings silently, because ~70% of invites are never answered. This adds
+       exactly one rule on top - 3.2's "skip standups". Response status, kind
+       and attendee count are not re-examined, so nothing can drift.
+    2. The inclusive/exclusive bias INVERTS across that seam, on purpose. The
+       ledger errs wide: a false positive there costs one "no notes" line,
+       a false negative is a meeting the system cannot see. Prep errs narrow: a
+       false positive spends the INTERRUPT, the only thing allowed to arrive
+       off-schedule. An interrupt that fires on a standup is how the channel
+       gets muted, and a muted channel fails guardrail 1 more completely than
+       never pinging at all.
+    3. Verbatim quotes are EVIDENCE, not voice. House rule 1 says quote
+       verbatim with a permalink; SPEC 5 bans em dashes. Someone else's Slack
+       line may contain one, and rewriting it to pass a style check is exactly
+       the paraphrase-from-memory the quoting rule exists to prevent. So the
+       voice check has a defined scope: `PrepPing.authored_text` - what the
+       agent composed, with quoted spans and their links excised.
+    4. No I/O and NO SEND PATH. This builds the ping; delivery is somebody
+       else's problem, and per guardrail 1 it has exactly one destination.
+    5. An unset `ORG_EMAIL_DOMAIN` means nobody is declared external, not
+       everybody. Defaulting the other way fires the interrupt on every meeting
+       on the calendar, which mutes it inside a day.
 
-**Qualification is the ledger's, narrowed - never re-derived.** `ledger.Ledger`
-already decides what is a meeting at all, and that rule was expensive: the #2
-connector audit found that requiring an `accepted` response dropped 61% of real
-meetings, silently, because ~70% of invites are never answered. This module
-consumes rows and adds exactly one rule on top - section 3.2's "skip standups".
-Response status, event kind and attendee count are not re-examined here, so
-there is nothing to drift.
+WHY IT EXISTS
+    Thirty minutes out, three to five talking points drawn from the last four
+    weeks of that meeting's notes and the Slack around them - the
+    `weekly-planning` skill's File 2 recipe, run just in time instead of on
+    Friday.
 
-**The inclusive/exclusive bias inverts across that seam, deliberately.** The
-ledger errs wide because a false positive there costs one line saying "no
-notes" while a false negative is a meeting the system cannot see. Prep errs
-narrow because a false positive here spends the *interrupt* - the only thing
-allowed to arrive off-schedule (ARCHITECTURE, interaction model). An interrupt
-that fires on a standup is how the whole channel gets muted, and a muted channel
-fails guardrail 1 more completely than never having pinged.
-
-**Verbatim quotes are evidence, not voice.** House rule 1 says quote verbatim
-with a permalink; SPEC section 5 bans em dashes. Someone else's Slack line may
-contain one, and rewriting it to pass a style check is precisely the
-paraphrase-from-memory the quoting rule exists to prevent. So the voice check
-has a defined scope: :meth:`PrepPing.authored_text` - everything the agent
-composed, with the quoted spans and their links excised.
-
-Nothing here performs I/O and nothing here has a send path. This module builds
-the ping; delivery is somebody else's problem, and per guardrail 1 that delivery
-has exactly one destination - :func:`recipient`.
+KNOWN LIMIT
+    `LOOKBACK_DAYS` is 28 and fixed. A meeting that recurs monthly gets one
+    prior instance to draw on, which is thin; a weekly gets four.
 """
 
 from __future__ import annotations

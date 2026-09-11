@@ -14,9 +14,16 @@ CONTRACTS
        nothing in it". Keeping them apart is the whole reason it returns an
        optional - which of the two is a FAILURE depends on the source, and
        that judgement belongs to the caller.
-    2. Nothing here raises. A wrong shape is the routine case at this edge, so
-       every function returns a falsy answer instead. Code that needs
-       raise-to-degrade (`runlog._text`) does its own checking on purpose.
+    2. A WRONG SHAPE never raises - it returns a falsy answer, because a wrong
+       shape is the routine case at this edge. Code that needs raise-to-degrade
+       (`runlog._text`) does its own checking on purpose.
+
+       Not the same as "nothing here raises", which was the earlier wording and
+       was false: `flatten` recurses, so a cyclic or thousands-deep structure
+       raises `RecursionError`, and `error_text` inherits that through it.
+       `measure` propagates an exception from a broken `__repr__`. Neither is
+       reachable from a JSON-decoded connector response - JSON cannot be
+       cyclic - so the guard is the decode, not this module.
     3. Nothing here knows what a source MEANS. `records()` finds a list; it
        does not know an empty one is honest for calendar and a broken query
        for gmail.

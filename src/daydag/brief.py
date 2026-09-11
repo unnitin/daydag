@@ -1,7 +1,9 @@
 """The morning brief (SPEC 3.1) - the loop every other loop composes from.
 
 USING IT
-    sources = Sources(calendar=..., weekly_note=..., slack=..., gmail=...)
+    sources = YourSources()     # `Sources` is a Protocol - implement
+                                #   calendar/weekly_note/slack/gmail.
+                                #   It is not instantiable itself.
     brief = assemble(now=..., identities=ids, sources=sources, ...)
     brief.render()
     unsourced_claims(text)      # -> claims with no permalink; must be empty
@@ -23,9 +25,16 @@ CONTRACTS
        here would be a source nobody can make fail on purpose.
     5. The weekly note may NOT EXIST. CLAUDE.md records a gap in the series, so
        the first real run will meet one. A missing note leads the brief.
-    6. Naive datetimes are read as Pacific, never as the host zone.
-       `astimezone()` with no argument resolves to the machine's timezone and
-       passed locally while failing on UTC CI.
+    6. Two answers to a naive datetime, on purpose. A naive EVENT START is
+       read as Pacific (`_local`) - the connector hands back wall-clock time
+       and the alternative is worse. A naive ``now`` is REFUSED (`BriefError`)
+       - the overnight cutoff is an hour of his day, and guessing which day is
+       not a thing to do quietly.
+
+       Never the host zone either way: `astimezone()` with no argument
+       resolves to the machine's timezone, which passed locally and failed on
+       UTC CI. Siblings differ by provenance and are right to - `pulse._as_of`
+       reads a naive FETCH stamp as UTC, because a machine wrote it.
 
 WHY IT EXISTS
     It owns no source and no query. Windows, cutoffs and vault paths come from

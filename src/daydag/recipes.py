@@ -2,10 +2,12 @@
 
 USING IT
     calendar_day(day)                       # ONE day. Never a week - see 1
-    slack_overnight(principal, since_hour=17, now=now, identities=ids)
-    gmail_gemini_notes(day)                 # from:GEMINI_SENDER + label
-    jira_jql(["CDI"], since=day)            # bounded fields, bounded results
-    gh_open_prs(repo), gh_pr_checks(...), gh_recent_runs(...)
+    slack_overnight(now, mentioning=principal, identities=ids, since_hour=17)
+    gmail_gemini_notes(after=day, before=day)   # from:GEMINI_SENDER + label
+    jira_jql(["PROJ"], updated_within_days=14)  # bounded fields and results
+    gh_open_prs(repo)
+    gh_pr_checks(repo, 42)
+    gh_recent_runs(repo, branch="main")
     vault_path(ids, "Weekly Notes", weekly_note(day))
     week_range(day), week_label(day), next_week_label(day)
     title_from_gemini_subject(subject)
