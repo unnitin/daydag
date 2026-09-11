@@ -80,6 +80,72 @@ _ANSWER = re.compile(
     re.IGNORECASE,
 )
 
+# --------------------------------------------------------------------------
+# reading a projection back - State.md is hand-edited, so anything that reads
+# it lives here beside the writer rather than being reinvented per caller.
+# --------------------------------------------------------------------------
+
+_HEADING = re.compile(r"^(?P<hashes>#{1,6})\s+(?P<name>.+?)\s*$")
+_BULLET = re.compile(r"^\s*[-*]\s+(?P<body>\S.*?)\s*$")
+_MD_LINK = re.compile(r"\[(?P<label>[^\]]*)\]\((?P<url>[^)\s]+)\)")
+#: `)` excluded so a hand-written "(see https://x)" does not capture the
+#: bracket into the link and strand its opener in the text.
+_BARE_URL = re.compile(r"<?(?P<url>https?://[^\s>)]+)>?")
+
+
+def read_section(text: str, name: str) -> list[str]:
+    """Bullet bodies under the heading called ``name``, whatever its level.
+
+    Shared by every reader of ``State.md`` - the brief's chase/watch sections
+    and the week-ahead's carrying-in section both walk the same hand-edited
+    file, and a second regex here is a second set of bugs that agree only on
+    the easy cases.
+    """
+    wanted = name.casefold()
+    collecting = False
+    section_level = 0
+    bodies: list[str] = []
+    for line in text.splitlines():
+        heading = _HEADING.match(line)
+        if heading:
+            level = len(heading["hashes"])
+            if heading["name"].casefold() == wanted:
+                collecting, section_level = True, level
+            elif collecting and level <= section_level:
+                # A hand-added `### Snoozed` under `## Chase list` must not end
+                # the section. State.md is edited by a human; nesting is normal.
+                collecting = False
+            continue
+        bullet = _BULLET.match(line)
+        if collecting and bullet:
+            bodies.append(bullet["body"])
+    return bodies
+
+
+def split_link(body: str) -> tuple[str, str | None]:
+    """A hand-written line's text and the link in it, if there is one.
+
+    Both forms appear in a file a human edits: a markdown link, and a URL pasted
+    bare. The link is pulled out so the line can be re-rendered as a claim like
+    any other - otherwise a bare URL would read as unsourced to a caller's own
+    evidence check.
+    """
+    link = _MD_LINK.search(body)
+    if link:
+        return (body[: link.start()] + link["label"] + body[link.end() :]).strip(" -·"), link["url"]
+    bare = _BARE_URL.search(body)
+    if bare:
+        # Drop a bracket left wrapping nothing. Excluding `)` from the URL kept
+        # it out of the link but left "(see )" behind - half a fix reads worse
+        # than none, because it looks deliberate.
+        head, tail = body[: bare.start()], body[bare.end() :]
+        if head.rstrip().endswith("(") and tail.lstrip().startswith(")"):
+            head, tail = head.rstrip()[:-1], tail.lstrip()[1:]
+        # Collapse the gap the removal leaves: "see  for detail" reads as a
+        # typo in a brief, which spends the reader's trust on nothing.
+        return re.sub(r"\s{2,}", " ", head + tail).strip(" -·"), bare["url"]
+    return body.strip(), None
+
 
 def _as_utc(when: datetime) -> datetime:
     """``when`` as an aware UTC datetime, assuming UTC if it says nothing.
