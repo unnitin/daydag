@@ -296,3 +296,38 @@ def test_a_notes_gap_from_a_calendar_shaped_record_is_named_not_blank(tmp_path):
     assert "\n- \n" not in body and not body.rstrip().endswith("- "), (
         f"a blank bullet reached State.md:\n{body}"
     )
+
+
+def test_the_logs_sensitivity_column_outranks_a_payload_that_claims_otherwise():
+    """The column is the trusted fact; a payload key is not.
+
+    `from_payload` read `payload.get("sensitivity", sensitivity)`, so a payload
+    carrying `"normal"` outranked a column saying `"private"`. Unreachable
+    through `record()`, which takes sensitivity keyword-only and consumes it -
+    but this log is one a human hand-edits, which `from_payload`'s own
+    docstring is built around, and a hand-written row leaked straight into
+    plaintext `State.md`.
+    """
+    log = EventLog(sqlite3.connect(":memory:"))
+    log._db.execute(
+        "INSERT INTO events (kind, sensitivity, payload) VALUES (?,?,?)",
+        (
+            "carry_forward",
+            "private",
+            '{"owner":"o","ask":"SECRET","key":"k","sensitivity":"normal"}',
+        ),
+    )
+    log._db.commit()
+
+    (item,) = log.chase_items()
+
+    assert item.get("sensitivity") == "private", "the payload outranked the column"
+
+
+def test_a_caller_passing_a_plain_dict_still_gets_its_own_sensitivity_honoured():
+    """The other call site has no column to trust - `write_state` is handed a
+    dict whose own `sensitivity` is the only source there, so it must win."""
+    assert (
+        ChaseItem.from_payload({"owner": "o", "sensitivity": "private"}).get("sensitivity")
+        == "private"
+    )

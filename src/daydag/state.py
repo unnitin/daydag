@@ -156,7 +156,9 @@ class ChaseItem(Mapping[str, Any]):
     extra: Mapping[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def from_payload(cls, payload: Mapping[str, Any], *, sensitivity: str = "normal") -> ChaseItem:
+    def from_payload(
+        cls, payload: Mapping[str, Any], *, sensitivity: str | None = None
+    ) -> ChaseItem:
         """Build one from whatever a caller recorded - a partial payload included.
 
         Never raises: a chase item is read out of a log a human can also
@@ -179,11 +181,15 @@ class ChaseItem(Mapping[str, Any]):
             for name, value in payload.items()
             if name not in _CHASE_FIELDS and name != "sensitivity"
         }
-        return cls(
-            sensitivity=str(payload.get("sensitivity", sensitivity)),
-            extra=extra,
-            **kwargs,
-        )
+        # An explicit ``sensitivity`` is the LOG'S COLUMN and outranks anything
+        # the payload claims: the column is the trusted fact, the payload is
+        # whatever was written into the row. Reading the payload first let a
+        # hand-edited row carrying `"normal"` override a column saying
+        # `"private"` and reach plaintext `State.md`. Omitted means there is no
+        # column to trust - `write_state` is handed a bare dict whose own value
+        # is the only source there - so the payload wins.
+        resolved = sensitivity if sensitivity is not None else payload.get("sensitivity", "normal")
+        return cls(sensitivity=str(resolved), extra=extra, **kwargs)
 
     @property
     def has_owner_or_ask(self) -> bool:
