@@ -35,10 +35,11 @@ would make the check vacuous.
    every one labelled `meeting notes`, confirming the #2 connector audit.
 2. 24 notes read in full via `get_message` with `PLAIN_TEXT`, chosen for spread
    rather than at random; 22 kept, the two dropped being near-duplicates of kinds
-   already covered. The kept spread: 3 standups, 3 steering sessions, 4 reviews, 2
-   one-to-ones, 2 working sessions, 2 cross-team syncs, a retro, a sprint
-   planning, office hours, a programme review, an external partner demo, and one
-   note whose entire content is that the meeting was cancelled.
+   already covered. The kept spread, which sums to 22: 3 standups, 3 steering
+   sessions, 4 reviews, 3 working sessions, 2 one-to-ones, 2 cross-team syncs, a
+   retro, a sprint planning, office hours, a programme review, an external
+   partner demo. One of the standups is the note whose entire content is that
+   the meeting was cancelled - it is counted in that 3, not beside it.
 3. Every item in each note labelled by hand into exactly one of the five SPEC
    §3.3 categories, with the four hard cases from #14 marked as such.
 4. Emitted as JSONL, with `tests/test_ingestion_evalset.py` asserting the set is
