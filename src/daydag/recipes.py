@@ -543,7 +543,9 @@ JIRA_DEFAULT_MAX_RESULTS = 50
 JIRA_DEFAULT_WINDOW_DAYS = 7
 
 #: Atlassian project keys: 2-10 uppercase alphanumerics starting with a letter.
-_PROJECT_KEY = re.compile(r"^[A-Z][A-Z0-9]{1,9}$")
+#: A Jira project key. Public because `board` parses the same keys out of
+#: the watchlist and a second copy is how the two drift - which they had.
+PROJECT_KEY = re.compile(r"^[A-Z][A-Z0-9]{1,9}$")
 
 
 def _project_keys(projects: Iterable[str]) -> list[str]:
@@ -554,7 +556,7 @@ def _project_keys(projects: Iterable[str]) -> list[str]:
             "DayDAG/Watchlist.md - an unscoped JQL reads every project."
         )
     for key in keys:
-        if not _PROJECT_KEY.match(key):
+        if not PROJECT_KEY.match(key):
             raise RecipeError(
                 f"{key!r} is not a Jira project key. The watchlist is hand-edited, "
                 "so keys are untrusted input to a JQL built by concatenation."

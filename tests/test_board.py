@@ -26,6 +26,7 @@ from daydag.board import (
     BoardReport,
     BoardSnapshot,
     Ticket,
+    _blocked,
     _epoch,
     _moment,
     _text,
@@ -320,7 +321,7 @@ def test_a_move_into_done_reads_as_closed_not_as_another_column_move():
 
 def test_a_ticket_filed_and_finished_between_two_runs_is_a_close_not_an_open():
     """The subtle case: it never existed in `before`, and it is already Done."""
-    before = BoardSnapshot.of([ticket_from_issue(issue("CDI-1"), site=SITE)])
+    before = snapshot(issue("CDI-1"))
     after = snapshot(
         issue("CDI-1"),
         issue("CDI-777", status="Done", category="done", resolved="2026-09-04T16:00:00-0700"),
@@ -795,4 +796,49 @@ def test_the_module_holds_no_connector_client():
     banned = {"requests", "httpx", "urllib", "urllib3", "aiohttp", "atlassian", "jira"}
     assert not imported & banned, (
         f"a connector client import appeared in board.py: {imported & banned}"
+    )
+
+
+# --------------------------------------------------------------------------
+# what review found: blocked-detection, both directions
+# --------------------------------------------------------------------------
+
+
+def test_a_column_named_unblocked_is_not_blocked():
+    """`"blocked" in "unblocked"` is True, and substring containment is not a
+    word match. A board column named "Unblocked" or "Not Blocked" reported
+    every ticket in it as blocked - and because the prior snapshot then also
+    carries blocked=True, no correction is ever surfaced afterwards."""
+    assert not _blocked({}, "Unblocked")
+    assert not _blocked({}, "Not Blocked")
+    assert _blocked({}, "Blocked"), "the real case still reads as blocked"
+    assert _blocked({}, "blocked on infra")
+
+
+def test_a_ticket_first_seen_already_blocked_is_still_reported():
+    """The block was lost permanently, not merely delayed.
+
+    `prior is None` took an early `continue` past the blocked check, so a
+    ticket discovered already blocked produced no block delta - and on every
+    later run `now.blocked and not prior.blocked` is False, because history
+    now records it as blocked too. A ticket blocked by a label while its
+    status name is neutral ("In Progress") therefore never surfaced at all.
+    """
+    blocked = Ticket(
+        key="P-1",
+        summary="ingest is stuck",
+        status="In Progress",
+        owner="VP-Data",
+        permalink="http://example.invalid/P-1",
+        project="P",
+        done=False,
+        blocked=True,
+    )
+    deltas = board_deltas(
+        BoardSnapshot.of([], taken_at="2026-09-10T06:00"),
+        BoardSnapshot.of([blocked], taken_at="2026-09-11T06:00"),
+    )
+
+    assert "blocked" in [d.kind for d in deltas], (
+        f"a newly-seen blocked ticket reported only {[d.kind for d in deltas]}"
     )

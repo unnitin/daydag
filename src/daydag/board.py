@@ -94,7 +94,12 @@ from typing import Any
 from daydag.config import ConfigError
 from daydag.payloads import has, records
 from daydag.pulse import _BOLD_HEADING, _BULLET, _HEADING, _RULE, Joined, Pulse, PulseError
-from daydag.recipes import JIRA_DEFAULT_MAX_RESULTS, JIRA_DEFAULT_WINDOW_DAYS, JIRA_FIELDS
+from daydag.recipes import (
+    JIRA_DEFAULT_MAX_RESULTS,
+    JIRA_DEFAULT_WINDOW_DAYS,
+    JIRA_FIELDS,
+    PROJECT_KEY,
+)
 from daydag.recipes import jira_search as _jira_search
 from daydag.voice import clipped
 
@@ -297,13 +302,35 @@ _BLOCKED_LABELS = frozenset({"blocked", "impediment", "blocker"})
 #: be a field the caller's query asked for.
 _BLOCKED_STATUS_WORDS = ("blocked", "impediment", "on hold")
 
+#: A column can negate the word rather than omit it - "Unblocked", "Not
+#: Blocked", "No Longer Blocked" all mean the opposite of the word they carry.
+_NEGATIONS = frozenset({"not", "no", "un", "never", "longer"})
+
+#: Words in a status name. `un-blocked` and `unblocked` both have to split.
+_WORD = re.compile(r"[a-z0-9]+")
+
 
 def _blocked(fields: Mapping[str, Any], status_name: str) -> bool:
     labels = {str(label).casefold() for label in (fields.get("labels") or ())}
     if labels & _BLOCKED_LABELS:
         return True
+    # Word boundaries, not containment. `"blocked" in "unblocked"` is True, so
+    # a column named "Unblocked" or "Not Blocked" reported every ticket in it
+    # as blocked - and since the prior snapshot then records blocked=True too,
+    # `now.blocked and not prior.blocked` never fires again and no correction
+    # is ever surfaced. A negation right before the word is the whole meaning
+    # of the column, so it is checked for explicitly.
     lowered = status_name.casefold()
-    return any(word in lowered for word in _BLOCKED_STATUS_WORDS)
+    words = _WORD.findall(lowered)
+    for phrase in _BLOCKED_STATUS_WORDS:
+        parts = phrase.split()
+        for index in range(len(words) - len(parts) + 1):
+            if words[index : index + len(parts)] != parts:
+                continue
+            if index and words[index - 1] in _NEGATIONS:
+                continue
+            return True
+    return False
 
 
 @dataclass(frozen=True)
@@ -422,7 +449,17 @@ class BoardSnapshot:
         return cls()
 
     @classmethod
-    def of(cls, tickets: Iterable[Ticket], *, taken_at: str = "") -> BoardSnapshot:
+    def of(cls, tickets: Iterable[Ticket], *, taken_at: str) -> BoardSnapshot:
+        """A real poll. ``taken_at`` is REQUIRED and must not be empty.
+
+        An empty `taken_at` is what `empty()` means - never polled - and
+        `board_deltas` reads it that way. Defaulting it here let a caller
+        build a real snapshot that silently claimed never to have run, which
+        made every delta against it vanish. Required rather than defaulted,
+        because the boundary has to hold when a caller forgets.
+        """
+        if not taken_at:
+            raise BoardError("a snapshot of a real poll needs taken_at; use empty() for none")
         return cls({ticket.key: ticket for ticket in tickets}, taken_at)
 
     def to_dict(self) -> dict[str, Any]:
@@ -486,7 +523,14 @@ def board_deltas(before: BoardSnapshot, after: BoardSnapshot) -> list[BoardDelta
     lately", not "closed" - reading it as a close would announce every ticket
     the moment it went quiet, and announce it again when it came back.
     """
-    if not before.tickets:
+    if not before.taken_at:
+        # Keyed on whether a run HAPPENED, not on whether it found anything.
+        # `before.tickets` being empty collapsed two different states: never
+        # polled, and polled inside a bounded `updated_within_days` window
+        # that legitimately held nothing. The second is ordinary - a quiet
+        # week - and treating it as a first run silently dropped every open,
+        # close and move the next poll found. `pulse` already separates these
+        # with its own `FIRST_SIGHT` sentinel; the timestamp is this module's.
         return []
     found: list[BoardDelta] = []
     for key in sorted(after.tickets):
@@ -499,6 +543,14 @@ def board_deltas(before: BoardSnapshot, after: BoardSnapshot) -> list[BoardDelta
             # the whole reason the close case is tracked at all.
             kind = "closed" if now.done else "opened"
             found.append(_delta(kind, now, f"new -> {now.status}" if now.done else now.status))
+            if now.blocked and not now.done:
+                # Reported on FIRST SIGHT, because the alternative is never.
+                # `continue`-ing past this lost the block permanently rather
+                # than deferring it: history now records blocked=True, so
+                # `now.blocked and not prior.blocked` is False on every later
+                # run. A ticket blocked by a label while its column reads
+                # "In Progress" therefore surfaced nowhere at all.
+                found.append(_delta("blocked", now, now.status))
             continue
         if now.done and not prior.done:
             # A close reported as another column move reads as still in
@@ -747,10 +799,6 @@ def apply_board_evidence(loop: dict[str, Any], deltas: Iterable[BoardDelta]) -> 
 # the watchlist blocks
 # ---------------------------------------------------------------------------
 
-#: An Atlassian project key: 2-10 uppercase alphanumerics starting with a
-#: letter. Matches `recipes._project_keys`'s own check exactly - reused rather
-#: than restated, since the two describe the same fact: what a JQL will accept.
-_PROJECT_KEY = re.compile(r"^[A-Z][A-Z0-9]{1,9}$")
 
 #: Field separators in a hand-edited watchlist bullet, matching `pulse`'s.
 _FIELDS = re.compile(r"[·|]")
@@ -842,7 +890,7 @@ def read_board_watchlist(path: str | Path) -> JiraWatchlist:
         fields = [entry.strip().strip("()") for entry in _FIELDS.split(body)]
         head = fields[0]
         if block == "jira":
-            if _PROJECT_KEY.fullmatch(head):
+            if PROJECT_KEY.fullmatch(head):
                 watchlist.projects.append(_project_from_fields(fields))
             elif _tried_to_name_one(head):
                 watchlist.unparsed.append(body)
