@@ -64,10 +64,13 @@ GAPS - not covered here, and not pretended to be
        general discrepancy surface to test yet.
 
     GAP 3 (`notes_gaps` had no sensitivity channel) moved to COVERED above,
-    #61. What was GAP 1 and GAP 2 in a still earlier draft of this docstring
-    (the `chase`/`write_state` shape disagreement, #63) never had a numbered
-    line here at all - it surfaced only as a runtime warning - so there is no
-    third renumbering to do; see `tests/test_state_store.py` for its coverage.
+    #61. GAP 1 and GAP 2 went the same way earlier - the unsourced `Item`
+    (#69, see "Was GAP 1" below) and the undated stale mirror (#60, "was
+    GAP 2") - so the numbers are retired in order rather than reused.
+
+    #63's `chase`/`write_state` shape disagreement was never a numbered gap
+    here at all: it surfaced as a runtime warning rather than an unguarded
+    invariant. `tests/test_state_store.py` carries its coverage.
 """
 
 from __future__ import annotations

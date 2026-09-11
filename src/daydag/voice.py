@@ -17,6 +17,12 @@ from typing import Any
 #: The only emoji allowed in agent output. Note the plain U+26A0.
 SANCTIONED_EMOJI = frozenset({"🔴", "🟡", "🟢", "✓", "⭐", "⚠"})
 
+#: The sanctioned warning sign, named once. `state` and `brief` each had their
+#: own literal copy, and this is the one glyph in the set with an invisible
+#: wrong twin - the emoji-presentation U+26A0 U+FE0F. Three literals is three
+#: chances to paste the wrong one.
+WARN = "\u26a0"
+
 #: Em dash and en dash. Hyphens are house style; these are not.
 _DASHES = re.compile("[\u2014\u2013]")  # em dash, en dash
 

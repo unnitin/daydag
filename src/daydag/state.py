@@ -33,17 +33,17 @@ import re
 import sqlite3
 import statistics
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from daydag.payloads import has
+from daydag.voice import WARN
 
 #: The sanctioned warning glyph (plain U+26A0, not its emoji-presentation
 #: twin) - `daydag.voice` is the register authority on this; a chase item that
 #: cannot be rendered in full still has to stay inside house voice.
-WARN = "⚠"
 
 README = """# DayDAG
 
@@ -147,6 +147,13 @@ class ChaseItem(Mapping[str, Any]):
     last_activity: str = ""
     status: str = "open"
     sensitivity: str = "normal"
+    #: Everything else the caller recorded. The nine above are GUARANTEED to
+    #: exist; they were never meant to be all there is. Whitelisting them
+    #: dropped `day` - which `loop_opened` records on every call - and made
+    #: contract 3's "drop-in" false: an existing `item["day"]` became a
+    #: KeyError. Carried, not merged into the fields, so a payload cannot
+    #: overwrite a guaranteed one.
+    extra: Mapping[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_payload(cls, payload: Mapping[str, Any], *, sensitivity: str = "normal") -> ChaseItem:
@@ -158,8 +165,25 @@ class ChaseItem(Mapping[str, Any]):
         another `ChaseItem` as ``payload`` too, since it is itself a mapping -
         re-normalizing one is a no-op.
         """
+        if isinstance(payload, cls):
+            return payload
+        if not isinstance(payload, Mapping):
+            # "Never raises" has to hold for a hand-written row too: valid JSON
+            # that is not an object (`null`, a list, a scalar) reached here and
+            # took `write_state` down with an AttributeError - the torn-row
+            # tolerance `_rows` exists for, undone one layer up.
+            return cls(sensitivity=sensitivity)
         kwargs = {name: payload[name] for name in _CHASE_FIELDS if payload.get(name)}
-        return cls(sensitivity=str(payload.get("sensitivity", sensitivity)), **kwargs)
+        extra = {
+            name: value
+            for name, value in payload.items()
+            if name not in _CHASE_FIELDS and name != "sensitivity"
+        }
+        return cls(
+            sensitivity=str(payload.get("sensitivity", sensitivity)),
+            extra=extra,
+            **kwargs,
+        )
 
     @property
     def has_owner_or_ask(self) -> bool:
@@ -173,15 +197,15 @@ class ChaseItem(Mapping[str, Any]):
         return has(self, "owner", "ask")
 
     def __getitem__(self, key: str) -> Any:
-        if key not in _CHASE_FIELDS and key != "sensitivity":
-            raise KeyError(key)
-        return getattr(self, key)
+        if key in _CHASE_FIELDS or key == "sensitivity":
+            return getattr(self, key)
+        return self.extra[key]
 
     def __iter__(self):
-        return iter((*_CHASE_FIELDS, "sensitivity"))
+        return iter((*_CHASE_FIELDS, "sensitivity", *self.extra))
 
     def __len__(self) -> int:
-        return len(_CHASE_FIELDS) + 1
+        return len(_CHASE_FIELDS) + 1 + len(self.extra)
 
 
 def _as_chase_item(raw: ChaseItem | Mapping[str, Any]) -> ChaseItem:
@@ -340,7 +364,17 @@ class StateFolder:
             lines.append(f"- {item.get('what', '')}")
         gaps = _visible(NotesGap.from_value(gap) for gap in notes_gaps)
         if gaps:
-            lines += ["", "## Notes gaps", ""] + [f"- {gap.title}" for gap in gaps]
+            # A titleless gap gets a named warning, not a bare `- `. The chase
+            # path one section up already degrades that way, and a blank bullet
+            # is the same formatting-glitch-standing-in-for-data that #63 was
+            # about. Reachable: a calendar-shaped record keyed `summary` rather
+            # than `title` coerces to an empty title.
+            lines += ["", "## Notes gaps", ""] + [
+                f"- {gap.title}"
+                if gap.title
+                else f"- {WARN} a notes gap arrived with no title recorded"
+                for gap in gaps
+            ]
         self.state_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     def read_state(self) -> str:

@@ -4,6 +4,7 @@ Two stores with opposite requirements (ARCHITECTURE, "State: two stores").
 These tests describe the split; none of it is implemented yet.
 """
 
+import sqlite3
 from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
@@ -240,3 +241,58 @@ def test_a_private_notes_gap_string_mix_still_renders_the_normal_one(folder):
     written = folder.read_state()
     assert "Pod Steering" in written
     assert "comp review" not in written
+
+
+# --------------------------------------------------------------------------
+# what review found after the first pass at #63
+# --------------------------------------------------------------------------
+
+
+def test_a_chase_item_keeps_fields_outside_its_own_schema():
+    log = EventLog(sqlite3.connect(":memory:"))
+    """`ChaseItem` contract 3 claims it is "a drop-in wherever a chase item was
+    already a bare dict - every existing caller".
+
+    `chase_items()` used to return `{**payload, ...}`, so a caller reading
+    `item["day"]` got it. Whitelisting the nine named fields silently dropped
+    every other key, which makes the drop-in claim false and turns an existing
+    read into a `KeyError`. The nine are GUARANTEED to exist; they were never
+    meant to be all there is.
+    """
+    log.record("loop_opened", key="k1", owner="VP-Data", ask="ship it", day=5)
+
+    item = log.chase_items()[0]
+
+    assert item["day"] == 5, "a recorded field vanished on the way out"
+    assert item["owner"] == "VP-Data"
+    assert item["status"] == "open", "the guaranteed fields still get defaults"
+
+
+def test_reading_a_chase_item_out_of_a_hand_written_row_never_raises():
+    log = EventLog(sqlite3.connect(":memory:"))
+    """`from_payload`'s docstring says "never raises" - a human can hand-edit
+    this log, so a row whose payload is valid JSON but not an object must
+    degrade, not take `write_state` down with an AttributeError."""
+    log._db.execute(
+        "INSERT INTO events (kind, sensitivity, payload) VALUES (?, ?, ?)",
+        ("carry_forward", "normal", "null"),
+    )
+    log._db.commit()
+
+    items = log.chase_items()
+
+    assert all(not item.has_owner_or_ask for item in items if not item.get("owner"))
+
+
+def test_a_notes_gap_from_a_calendar_shaped_record_is_named_not_blank(tmp_path):
+    """A mapping keyed `summary` rather than `title` produced `title=""` and
+    rendered a bare `- ` bullet - the same shapeless-item failure the chase
+    path in this very branch gave a named warning line."""
+    folder = StateFolder.create(tmp_path / "DayDAG")
+    folder.write_state(notes_gaps=[{"summary": "Pod Steering", "sensitivity": "normal"}])
+
+    body = folder.read_state()
+
+    assert "\n- \n" not in body and not body.rstrip().endswith("- "), (
+        f"a blank bullet reached State.md:\n{body}"
+    )
