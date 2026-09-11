@@ -41,6 +41,9 @@ COVERED (behavioural - real code, real assertions)
       time of the last fetch that actually worked
     - untrusted Slack text is parsed for ticket keys only, never echoed or acted on
     - the vault write path joins only literal names onto the folder root
+    - `notes_gaps` carries the same sensitivity channel `chase` and `watch` do,
+      via `NotesGap`, so a meeting whose own title is sensitive is withheld the
+      same way a private chase or watch item is (was GAP 3, #61)
 
 TRIPWIRES (no implementation exists - these fail when one lands unguarded)
     - no autonomous send path of any kind (Slack, Gmail, Calendar, drafts)
@@ -51,17 +54,20 @@ TRIPWIRES (no implementation exists - these fail when one lands unguarded)
       package can reach a connector on its own
 
 GAPS - not covered here, and not pretended to be
-    1. `StateFolder.write_state` filters `chase` and `watch` on sensitivity;
-       `notes_gaps` is a list of plain strings with no sensitivity channel, so a
-       meeting *title* that is itself sensitive has no way to be filtered.
-    2. `DecisionQueue.answer_for` reads an answer only as a whole word at one
+    1. `DecisionQueue.answer_for` reads an answer only as a whole word at one
        end of the line (tested below). A hand edit may land at either end, so a
        decision whose text *begins or ends* with a bare "yes"/"no" still
        self-answers. Removing that last case means fixing where an answer is
        allowed to be written, which is a decision rather than a patch.
-    3. Guardrail 4 (discrepancies surfaced, never auto-resolved) is covered for
+    2. Guardrail 4 (discrepancies surfaced, never auto-resolved) is covered for
        the ledger's ambiguous-note case in `tests/test_ledger.py`; there is no
        general discrepancy surface to test yet.
+
+    GAP 3 (`notes_gaps` had no sensitivity channel) moved to COVERED above,
+    #61. What was GAP 1 and GAP 2 in a still earlier draft of this docstring
+    (the `chase`/`write_state` shape disagreement, #63) never had a numbered
+    line here at all - it surfaced only as a runtime warning - so there is no
+    third renumbering to do; see `tests/test_state_store.py` for its coverage.
 """
 
 from __future__ import annotations
@@ -76,7 +82,7 @@ import pytest
 
 from daydag.pulse import Item, Mirror, Pulse
 from daydag.registry import PRIVATE_SURFACES, Registry, RegistryError
-from daydag.state import DecisionQueue, EventLog, StateFolder
+from daydag.state import DecisionQueue, EventLog, NotesGap, StateFolder
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -553,6 +559,70 @@ def test_no_private_item_reaches_any_file_in_the_vault(folder: StateFolder):
     assert not leaked, f"private content reached the vault: {leaked}"
     assert "compute consolidation" in folder.read_state(), "the filter ate the normal items too"
     assert "nightly ingest job" in folder.read_state()
+
+
+@pytest.mark.guardrail
+def test_a_sensitive_meeting_title_never_reaches_the_vault_as_a_notes_gap(folder: StateFolder):
+    """BEHAVIOURAL. Was GAP 3 (#61): `notes_gaps` had no sensitivity channel.
+
+    A meeting whose own TITLE is the sensitive fact - a comp conversation, an
+    exit interview - could not be withheld, because `notes_gaps` was a list of
+    bare strings with nothing to tag "private" onto; the caller had to
+    pre-filter, and every other list in this file is filtered right here
+    because a caller cannot be trusted to remember. `NotesGap` gives it the
+    same shape `chase` and `watch` already had, so `write_state` closes the
+    gap structurally instead of asking `notes_gaps`' one caller to.
+
+    Walks the whole folder, like its `chase`/`watch` sibling above: the
+    guarantee is about the vault, not about one section of one file.
+    """
+    marker = "exit interview follow-up"
+    folder.write_state(notes_gaps=[{"title": marker, "sensitivity": "private"}, "Pod Steering"])
+
+    leaked = [
+        path.relative_to(folder.root)
+        for path in folder.root.rglob("*")
+        if path.is_file() and marker in path.read_text(encoding="utf-8")
+    ]
+    assert not leaked, f"a sensitive meeting title reached the vault: {leaked}"
+    assert "Pod Steering" in folder.read_state(), "the filter ate the normal gap too"
+
+
+@pytest.mark.guardrail
+def test_a_sensitive_notes_gap_is_withheld_whichever_shape_it_arrives_in(
+    folder: StateFolder,
+):
+    """The same guarantee, given the module's OWN type rather than a dict.
+
+    `NotesGap.from_value` took a Mapping or "anything else". A `NotesGap` is
+    not a Mapping - it carries a `get()` but does not subclass one - so it fell
+    to the else branch, which did `cls(title=str(value))`: the dataclass repr
+    became the title and `sensitivity` reset to "normal". Handing the module
+    its own type therefore laundered a private gap into a visible one, repr and
+    all.
+
+    The sibling `chase` path was safe only because `ChaseItem` DOES subclass
+    `Mapping`. One guard, holding on one of two paths - which is the defect
+    class this whole branch exists to close, reproduced inside the closing.
+    """
+    marker = "exit interview follow-up"
+    folder.write_state(notes_gaps=[NotesGap(title=marker, sensitivity="private")])
+
+    leaked = [
+        path.relative_to(folder.root)
+        for path in folder.root.rglob("*")
+        if path.is_file() and marker in path.read_text(encoding="utf-8")
+    ]
+    assert not leaked, f"a private NotesGap reached the vault: {leaked}"
+
+
+def test_coercing_a_notes_gap_twice_changes_nothing(folder: StateFolder):
+    """`from_value` has to be idempotent, because `write_state` calls it on
+    whatever it is handed - including something already coerced upstream."""
+    once = NotesGap.from_value({"title": "Pod Steering", "sensitivity": "private"})
+    twice = NotesGap.from_value(once)
+
+    assert twice == once
 
 
 @pytest.mark.guardrail

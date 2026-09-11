@@ -8,7 +8,7 @@ from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 
-from daydag.state import DecisionQueue, EventLog, StateFolder
+from daydag.state import ChaseItem, DecisionQueue, EventLog, NotesGap, StateFolder
 
 #: A fixed offset, so an offset other than UTC is exercised without pulling in
 #: a tz database or depending on the machine's own zone.
@@ -147,3 +147,96 @@ def test_a_stamp_in_another_offset_comes_back_as_utc():
 
     assert fetched == datetime(2026, 9, 7, 13, 40, tzinfo=UTC)
     assert fetched.utcoffset() == timedelta(0)
+
+
+# --------------------------------------------------------------------------
+# the chase-item shape (#63): EventLog and write_state agree on one contract
+# --------------------------------------------------------------------------
+
+
+def test_chase_items_returns_the_one_shape_both_sides_are_held_to():
+    """`EventLog.chase_items` builds `ChaseItem`, not a bare dict merge."""
+    log = EventLog.open(":memory:")
+    log.record("loop_opened", key="a", owner="seth", ask="compute consolidation", day=0)
+
+    (item,) = log.chase_items()
+
+    assert isinstance(item, ChaseItem)
+    # Both access styles work, so every existing caller - dict-style or
+    # attribute-style - keeps working unchanged.
+    assert item["owner"] == "seth" == item.get("owner") == item.owner
+    assert item["ask"] == "compute consolidation"
+    assert item.get("sensitivity") == "normal"
+
+
+def test_a_chase_item_recorded_with_only_a_key_warns_instead_of_a_bare_bullet(folder):
+    """The exact bug in #63: a log entry with only `key` used to render `- ?`,
+    a formatting glitch standing in for data nobody agreed had to be there."""
+    log = EventLog.open(":memory:")
+    log.record("loop_opened", key="DATA-812", day=0)
+
+    folder.write_state(chase=log.chase_items())
+
+    written = folder.read_state()
+    assert "- ?" not in written.splitlines(), "the old silent-glitch shape is back"
+    assert "DATA-812" in written
+    assert "has no owner or ask recorded" in written
+
+
+def test_a_chase_item_with_only_one_of_owner_or_ask_still_renders_the_other(folder):
+    """Half a chase item is not the same failure as none of it - only a total
+    miss on both fields is the case `write_state` has to call out by name."""
+    folder.write_state(chase=[{"key": "DATA-812", "ask": "compute consolidation"}])
+
+    written = folder.read_state()
+    assert "compute consolidation" in written
+    assert "has no owner or ask recorded" not in written
+
+
+def test_write_state_still_accepts_a_bare_dict_for_chase(folder):
+    """`ChaseItem` is a stricter shape underneath, but no existing caller that
+    builds a plain dict by hand should have to change to keep working."""
+    folder.write_state(chase=[{"owner": "VP-Data", "ask": "silver trigger"}])
+    assert "silver trigger" in folder.read_state()
+
+
+@pytest.mark.guardrail
+def test_a_private_chase_item_is_filtered_whether_it_arrives_as_a_dict_or_a_chase_item(folder):
+    """The filter reads `sensitivity` off either shape the same way."""
+    folder.write_state(
+        chase=[
+            ChaseItem(key="a", owner="seth", ask="growth area", sensitivity="private"),
+            {"owner": "seth", "ask": "compute consolidation"},
+        ]
+    )
+    written = folder.read_state()
+    assert "growth area" not in written
+    assert "compute consolidation" in written
+
+
+# --------------------------------------------------------------------------
+# the notes-gap shape (#61 / GAP 3): a sensitive meeting title can be withheld
+# --------------------------------------------------------------------------
+
+
+def test_notes_gap_from_value_reads_a_bare_string_as_normal_sensitivity():
+    """`ledger.notes_gaps()` still hands back a list[str]; this is the
+    backward-compatible half of #61 - no existing caller has to change."""
+    gap = NotesGap.from_value("Pod Steering")
+    assert gap.title == "Pod Steering"
+    assert gap.sensitivity == "normal"
+
+
+def test_notes_gap_from_value_reads_a_tagged_dict():
+    gap = NotesGap.from_value({"title": "exit interview follow-up", "sensitivity": "private"})
+    assert gap.title == "exit interview follow-up"
+    assert gap.sensitivity == "private"
+
+
+def test_a_private_notes_gap_string_mix_still_renders_the_normal_one(folder):
+    folder.write_state(
+        notes_gaps=["Pod Steering", {"title": "comp review", "sensitivity": "private"}]
+    )
+    written = folder.read_state()
+    assert "Pod Steering" in written
+    assert "comp review" not in written
