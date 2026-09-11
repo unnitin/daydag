@@ -399,3 +399,21 @@ def test_a_downed_planning_file_read_does_not_claim_landed_or_not():
     assert "landed" not in text
     assert "couldn't check next week's plan" in text
     assert "couldn't check next week's meeting prep" in text
+
+
+def test_the_moved_count_counts_movement_not_failure_notices(tmp_path):
+    """`moved (1)` where the only line says a source could not be read.
+
+    The count was `len(pulse.render().splitlines())`, but that block carries
+    stale-mirror lines, unavailable repos and unparsed watchlist lines as well
+    as items. A day where nothing shipped and a source degraded announced that
+    something moved. `brief.assemble` renders the same block with no count at
+    all, so the number is new here and was wrong from the start.
+    """
+    broken = Mirror.attach(tmp_path / "gone.git", cursor="HEAD~2")
+    broken.mark_fetch_failed()
+
+    text = _assemble(FakeSources(), pulse=Pulse(mirrors=[broken])).render()
+
+    assert "could not fetch" in text, "the degrade line still ships"
+    assert "moved (1)" not in text, f"a failure notice was counted as movement:\n{text}"

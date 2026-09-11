@@ -197,7 +197,14 @@ def assemble(
         block = read("the pulse", pulse.render, "")
         if block.strip():
             moved_lines = block.splitlines()
-            sections.append(Section(f"moved ({len(moved_lines)})", tuple(moved_lines)))
+            # Counted from `items()`, not from the rendered lines. That block
+            # also carries stale-mirror, unavailable-repo and unparsed-watchlist
+            # notices, so a day where nothing shipped and two sources degraded
+            # announced "moved (2)" with both lines being failure notices. The
+            # lines all still ship - degrading loudly is the point - but a
+            # failure to read is not a thing that moved.
+            count = len(read("the pulse", pulse.items, []))
+            sections.append(Section(f"moved ({count})", tuple(moved_lines)))
 
     # -- tomorrow's first meeting, plus any prep gap -----------------------
     window = recipes.calendar_day(tomorrow)
