@@ -20,11 +20,14 @@ offline and a real one can be wired in without touching this module.
 from __future__ import annotations
 
 import inspect
+import sqlite3
 from datetime import UTC, datetime
 
 import pytest
 
 from daydag import delivery
+from daydag.config import Identities
+from daydag.delivery import DeliveryError, deliver_push
 from daydag.prep import Point, PrepPing, Reason
 from daydag.registry import Registry, RegistryError
 from daydag.runlog import DEGRADED, FAILED, OK, RunLog
@@ -345,3 +348,32 @@ def test_draft_refuses_an_empty_destination():
 def test_draft_refuses_empty_text():
     with pytest.raises(delivery.DeliveryError):
         delivery.draft("   ", to="UVPDATA01")
+
+
+def test_a_preflight_failure_also_leaves_a_run_row(tmp_path):
+    """Contract 5 says a raised failure is recorded before it is re-raised.
+
+    That held for a transport failure and not for its twin. The guardrail
+    checks - `_principal_channel`, `registry.route`, `may_interrupt` - ran
+    BEFORE `runlog.run(...)` was entered, so a bad `SLACK_USER_PRINCIPAL`, a
+    stale skill name or a tripped interrupt gate raised with no row at all.
+    A caller reading `last_run("delivery: morning_brief")` to answer "did the
+    brief even try to send" saw the previous success, which is the silent
+    failure the run log exists to break.
+    """
+    env = tmp_path / ".env"
+    env.write_text("SLACK_USER_PRINCIPAL=not-an-id\n", encoding="utf-8")
+    log = RunLog(EventLog(sqlite3.connect(":memory:")), clock=lambda: datetime(2026, 9, 11))
+
+    with pytest.raises(DeliveryError):
+        deliver_push(
+            "morning brief",
+            kind=Push.MORNING_BRIEF,
+            transport=lambda **kw: None,
+            identities=Identities.from_file(env),
+            runlog=log,
+        )
+
+    rows = log.rows()
+    assert rows, "a pre-flight failure left no run row at all"
+    assert rows[-1].outcome == FAILED

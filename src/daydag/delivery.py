@@ -74,6 +74,7 @@ _T = TypeVar("_T")
 __all__ = [
     "DeliveryError",
     "Draft",
+    "PartialPrepDelivery",
     "PrepDelivery",
     "SentMessage",
     "Transport",
@@ -91,6 +92,26 @@ class DeliveryError(RuntimeError):
     those degrade like every other source (`daydag.smoke`), and a delivery
     failure is loud on purpose (see the module docstring's contract 5).
     """
+
+
+class PartialPrepDelivery(DeliveryError):
+    """The headline posted; its threaded detail did not.
+
+    A typed field rather than an attribute bolted onto a plain `DeliveryError`
+    at the raise site. That form needed a `type: ignore[attr-defined]`, existed
+    on exactly one raise path, and left `error.headline` invisible to a type
+    checker - so any later branch raising a bare `DeliveryError` from the same
+    function would hand a caller an object it reasonably expects to carry one.
+    `pulse.MirrorUnavailable` and `vault.ConflictError` already carry their
+    context this way; this follows them.
+
+    ``headline`` is the message that DID go out. A retry must reply into its
+    thread, never resend the interrupt.
+    """
+
+    def __init__(self, message: str, *, headline: SentMessage) -> None:
+        super().__init__(message)
+        self.headline = headline
 
 
 class Transport(Protocol):
@@ -246,11 +267,16 @@ def deliver_push(
         runlog: when given, this send is recorded as one run - a failed send
             is exactly the silent failure that module exists to make visible.
     """
-    channel = _principal_channel(identities)
-    if registry is not None and skill is not None:
-        registry.route(skill, to=DM_SURFACE)
 
     def _do(run: Run | None) -> SentMessage:
+        # Resolved and routed INSIDE the run, not before it. Contract 5 says a
+        # raised failure is recorded before it is re-raised, and that held for
+        # a transport failure while its twin - a bad SLACK_USER_PRINCIPAL, a
+        # stale skill name - raised with no row at all. A caller asking the run
+        # log "did the brief even try to send" saw the previous success.
+        channel = _principal_channel(identities)
+        if registry is not None and skill is not None:
+            registry.route(skill, to=DM_SURFACE)
         sent = _send(transport, channel=channel, text=text)
         if run is not None:
             run.observe([_posted_row("slack dm")])
@@ -279,15 +305,17 @@ def deliver_prep_ping(
     carries it as ``error.headline`` - a caller must not resend the headline
     on retry, only reply into the thread that already exists.
     """
-    if not may_interrupt(Push.PREP_PING):
-        raise DeliveryError(
-            "Push.PREP_PING is no longer flagged as the one interrupt "
-            "(prep.may_interrupt); a push that cannot arrive off-schedule "
-            "must not jump the decision queue by being sent here"
-        )
-    channel = _principal_channel(identities)
 
     def _do(run: Run | None) -> PrepDelivery:
+        # Gate and channel INSIDE the run, for the same reason as deliver_push:
+        # a refusal is a failed attempt and has to leave a row saying so.
+        if not may_interrupt(Push.PREP_PING):
+            raise DeliveryError(
+                "Push.PREP_PING is no longer flagged as the one interrupt "
+                "(prep.may_interrupt); a push that cannot arrive off-schedule "
+                "must not jump the decision queue by being sent here"
+            )
+        channel = _principal_channel(identities)
         headline = _send(transport, channel=channel, text=ping.headline())
         if run is not None:
             run.observe([_posted_row("slack dm")])
@@ -298,13 +326,12 @@ def deliver_prep_ping(
             # repeat it. Attached to the exception because there is no return
             # value to attach it to, and dropping it here is exactly the
             # "which one went out" question a caller has no other way to ask.
-            failure = DeliveryError(
+            raise PartialPrepDelivery(
                 f"the ping's headline posted (ts={headline.ts}) but its threaded "
                 f"detail did not ({exc}); do not resend the headline, reply into "
-                "its thread instead"
-            )
-            failure.headline = headline  # type: ignore[attr-defined]
-            raise failure from exc
+                "its thread instead",
+                headline=headline,
+            ) from exc
         if run is not None:
             # `slack dm` was already observed above - `Run.observe` keys by
             # name and the last write wins, so only the new fact goes here.

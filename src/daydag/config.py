@@ -67,9 +67,19 @@ def resolve_reference(
             "Pass identities= so it can be expanded; a literal ${...} matches nothing."
         )
     try:
-        return identities[key].strip()
+        found = identities[key]
     except (KeyError, ConfigError) as exc:
         raise error(f"{key} is not set. Add it to .env; see .env.example.") from exc
+    if not isinstance(found, str):
+        # `Mapping[str, str]` is an annotation, not a runtime guard, and this is
+        # the one function whose job is turning a bad identity into the CALLER's
+        # error. A mapping built from `os.environ.get(...)` - which returns None
+        # when unset, and is the obvious way to build one without
+        # `Identities.from_file` - reached `.strip()` and raised AttributeError:
+        # exactly the bare lookup error three frames up that `error=` exists to
+        # prevent.
+        raise error(f"{key} is set to {type(found).__name__}, not a string. Check .env.")
+    return found.strip()
 
 
 class ConfigError(RuntimeError):
