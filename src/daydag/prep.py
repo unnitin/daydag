@@ -464,6 +464,16 @@ class PrepPing:
     def render(self) -> str:
         return f"{self.headline()}\n{self._body(authored=False)}"
 
+    def detail(self) -> str:
+        """Everything after the headline - the thread reply, not the interrupt.
+
+        Exists so a delivery layer can post :meth:`headline` as the one
+        top-level message the interrupt is allowed to be, and this as the
+        threaded reply underneath it (principle 6), without reaching past this
+        class into ``_body``.
+        """
+        return self._body(authored=False)
+
     def authored_text(self) -> str:
         """Everything the agent wrote, with borrowed words excised.
 

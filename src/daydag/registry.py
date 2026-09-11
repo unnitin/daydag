@@ -21,9 +21,15 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Any
 
+#: The one autonomous Slack destination this system may ever address (SPEC
+#: guardrail 1). Named rather than left implicit inside `PRIVATE_SURFACES` so
+#: `daydag.delivery` - the module that actually sends there - imports the
+#: identifier instead of carrying a second hand-typed copy of the string.
+DM_SURFACE = "slack:dm-nitin"
+
 # Surfaces a `sensitivity: private` skill may reach. Everything else has an
 # audience above one, which SPEC section 10.1 forbids for personnel content.
-PRIVATE_SURFACES = frozenset({"slack:dm-nitin", "local:event-log", "drive:private"})
+PRIVATE_SURFACES = frozenset({DM_SURFACE, "local:event-log", "drive:private"})
 
 
 class RegistryError(RuntimeError):
