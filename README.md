@@ -33,7 +33,8 @@ artifact is the load-bearing rule; the rest is plumbing.
 | `manifests` | Reads the `daydag:` block out of every `.claude/skills/*/SKILL.md`, so those checks run over what ships |
 | `state` | The `DayDAG/` vault folder and the SQLite event log. Two stores, opposite requirements |
 | `ledger` | Calendar-driven meeting rows, so a meeting that produced **no** notes is visible |
-| `pulse` | Repo and board state: local mirrors for history, API for review state |
+| `pulse` | Repo state: local mirrors for history, API for review state |
+| `board` | Board state: Jira deltas and the ticket-key join, read never driven |
 | `vault` | Targeted line edits to a note, with an iCloud-aware compare-and-swap |
 | `voice` | The house voice as assertions, and the templates for every push |
 | `smoke` | One pre-flight pass over every source: reached, skipped, or never connected |

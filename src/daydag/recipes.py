@@ -518,6 +518,12 @@ def workstreams_paths() -> tuple[str, str]:
 #: What the pulse and the chase list actually read off a ticket. Explicit
 #: because `*all` ships every custom field on every issue: that is what turned
 #: a 14-day, 4-project query into 125,231 characters (#2 audit).
+#:
+#: ``resolutiondate`` and ``labels`` were added for the board reader (#12):
+#: the first is what lets ``closed_unannounced`` tell a close from a mention
+#: that merely predates it, the second is the "newly blocked" signal. Grown
+#: here rather than requested ad hoc by that module - a second, shorter field
+#: list for the same board is exactly the drift this module exists to prevent.
 JIRA_FIELDS: tuple[str, ...] = (
     "key",
     "summary",
@@ -526,6 +532,8 @@ JIRA_FIELDS: tuple[str, ...] = (
     "updated",
     "issuetype",
     "parent",
+    "resolutiondate",
+    "labels",
 )
 
 #: Page size ceiling. The connector's limit is on response *size*, which no
