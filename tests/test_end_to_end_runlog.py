@@ -19,9 +19,11 @@ So this walks a morning with real objects: a real git repo, a real SQLite log, a
 real vault folder in a temp dir, real `smoke` rows from injected probes. The
 clock is injected, and no test here touches the network.
 
-Named `test_end_to_end_runlog.py`, and self-contained, on purpose: several
-parallel branches each grew a `test_end_to_end.py` and they are due to be
-consolidated in one deliberate pass rather than merged four ways by accident.
+Named for its walk, and self-contained, on purpose: several parallel branches
+each grew a `test_end_to_end.py`, and the convention that settled it is one
+suite per path with the path in the filename. They were never one file merged
+four ways - they assert different compositions, with different fixtures and
+clocks - so naming them apart is the fix, not a workaround for it.
 """
 
 from __future__ import annotations
