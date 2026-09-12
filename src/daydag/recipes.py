@@ -518,6 +518,12 @@ def workstreams_paths() -> tuple[str, str]:
 #: What the pulse and the chase list actually read off a ticket. Explicit
 #: because `*all` ships every custom field on every issue: that is what turned
 #: a 14-day, 4-project query into 125,231 characters (#2 audit).
+#:
+#: ``resolutiondate`` and ``labels`` were added for the board reader (#12):
+#: the first is what lets ``closed_unannounced`` tell a close from a mention
+#: that merely predates it, the second is the "newly blocked" signal. Grown
+#: here rather than requested ad hoc by that module - a second, shorter field
+#: list for the same board is exactly the drift this module exists to prevent.
 JIRA_FIELDS: tuple[str, ...] = (
     "key",
     "summary",
@@ -526,6 +532,8 @@ JIRA_FIELDS: tuple[str, ...] = (
     "updated",
     "issuetype",
     "parent",
+    "resolutiondate",
+    "labels",
 )
 
 #: Page size ceiling. The connector's limit is on response *size*, which no
@@ -535,7 +543,9 @@ JIRA_DEFAULT_MAX_RESULTS = 50
 JIRA_DEFAULT_WINDOW_DAYS = 7
 
 #: Atlassian project keys: 2-10 uppercase alphanumerics starting with a letter.
-_PROJECT_KEY = re.compile(r"^[A-Z][A-Z0-9]{1,9}$")
+#: A Jira project key. Public because `board` parses the same keys out of
+#: the watchlist and a second copy is how the two drift - which they had.
+PROJECT_KEY = re.compile(r"^[A-Z][A-Z0-9]{1,9}$")
 
 
 def _project_keys(projects: Iterable[str]) -> list[str]:
@@ -546,7 +556,7 @@ def _project_keys(projects: Iterable[str]) -> list[str]:
             "DayDAG/Watchlist.md - an unscoped JQL reads every project."
         )
     for key in keys:
-        if not _PROJECT_KEY.match(key):
+        if not PROJECT_KEY.match(key):
             raise RecipeError(
                 f"{key!r} is not a Jira project key. The watchlist is hand-edited, "
                 "so keys are untrusted input to a JQL built by concatenation."
