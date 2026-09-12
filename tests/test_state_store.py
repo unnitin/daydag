@@ -4,11 +4,12 @@ Two stores with opposite requirements (ARCHITECTURE, "State: two stores").
 These tests describe the split; none of it is implemented yet.
 """
 
+import sqlite3
 from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 
-from daydag.state import DecisionQueue, EventLog, StateFolder
+from daydag.state import ChaseItem, DecisionQueue, EventLog, NotesGap, StateFolder
 
 #: A fixed offset, so an offset other than UTC is exercised without pulling in
 #: a tz database or depending on the machine's own zone.
@@ -147,3 +148,186 @@ def test_a_stamp_in_another_offset_comes_back_as_utc():
 
     assert fetched == datetime(2026, 9, 7, 13, 40, tzinfo=UTC)
     assert fetched.utcoffset() == timedelta(0)
+
+
+# --------------------------------------------------------------------------
+# the chase-item shape (#63): EventLog and write_state agree on one contract
+# --------------------------------------------------------------------------
+
+
+def test_chase_items_returns_the_one_shape_both_sides_are_held_to():
+    """`EventLog.chase_items` builds `ChaseItem`, not a bare dict merge."""
+    log = EventLog.open(":memory:")
+    log.record("loop_opened", key="a", owner="seth", ask="compute consolidation", day=0)
+
+    (item,) = log.chase_items()
+
+    assert isinstance(item, ChaseItem)
+    # Both access styles work, so every existing caller - dict-style or
+    # attribute-style - keeps working unchanged.
+    assert item["owner"] == "seth" == item.get("owner") == item.owner
+    assert item["ask"] == "compute consolidation"
+    assert item.get("sensitivity") == "normal"
+
+
+def test_a_chase_item_recorded_with_only_a_key_warns_instead_of_a_bare_bullet(folder):
+    """The exact bug in #63: a log entry with only `key` used to render `- ?`,
+    a formatting glitch standing in for data nobody agreed had to be there."""
+    log = EventLog.open(":memory:")
+    log.record("loop_opened", key="DATA-812", day=0)
+
+    folder.write_state(chase=log.chase_items())
+
+    written = folder.read_state()
+    assert "- ?" not in written.splitlines(), "the old silent-glitch shape is back"
+    assert "DATA-812" in written
+    assert "has no owner or ask recorded" in written
+
+
+def test_a_chase_item_with_only_one_of_owner_or_ask_still_renders_the_other(folder):
+    """Half a chase item is not the same failure as none of it - only a total
+    miss on both fields is the case `write_state` has to call out by name."""
+    folder.write_state(chase=[{"key": "DATA-812", "ask": "compute consolidation"}])
+
+    written = folder.read_state()
+    assert "compute consolidation" in written
+    assert "has no owner or ask recorded" not in written
+
+
+def test_write_state_still_accepts_a_bare_dict_for_chase(folder):
+    """`ChaseItem` is a stricter shape underneath, but no existing caller that
+    builds a plain dict by hand should have to change to keep working."""
+    folder.write_state(chase=[{"owner": "VP-Data", "ask": "silver trigger"}])
+    assert "silver trigger" in folder.read_state()
+
+
+@pytest.mark.guardrail
+def test_a_private_chase_item_is_filtered_whether_it_arrives_as_a_dict_or_a_chase_item(folder):
+    """The filter reads `sensitivity` off either shape the same way."""
+    folder.write_state(
+        chase=[
+            ChaseItem(key="a", owner="seth", ask="growth area", sensitivity="private"),
+            {"owner": "seth", "ask": "compute consolidation"},
+        ]
+    )
+    written = folder.read_state()
+    assert "growth area" not in written
+    assert "compute consolidation" in written
+
+
+# --------------------------------------------------------------------------
+# the notes-gap shape (#61 / GAP 3): a sensitive meeting title can be withheld
+# --------------------------------------------------------------------------
+
+
+def test_notes_gap_from_value_reads_a_bare_string_as_normal_sensitivity():
+    """`ledger.notes_gaps()` still hands back a list[str]; this is the
+    backward-compatible half of #61 - no existing caller has to change."""
+    gap = NotesGap.from_value("Pod Steering")
+    assert gap.title == "Pod Steering"
+    assert gap.sensitivity == "normal"
+
+
+def test_notes_gap_from_value_reads_a_tagged_dict():
+    gap = NotesGap.from_value({"title": "exit interview follow-up", "sensitivity": "private"})
+    assert gap.title == "exit interview follow-up"
+    assert gap.sensitivity == "private"
+
+
+def test_a_private_notes_gap_string_mix_still_renders_the_normal_one(folder):
+    folder.write_state(
+        notes_gaps=["Pod Steering", {"title": "comp review", "sensitivity": "private"}]
+    )
+    written = folder.read_state()
+    assert "Pod Steering" in written
+    assert "comp review" not in written
+
+
+# --------------------------------------------------------------------------
+# what review found after the first pass at #63
+# --------------------------------------------------------------------------
+
+
+def test_a_chase_item_keeps_fields_outside_its_own_schema():
+    log = EventLog(sqlite3.connect(":memory:"))
+    """`ChaseItem` contract 3 claims it is "a drop-in wherever a chase item was
+    already a bare dict - every existing caller".
+
+    `chase_items()` used to return `{**payload, ...}`, so a caller reading
+    `item["day"]` got it. Whitelisting the nine named fields silently dropped
+    every other key, which makes the drop-in claim false and turns an existing
+    read into a `KeyError`. The nine are GUARANTEED to exist; they were never
+    meant to be all there is.
+    """
+    log.record("loop_opened", key="k1", owner="VP-Data", ask="ship it", day=5)
+
+    item = log.chase_items()[0]
+
+    assert item["day"] == 5, "a recorded field vanished on the way out"
+    assert item["owner"] == "VP-Data"
+    assert item["status"] == "open", "the guaranteed fields still get defaults"
+
+
+def test_reading_a_chase_item_out_of_a_hand_written_row_never_raises():
+    log = EventLog(sqlite3.connect(":memory:"))
+    """`from_payload`'s docstring says "never raises" - a human can hand-edit
+    this log, so a row whose payload is valid JSON but not an object must
+    degrade, not take `write_state` down with an AttributeError."""
+    log._db.execute(
+        "INSERT INTO events (kind, sensitivity, payload) VALUES (?, ?, ?)",
+        ("carry_forward", "normal", "null"),
+    )
+    log._db.commit()
+
+    items = log.chase_items()
+
+    assert all(not item.has_owner_or_ask for item in items if not item.get("owner"))
+
+
+def test_a_notes_gap_from_a_calendar_shaped_record_is_named_not_blank(tmp_path):
+    """A mapping keyed `summary` rather than `title` produced `title=""` and
+    rendered a bare `- ` bullet - the same shapeless-item failure the chase
+    path in this very branch gave a named warning line."""
+    folder = StateFolder.create(tmp_path / "DayDAG")
+    folder.write_state(notes_gaps=[{"summary": "Pod Steering", "sensitivity": "normal"}])
+
+    body = folder.read_state()
+
+    assert "\n- \n" not in body and not body.rstrip().endswith("- "), (
+        f"a blank bullet reached State.md:\n{body}"
+    )
+
+
+def test_the_logs_sensitivity_column_outranks_a_payload_that_claims_otherwise():
+    """The column is the trusted fact; a payload key is not.
+
+    `from_payload` read `payload.get("sensitivity", sensitivity)`, so a payload
+    carrying `"normal"` outranked a column saying `"private"`. Unreachable
+    through `record()`, which takes sensitivity keyword-only and consumes it -
+    but this log is one a human hand-edits, which `from_payload`'s own
+    docstring is built around, and a hand-written row leaked straight into
+    plaintext `State.md`.
+    """
+    log = EventLog(sqlite3.connect(":memory:"))
+    log._db.execute(
+        "INSERT INTO events (kind, sensitivity, payload) VALUES (?,?,?)",
+        (
+            "carry_forward",
+            "private",
+            '{"owner":"o","ask":"SECRET","key":"k","sensitivity":"normal"}',
+        ),
+    )
+    log._db.commit()
+
+    (item,) = log.chase_items()
+
+    assert item.get("sensitivity") == "private", "the payload outranked the column"
+
+
+def test_a_caller_passing_a_plain_dict_still_gets_its_own_sensitivity_honoured():
+    """The other call site has no column to trust - `write_state` is handed a
+    dict whose own `sensitivity` is the only source there, so it must win."""
+    assert (
+        ChaseItem.from_payload({"owner": "o", "sensitivity": "private"}).get("sensitivity")
+        == "private"
+    )

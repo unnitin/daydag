@@ -1,17 +1,48 @@
-"""The two state stores, split by requirement.
+"""The two state stores, split by opposite requirements.
 
-ARCHITECTURE keeps these apart deliberately, because they carry opposite needs:
+USING IT
+    folder = StateFolder.create(root)       # DayDAG/, idempotent
+    folder.write_state(chase=..., watch=..., notes_gaps=...)   # REPLACES
 
-* The ``DayDAG/`` vault folder is markdown a human corrects by hand. It is the
-  reason this is not a black box.
-* The event log is SQLite outside the vault. Markdown cannot answer "median
-  days to answer", and five scheduled loops appending to one iCloud-synced file
-  with no locking is a lost update.
+    queue = DecisionQueue(folder)
+    item = queue.add("draft nudge to VP-Data?")
+    queue.answer_for(item)                  # whatever a human wrote beside it
+    queue.status(item)                      # answered | parked | open
+    queue.render()                          # the block for the next push
 
-Within the folder, ``State.md`` and ``Decisions.md`` are also split on purpose.
-State is a projection the agent rewrites every loop; Decisions is appended and
-never regenerated, so an answer written in the margin cannot be overwritten
-before it is read.
+    log = EventLog.open(path)               # SQLite, OUTSIDE the vault
+    log.record("loop_opened", sensitivity="private", **payload)
+    log.chase_items()
+    log.median_days_to_answer()
+
+CONTRACTS
+    1. Anything sensitive goes to the EVENT LOG, never the vault. The vault is
+       plaintext on every device it syncs to.
+    2. `write_state` runs `chase`, `watch` AND `notes_gaps` through one
+       `_visible` gate before anything is rendered - one filter, so
+       `sensitivity == "private"` cannot be wired to two of the three lists and
+       forgotten on the third. It was once wired to `chase` and not to its twin
+       `watch`, and a private carry-forward reached a synced file (#63's
+       sibling); `notes_gaps` had no sensitivity field to filter on at all
+       until `NotesGap` gave it one (#61).
+    3. One shape per list, held on BOTH sides of the log/vault seam. A chase
+       entry is a `ChaseItem` - `EventLog.chase_items()` returns one and
+       `write_state` coerces whatever it is handed before rendering, so the two
+       cannot drift apart the way they had (#63). A notes gap is a `NotesGap`.
+       Both coercions are idempotent and accept their own type first.
+    4. `State.md` is a PROJECTION, rewritten wholesale every loop. Park nothing
+       there you need kept.
+    5. `Decisions.md` is APPENDED and never regenerated, so an answer written
+       in the margin cannot be overwritten before it is read.
+    6. Rendering a decision counts as ASKING it. That is what lets an
+       unanswered item age out instead of being re-asked forever.
+
+WHY IT EXISTS
+    The folder is markdown a human corrects by hand, and that is the reason
+    this is not a black box - a hand edit is an event and wins over anything
+    derived. The event log is SQLite because markdown cannot answer "median
+    days to answer", and because five scheduled loops appending to one
+    iCloud-synced file with no locking is a lost update.
 """
 
 from __future__ import annotations
@@ -20,11 +51,18 @@ import json
 import re
 import sqlite3
 import statistics
-from collections.abc import Iterable
-from dataclasses import dataclass
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+from daydag.payloads import has
+from daydag.voice import WARN
+
+#: The sanctioned warning glyph (plain U+26A0, not its emoji-presentation
+#: twin) - `daydag.voice` is the register authority on this; a chase item that
+#: cannot be rendered in full still has to stay inside house voice.
 
 README = """# DayDAG
 
@@ -61,6 +99,72 @@ _ANSWER = re.compile(
     re.IGNORECASE,
 )
 
+# --------------------------------------------------------------------------
+# reading a projection back - State.md is hand-edited, so anything that reads
+# it lives here beside the writer rather than being reinvented per caller.
+# --------------------------------------------------------------------------
+
+_HEADING = re.compile(r"^(?P<hashes>#{1,6})\s+(?P<name>.+?)\s*$")
+_BULLET = re.compile(r"^\s*[-*]\s+(?P<body>\S.*?)\s*$")
+_MD_LINK = re.compile(r"\[(?P<label>[^\]]*)\]\((?P<url>[^)\s]+)\)")
+#: `)` excluded so a hand-written "(see https://x)" does not capture the
+#: bracket into the link and strand its opener in the text.
+_BARE_URL = re.compile(r"<?(?P<url>https?://[^\s>)]+)>?")
+
+
+def read_section(text: str, name: str) -> list[str]:
+    """Bullet bodies under the heading called ``name``, whatever its level.
+
+    Shared by every reader of ``State.md`` - the brief's chase/watch sections
+    and the week-ahead's carrying-in section both walk the same hand-edited
+    file, and a second regex here is a second set of bugs that agree only on
+    the easy cases.
+    """
+    wanted = name.casefold()
+    collecting = False
+    section_level = 0
+    bodies: list[str] = []
+    for line in text.splitlines():
+        heading = _HEADING.match(line)
+        if heading:
+            level = len(heading["hashes"])
+            if heading["name"].casefold() == wanted:
+                collecting, section_level = True, level
+            elif collecting and level <= section_level:
+                # A hand-added `### Snoozed` under `## Chase list` must not end
+                # the section. State.md is edited by a human; nesting is normal.
+                collecting = False
+            continue
+        bullet = _BULLET.match(line)
+        if collecting and bullet:
+            bodies.append(bullet["body"])
+    return bodies
+
+
+def split_link(body: str) -> tuple[str, str | None]:
+    """A hand-written line's text and the link in it, if there is one.
+
+    Both forms appear in a file a human edits: a markdown link, and a URL pasted
+    bare. The link is pulled out so the line can be re-rendered as a claim like
+    any other - otherwise a bare URL would read as unsourced to a caller's own
+    evidence check.
+    """
+    link = _MD_LINK.search(body)
+    if link:
+        return (body[: link.start()] + link["label"] + body[link.end() :]).strip(" -·"), link["url"]
+    bare = _BARE_URL.search(body)
+    if bare:
+        # Drop a bracket left wrapping nothing. Excluding `)` from the URL kept
+        # it out of the link but left "(see )" behind - half a fix reads worse
+        # than none, because it looks deliberate.
+        head, tail = body[: bare.start()], body[bare.end() :]
+        if head.rstrip().endswith("(") and tail.lstrip().startswith(")"):
+            head, tail = head.rstrip()[:-1], tail.lstrip()[1:]
+        # Collapse the gap the removal leaves: "see  for detail" reads as a
+        # typo in a brief, which spends the reader's trust on nothing.
+        return re.sub(r"\s{2,}", " ", head + tail).strip(" -·"), bare["url"]
+    return body.strip(), None
+
 
 def _as_utc(when: datetime) -> datetime:
     """``when`` as an aware UTC datetime, assuming UTC if it says nothing.
@@ -71,6 +175,210 @@ def _as_utc(when: datetime) -> datetime:
     missing tzinfo is a cosmetic mistake that must not stop a brief.
     """
     return when.replace(tzinfo=UTC) if when.tzinfo is None else when.astimezone(UTC)
+
+
+#: Every field a chase item carries beyond `sensitivity` (CLAUDE.md section 8's
+#: schema, plus `key` - not in that schema, but what a nudge or a piece of repo
+#: evidence keys back onto, and present on every payload the log has recorded).
+_CHASE_FIELDS: tuple[str, ...] = (
+    "key",
+    "owner",
+    "ask",
+    "quote",
+    "permalink",
+    "asked_on",
+    "last_activity",
+    "status",
+)
+
+
+@dataclass(frozen=True)
+class ChaseItem(Mapping[str, Any]):
+    """The one chase-item shape `EventLog` and `write_state` are both held to.
+
+    USING IT
+        item = ChaseItem.from_payload(payload, sensitivity=sensitivity)
+        item.owner; item["owner"]; item.get("owner")   # all three work
+        item.has_owner_or_ask                          # False -> both missing
+
+    CONTRACTS
+        1. `key` is the only field every chase item is guaranteed to carry - a
+           payload recorded with nothing else still builds one.
+        2. Neither `owner` nor `ask` being present does not raise. It is read
+           by `write_state` as `has_owner_or_ask is False`, which renders a
+           named warning line instead of a bare bullet or a crash (guardrail
+           6's "degrade visibly" - not the same failure as one of the two
+           being present, which still renders).
+        3. Mapping-shaped (`__getitem__`, `.get`, `dict(item)`) so it is a
+           drop-in wherever a chase item was already a bare dict - every
+           existing caller on either side of the log/vault seam.
+
+    WHY IT EXISTS
+        Issue #63: `EventLog.chase_items()` returned whatever a caller
+        recorded, and `write_state` assumed `owner` and `ask` would be in it.
+        A payload recorded with only `key` rendered as a bare `- ?` in
+        `State.md` - a formatting glitch standing in for data nobody had
+        agreed had to be there. One shape, read the same way on both sides of
+        the seam, is what stops that disagreement from recurring the next
+        time either module changes.
+    """
+
+    key: str = "?"
+    owner: str = ""
+    ask: str = ""
+    quote: str = ""
+    permalink: str = ""
+    asked_on: str = ""
+    last_activity: str = ""
+    status: str = "open"
+    sensitivity: str = "normal"
+    #: Everything else the caller recorded. The nine above are GUARANTEED to
+    #: exist; they were never meant to be all there is. Whitelisting them
+    #: dropped `day` - which `loop_opened` records on every call - and made
+    #: contract 3's "drop-in" false: an existing `item["day"]` became a
+    #: KeyError. Carried, not merged into the fields, so a payload cannot
+    #: overwrite a guaranteed one.
+    extra: Mapping[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_payload(
+        cls, payload: Mapping[str, Any], *, sensitivity: str | None = None
+    ) -> ChaseItem:
+        """Build one from whatever a caller recorded - a partial payload included.
+
+        Never raises: a chase item is read out of a log a human can also
+        write rows into by hand, and a partial one has to degrade to a named
+        warning (`has_owner_or_ask`), not take the render down. Accepts
+        another `ChaseItem` as ``payload`` too, since it is itself a mapping -
+        re-normalizing one is a no-op.
+        """
+        if isinstance(payload, cls):
+            return payload
+        if not isinstance(payload, Mapping):
+            # "Never raises" has to hold for a hand-written row too: valid JSON
+            # that is not an object (`null`, a list, a scalar) reached here and
+            # took `write_state` down with an AttributeError - the torn-row
+            # tolerance `_rows` exists for, undone one layer up.
+            return cls(sensitivity=sensitivity)
+        kwargs = {name: payload[name] for name in _CHASE_FIELDS if payload.get(name)}
+        extra = {
+            name: value
+            for name, value in payload.items()
+            if name not in _CHASE_FIELDS and name != "sensitivity"
+        }
+        # An explicit ``sensitivity`` is the LOG'S COLUMN and outranks anything
+        # the payload claims: the column is the trusted fact, the payload is
+        # whatever was written into the row. Reading the payload first let a
+        # hand-edited row carrying `"normal"` override a column saying
+        # `"private"` and reach plaintext `State.md`. Omitted means there is no
+        # column to trust - `write_state` is handed a bare dict whose own value
+        # is the only source there - so the payload wins.
+        resolved = sensitivity if sensitivity is not None else payload.get("sensitivity", "normal")
+        return cls(sensitivity=str(resolved), extra=extra, **kwargs)
+
+    @property
+    def has_owner_or_ask(self) -> bool:
+        """Whether there is anything real to render.
+
+        `payloads.has` rather than a hand-rolled truthiness check - the same
+        "at least one of these alternatives" rule that keeps a Gmail
+        metadata-only result from passing as a match applies here: an item
+        with neither field is not half-missing data, it is no data.
+        """
+        return has(self, "owner", "ask")
+
+    def __getitem__(self, key: str) -> Any:
+        if key in _CHASE_FIELDS or key == "sensitivity":
+            return getattr(self, key)
+        return self.extra[key]
+
+    def __iter__(self):
+        return iter((*_CHASE_FIELDS, "sensitivity", *self.extra))
+
+    def __len__(self) -> int:
+        return len(_CHASE_FIELDS) + 1 + len(self.extra)
+
+
+def _as_chase_item(raw: ChaseItem | Mapping[str, Any]) -> ChaseItem:
+    """Coerce whatever a caller passed `write_state` into the one shape (#63)."""
+    return raw if isinstance(raw, ChaseItem) else ChaseItem.from_payload(raw)
+
+
+@dataclass(frozen=True)
+class NotesGap:
+    """One meeting with no note found - `notes_gaps`' shape (#61).
+
+    CONTRACTS
+        1. `title` is what `write_state` prints. A meeting's own title can be
+           the sensitive fact - a comp conversation, an exit interview - so it
+           carries `sensitivity` exactly like `chase` and `watch` already do.
+        2. `from_value` also accepts a bare string, read as
+           ``sensitivity="normal"`` - `ledger.notes_gaps()` still returns
+           ``list[str]``, and no existing caller has to change to keep
+           working.
+
+    WHY IT EXISTS
+        Issue #61 / the guardrail file's GAP 3: `notes_gaps` was a list of
+        bare strings with no sensitivity tag to read, so a meeting whose own
+        title was sensitive had no way to be withheld - its caller had to
+        pre-filter, which is exactly the failure direction `chase` and
+        `watch` are filtered inside `write_state` to avoid: "the boundary has
+        to hold even when a caller forgets."
+    """
+
+    title: str
+    sensitivity: str = "normal"
+
+    @classmethod
+    def from_value(cls, value: str | Mapping[str, Any] | NotesGap) -> NotesGap:
+        """A `NotesGap` from one of its own, a bare string, or a dict.
+
+        The already-a-`NotesGap` case is FIRST and is not a convenience. This
+        class carries a `get()` but does not subclass `Mapping`, so without it
+        an instance fell through to the bare-string branch and became
+        `cls(title=str(value))` - the dataclass repr as the title, and
+        `sensitivity` reset to "normal". Handing the module its own type
+        laundered a private gap into a visible one.
+
+        `ChaseItem` never had the bug because it DOES subclass `Mapping`, which
+        is the whole lesson: one coercion, two shapes, and the guard held on
+        only one of them.
+        """
+        if isinstance(value, cls):
+            return value
+        if isinstance(value, Mapping):
+            return cls(
+                title=str(value.get("title", "")),
+                sensitivity=str(value.get("sensitivity", "normal")),
+            )
+        return cls(title=str(value))
+
+    def get(self, key: str, default: Any = None) -> Any:
+        return getattr(self, key, default)
+
+
+def _is_private(item: Any) -> bool:
+    """Whether ``item`` is tagged ``sensitivity: private``.
+
+    The one place every vault-list filter reads from - `_visible` is what
+    calls this, not `write_state`'s three loops individually, which is the
+    difference between a check that can be forgotten on a third list and one
+    that cannot.
+    """
+    return item.get("sensitivity") == "private"
+
+
+def _visible(items: Iterable[Any]) -> list[Any]:
+    """Every item in ``items`` that is not private.
+
+    `write_state`'s one gate for `chase`, `watch` and `notes_gaps` alike - the
+    filter that a private carry-forward once slipped past because `watch` had
+    no version of it while `chase` already did (and, before #61, `notes_gaps`
+    had no `sensitivity` field to check at all). One function, applied the
+    same way three times, is what makes "forgotten on the third list" a
+    contradiction rather than a recurring incident.
+    """
+    return [item for item in items if not _is_private(item)]
 
 
 class StateFolder:
@@ -112,39 +420,52 @@ class StateFolder:
 
     def write_state(
         self,
-        chase: Iterable[dict[str, Any]] = (),
-        watch: Iterable[dict[str, Any]] = (),
-        notes_gaps: Iterable[str] = (),
+        chase: Iterable[ChaseItem | Mapping[str, Any]] = (),
+        watch: Iterable[Mapping[str, Any]] = (),
+        notes_gaps: Iterable[str | Mapping[str, Any]] = (),
     ) -> None:
         """Rewrite ``State.md`` wholesale. It is derived, so it is replaced.
 
-        Sensitive ``chase`` and ``watch`` items are filtered here rather than at
-        the call site: the vault is plaintext on every device, so this is the
-        boundary that has to hold even when a caller forgets.
+        ``chase``, ``watch`` and ``notes_gaps`` all pass through ``_visible``
+        before anything is rendered - one filter, applied the same way to all
+        three, so ``sensitivity == "private"`` cannot be wired to two of them
+        and forgotten on the third. That is exactly how a private
+        carry-forward once reached plaintext ``State.md``: ``chase`` was
+        filtered and ``watch`` was not.
 
-        ``notes_gaps`` is *not* filtered - it is a list of bare strings with no
-        sensitivity tag to read, so a meeting whose own title is sensitive has
-        to be withheld by its caller. Giving it the same shape as the other two
-        is the fix; until then the gap is stated rather than assumed away.
+        ``chase`` is coerced to :class:`ChaseItem` whether a caller passes one
+        already or a bare dict such as ``{"owner": ..., "ask": ...}`` - both
+        sides of the log/vault seam are held to the one shape now (#63). An
+        item with neither ``owner`` nor ``ask`` degrades to a named warning
+        line rather than the ``- ?`` it used to render silently.
+
+        ``notes_gaps`` is coerced to :class:`NotesGap`, which gives a
+        meeting's own title the same sensitivity channel ``chase`` and
+        ``watch`` already had (#61) - a plain string is still accepted, read
+        as ``sensitivity="normal"``.
         """
         lines = ["# State", "", "## Chase list", ""]
-        for item in chase:
-            if item.get("sensitivity") == "private":
+        for item in _visible(_as_chase_item(raw) for raw in chase):
+            if not item.has_owner_or_ask:
+                lines.append(f"- {WARN} chase item {item.key} has no owner or ask recorded")
                 continue
-            owner = item.get("owner", "?")
-            ask = item.get("ask", "")
-            lines.append(f"- {owner} · {ask}".rstrip(" ·"))
+            lines.append(f"- {item.owner or '?'} · {item.ask}".rstrip(" ·"))
         lines += ["", "## Watch items", ""]
-        for item in watch:
-            # Watch items come from the same log as chase items and carry the
-            # same tag; filtering one list and not the other leaked a private
-            # carry-forward straight into a synced markdown file.
-            if item.get("sensitivity") == "private":
-                continue
+        for item in _visible(watch):
             lines.append(f"- {item.get('what', '')}")
-        gaps = list(notes_gaps)
+        gaps = _visible(NotesGap.from_value(gap) for gap in notes_gaps)
         if gaps:
-            lines += ["", "## Notes gaps", ""] + [f"- {g}" for g in gaps]
+            # A titleless gap gets a named warning, not a bare `- `. The chase
+            # path one section up already degrades that way, and a blank bullet
+            # is the same formatting-glitch-standing-in-for-data that #63 was
+            # about. Reachable: a calendar-shaped record keyed `summary` rather
+            # than `title` coerces to an empty title.
+            lines += ["", "## Notes gaps", ""] + [
+                f"- {gap.title}"
+                if gap.title
+                else f"- {WARN} a notes gap arrived with no title recorded"
+                for gap in gaps
+            ]
         self.state_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     def read_state(self) -> str:
@@ -367,10 +688,18 @@ class EventLog:
                 newest = stamp
         return newest
 
-    def chase_items(self) -> list[dict[str, Any]]:
-        """Chase entries, each tagged with the sensitivity that gates the vault."""
+    def chase_items(self) -> list[ChaseItem]:
+        """Chase entries as `ChaseItem` (#63), each tagged with the sensitivity
+        that gates the vault.
+
+        Was a bare dict merging the sensitivity column in - a payload recorded
+        with only `key` rendered as `- ?` in `State.md`, a formatting glitch
+        standing in for data nobody had agreed had to be there.
+        `ChaseItem.from_payload` is where that agreement now lives, and
+        `write_state` is held to the same shape on its side of the seam.
+        """
         return [
-            {**payload, "sensitivity": sensitivity}
+            ChaseItem.from_payload(payload, sensitivity=sensitivity)
             for kind, sensitivity, payload in self._rows()
             if kind in {"loop_opened", "carry_forward"}
         ]

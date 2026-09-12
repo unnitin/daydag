@@ -41,9 +41,20 @@ COVERED (behavioural - real code, real assertions)
       time of the last fetch that actually worked
     - untrusted Slack text is parsed for ticket keys only, never echoed or acted on
     - the vault write path joins only literal names onto the folder root
+    - `notes_gaps` carries the same sensitivity channel `chase` and `watch` do,
+      via `NotesGap`, so a meeting whose own title is sensitive is withheld the
+      same way a private chase or watch item is (was GAP 3, #61)
+    - `daydag.delivery.deliver_push` and `deliver_prep_ping` have no
+      destination parameter at all - the resolved principal id is the only
+      channel a send can ever name (#10, full coverage in `tests/test_delivery.py`)
+    - a message for anyone else is a `Draft`, and no function in `daydag.delivery`
+      accepts a `Draft` and a `Transport` together
 
 TRIPWIRES (no implementation exists - these fail when one lands unguarded)
-    - no autonomous send path of any kind (Slack, Gmail, Calendar, drafts)
+    - no literal Slack/Gmail/Calendar client call anywhere in `src/daydag/`
+      outside the transport `daydag.delivery` is handed - unchanged by #10,
+      which added real behavioural coverage of `daydag.delivery` itself
+      alongside this rather than replacing it
     - no Jira write path (transition, comment, assign)
     - no inbound command surface, so no injection parser and no sender check
     - no connector client besides the git mirror: every other source is probed
@@ -51,22 +62,29 @@ TRIPWIRES (no implementation exists - these fail when one lands unguarded)
       package can reach a connector on its own
 
 GAPS - not covered here, and not pretended to be
-    1. `StateFolder.write_state` filters `chase` and `watch` on sensitivity;
-       `notes_gaps` is a list of plain strings with no sensitivity channel, so a
-       meeting *title* that is itself sensitive has no way to be filtered.
-    2. `DecisionQueue.answer_for` reads an answer only as a whole word at one
+    1. `DecisionQueue.answer_for` reads an answer only as a whole word at one
        end of the line (tested below). A hand edit may land at either end, so a
        decision whose text *begins or ends* with a bare "yes"/"no" still
        self-answers. Removing that last case means fixing where an answer is
        allowed to be written, which is a decision rather than a patch.
-    3. Guardrail 4 (discrepancies surfaced, never auto-resolved) is covered for
+    2. Guardrail 4 (discrepancies surfaced, never auto-resolved) is covered for
        the ledger's ambiguous-note case in `tests/test_ledger.py`; there is no
        general discrepancy surface to test yet.
+
+    GAP 3 (`notes_gaps` had no sensitivity channel) moved to COVERED above,
+    #61. GAP 1 and GAP 2 went the same way earlier - the unsourced `Item`
+    (#69, see "Was GAP 1" below) and the undated stale mirror (#60, "was
+    GAP 2") - so the numbers are retired in order rather than reused.
+
+    #63's `chase`/`write_state` shape disagreement was never a numbered gap
+    here at all: it surfaced as a runtime warning rather than an unguarded
+    invariant. `tests/test_state_store.py` carries its coverage.
 """
 
 from __future__ import annotations
 
 import ast
+import inspect
 import re
 import subprocess
 from datetime import UTC, datetime
@@ -74,9 +92,11 @@ from pathlib import Path
 
 import pytest
 
+from daydag import delivery
 from daydag.pulse import Item, Mirror, Pulse
 from daydag.registry import PRIVATE_SURFACES, Registry, RegistryError
-from daydag.state import DecisionQueue, EventLog, StateFolder
+from daydag.state import DecisionQueue, EventLog, NotesGap, StateFolder
+from daydag.voice import Push
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -194,6 +214,16 @@ def folder(tmp_path: Path) -> StateFolder:
 # 1. no autonomous send outside the principal's own DM (guardrail 1, inv. 4)
 # --------------------------------------------------------------------------
 
+#: Kept whole, including "slack send" (#10): `daydag.delivery` is now a real
+#: send path, but it holds no literal Slack-client symbol - the transport is
+#: an injected callable, never `slack_send_message`/`postMessage` themselves
+#: (contract 4). So this tripwire still fires exactly as before if some OTHER
+#: module in the package ever calls a Slack client directly, bypassing
+#: `daydag.delivery`'s channel resolution and its `Draft`/`Transport` split.
+#: What changed is not this dict, but that the send path it defends against
+#: now has real behavioural coverage too - see
+#: `test_the_only_autonomous_destination_is_the_resolved_principal_id` and
+#: `test_a_draft_never_reaches_the_transport` below.
 OUTBOUND_PATTERNS = {
     "slack send": r"slack_send_message|postMessage|slack_schedule_message",
     "slack draft": r"send_message_draft",
@@ -205,11 +235,14 @@ OUTBOUND_PATTERNS = {
 
 @pytest.mark.guardrail
 def test_no_outbound_send_path_exists_unguarded():
-    """TRIPWIRE. Guardrail 1: exactly one autonomous channel, the principal's DM.
+    """TRIPWIRE + BEHAVIOURAL. Guardrail 1, narrowed by #10, not weakened.
 
-    There is no send path in the package today, so there is no behaviour to
-    assert - only the absence to defend. The day a send appears without an
-    allowlist in front of it is the day this fires.
+    The tripwire is unchanged: it still fails the moment a literal Slack (or
+    Gmail, or calendar) client call lands anywhere in `src/daydag/`. What #10
+    narrows is the CLAIM the docstring made - "there is no send path in the
+    package today" is no longer true, `daydag.delivery.deliver_push` is one.
+    Its real coverage lives in the tests immediately below, which drive it
+    rather than merely defending its absence.
     """
     _self_check_scanner()
     hits = _scan(OUTBOUND_PATTERNS)
@@ -220,6 +253,100 @@ def test_no_outbound_send_path_exists_unguarded():
         "awaiting a per-action yes.",
         hits,
     )
+
+
+@pytest.mark.guardrail
+def test_the_only_autonomous_destination_is_the_resolved_principal_id():
+    """BEHAVIOURAL. Guardrail 1, narrowed now that a send path exists (#10).
+
+    `deliver_push` has no destination parameter at all - not a default, not
+    an override - so "send this to someone else" cannot be expressed, let
+    alone reached by a bug. The injected transport only ever sees the id this
+    module resolved from ``${SLACK_USER_PRINCIPAL}``.
+    """
+    params = set(inspect.signature(delivery.deliver_push).parameters)
+    forbidden = params & {"channel", "to", "destination", "recipient"}
+    assert not forbidden, (
+        f"deliver_push accepts {forbidden} - a destination parameter makes "
+        "'send to someone else' representable, which guardrail 1 forbids"
+    )
+
+    seen: dict[str, str] = {}
+
+    def transport(*, channel: str, text: str, thread_ts: str | None = None):
+        seen["channel"] = channel
+        return {"ts": "100.001"}
+
+    sent = delivery.deliver_push(
+        "hello",
+        kind=Push.MORNING_BRIEF,
+        transport=transport,
+        identities={"SLACK_USER_PRINCIPAL": "UPRINCIPAL1"},
+    )
+    assert seen["channel"] == "UPRINCIPAL1" == sent.channel
+
+
+@pytest.mark.guardrail
+def test_a_draft_never_reaches_the_transport():
+    """BEHAVIOURAL. Guardrail 1's other half: anyone else gets a `Draft`, not a send.
+
+    No function in `daydag.delivery` accepts a `Draft` and a `Transport`
+    together - "send to someone else" is unrepresentable, not merely unused.
+    """
+    called: list[dict[str, object]] = []
+
+    def transport(**kwargs):
+        called.append(kwargs)
+        return {"ts": "1"}
+
+    note = delivery.draft("hey vp-data - is this still open?", to="UVPDATA01", reason="chase nudge")
+
+    assert isinstance(note, delivery.Draft)
+    assert not called, "drafting a message must never call the transport"
+
+    for name, member in vars(delivery).items():
+        if not inspect.isfunction(member) or member.__module__ != delivery.__name__:
+            continue
+        rendered = " ".join(
+            str(p.annotation) for p in inspect.signature(member).parameters.values()
+        )
+        assert not ("Draft" in rendered and "Transport" in rendered), (
+            f"{name} accepts both a Draft and a Transport in one call"
+        )
+
+
+@pytest.mark.guardrail
+def test_delivery_respects_the_registry_for_a_private_skill():
+    """BEHAVIOURAL. `daydag.registry.route` is consulted, not bypassed, by delivery.
+
+    The DM is inside `PRIVATE_SURFACES`, so a private skill may always reach
+    it - but an unregistered skill still fails closed, which is what proves
+    the check actually runs rather than being skipped because the destination
+    happens to be the one surface everything is allowed to reach.
+    """
+    private = Registry.load(
+        [{"name": "weekly-feedback-scan", "daydag": {"writes": [], "sensitivity": "private"}}]
+    )
+    sent = delivery.deliver_push(
+        "hi",
+        kind=Push.MORNING_BRIEF,
+        transport=lambda **kw: {"ts": "1"},
+        identities={"SLACK_USER_PRINCIPAL": "UPRINCIPAL1"},
+        registry=private,
+        skill="weekly-feedback-scan",
+    )
+    assert sent.channel == "UPRINCIPAL1"
+
+    unregistered = Registry.load([])
+    with pytest.raises(RegistryError, match="unknown skill"):
+        delivery.deliver_push(
+            "hi",
+            kind=Push.MORNING_BRIEF,
+            transport=lambda **kw: {"ts": "1"},
+            identities={"SLACK_USER_PRINCIPAL": "UPRINCIPAL1"},
+            registry=unregistered,
+            skill="ghost-skill",
+        )
 
 
 @pytest.mark.guardrail
@@ -501,11 +628,22 @@ JIRA_WRITE_PATTERNS = {
 
 @pytest.mark.guardrail
 def test_no_jira_write_path_exists_unguarded():
-    """TRIPWIRE. Nobody else's ticket is transitioned or commented on.
+    """TRIPWIRE, still - now alongside a behavioural check rather than instead
+    of one. Nobody else's ticket is transitioned or commented on.
 
-    There is no Jira client in the package - not a reader, not a writer - so
-    the checklist item "no one else's ticket is ever transitioned without
-    approval" has nothing to exercise. This holds the door.
+    This was vacuous when it was written: there was no Jira client in the
+    package at all. `board.py` (#12) is now the package's first Jira reader,
+    so "there is nothing to drive" stopped being true - but "nothing here
+    drives it" still is, and that is what stays asserted here across the
+    *whole* package rather than just the one module most likely to grow a
+    write. `tests/test_board.py` carries the same check scoped to that module
+    (`test_the_module_exposes_no_way_to_drive_the_board`), parsing its source
+    directly rather than trusting this one to have caught everything.
+
+    The token is the strongest layer: `read:jira-work` plus Confluence read
+    and no write scope at all, so a transition is refused one level below any
+    code in this repo. This tripwire is the cheapest of the three, and it
+    still fires the day a write-shaped name appears anywhere in the package.
     """
     _self_check_scanner()
     hits = _scan(JIRA_WRITE_PATTERNS)
@@ -553,6 +691,70 @@ def test_no_private_item_reaches_any_file_in_the_vault(folder: StateFolder):
     assert not leaked, f"private content reached the vault: {leaked}"
     assert "compute consolidation" in folder.read_state(), "the filter ate the normal items too"
     assert "nightly ingest job" in folder.read_state()
+
+
+@pytest.mark.guardrail
+def test_a_sensitive_meeting_title_never_reaches_the_vault_as_a_notes_gap(folder: StateFolder):
+    """BEHAVIOURAL. Was GAP 3 (#61): `notes_gaps` had no sensitivity channel.
+
+    A meeting whose own TITLE is the sensitive fact - a comp conversation, an
+    exit interview - could not be withheld, because `notes_gaps` was a list of
+    bare strings with nothing to tag "private" onto; the caller had to
+    pre-filter, and every other list in this file is filtered right here
+    because a caller cannot be trusted to remember. `NotesGap` gives it the
+    same shape `chase` and `watch` already had, so `write_state` closes the
+    gap structurally instead of asking `notes_gaps`' one caller to.
+
+    Walks the whole folder, like its `chase`/`watch` sibling above: the
+    guarantee is about the vault, not about one section of one file.
+    """
+    marker = "exit interview follow-up"
+    folder.write_state(notes_gaps=[{"title": marker, "sensitivity": "private"}, "Pod Steering"])
+
+    leaked = [
+        path.relative_to(folder.root)
+        for path in folder.root.rglob("*")
+        if path.is_file() and marker in path.read_text(encoding="utf-8")
+    ]
+    assert not leaked, f"a sensitive meeting title reached the vault: {leaked}"
+    assert "Pod Steering" in folder.read_state(), "the filter ate the normal gap too"
+
+
+@pytest.mark.guardrail
+def test_a_sensitive_notes_gap_is_withheld_whichever_shape_it_arrives_in(
+    folder: StateFolder,
+):
+    """The same guarantee, given the module's OWN type rather than a dict.
+
+    `NotesGap.from_value` took a Mapping or "anything else". A `NotesGap` is
+    not a Mapping - it carries a `get()` but does not subclass one - so it fell
+    to the else branch, which did `cls(title=str(value))`: the dataclass repr
+    became the title and `sensitivity` reset to "normal". Handing the module
+    its own type therefore laundered a private gap into a visible one, repr and
+    all.
+
+    The sibling `chase` path was safe only because `ChaseItem` DOES subclass
+    `Mapping`. One guard, holding on one of two paths - which is the defect
+    class this whole branch exists to close, reproduced inside the closing.
+    """
+    marker = "exit interview follow-up"
+    folder.write_state(notes_gaps=[NotesGap(title=marker, sensitivity="private")])
+
+    leaked = [
+        path.relative_to(folder.root)
+        for path in folder.root.rglob("*")
+        if path.is_file() and marker in path.read_text(encoding="utf-8")
+    ]
+    assert not leaked, f"a private NotesGap reached the vault: {leaked}"
+
+
+def test_coercing_a_notes_gap_twice_changes_nothing(folder: StateFolder):
+    """`from_value` has to be idempotent, because `write_state` calls it on
+    whatever it is handed - including something already coerced upstream."""
+    once = NotesGap.from_value({"title": "Pod Steering", "sensitivity": "private"})
+    twice = NotesGap.from_value(once)
+
+    assert twice == once
 
 
 @pytest.mark.guardrail

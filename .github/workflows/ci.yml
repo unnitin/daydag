@@ -2,7 +2,11 @@ name: ci
 
 on:
   pull_request:
-    branches: [main]
+    # Not `[main]` alone. A stacked PR targets its parent branch, so the
+    # narrow trigger silently ran NO checks on it - eight PRs merged that way
+    # before anyone noticed, each one green only because it had been run by
+    # hand. A PR with no checks must be impossible, not merely unusual.
+    branches: [main, 'path/**', 'chore/**', 'fix/**', 'canary/**']
   push:
     branches: [main]
 

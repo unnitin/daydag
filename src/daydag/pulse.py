@@ -1,14 +1,40 @@
-"""Engineering pulse: git mirrors for history, API for state.
+"""Engineering pulse: git mirrors for history, the API for review state.
 
-Split by what the data physically is. Git objects hold code and history and
-nothing else - review age, CI verdicts and board columns are not in the repo at
-any clone depth. So merges and code questions come from a local mirror against a
-stored cursor, and everything social comes from the API.
+USING IT
+    watchlist = read_watchlist(path)        # DayDAG/Watchlist.md
+    store = MirrorStore(mirror_root(ids))
+    report = store.sync(watchlist.repos)    # clone or fetch, push disabled
 
-The rules here matter more than the features. SPEC section 3.7 rule 1 is "state
-changes, not activity": the unit is *did the thing he is tracking move*, never a
-commit count on a named engineer. And repo evidence marks a loop as moved but
-never closes it - merged is not the same as what was asked for.
+    pulse = Pulse.from_sync(report)
+    pulse.observe_slack(message)            # ticket keys only, never echoed
+    pulse.observe_pr(pr)
+    pulse.apply_evidence()
+    pulse.items()                           # -> [Item]; each one sourced
+    pulse.render()
+
+CONTRACTS
+    1. State changes, NOT activity (SPEC 3.7 rule 1). The unit is "did the
+       thing he is tracking move" - never a commit count against a named
+       engineer.
+    2. Repo evidence marks a loop MOVED, never CLOSED. Merged is not the same
+       as what was asked for.
+    3. A mirror is read-only by construction: push url is set to `no_push` at
+       clone. There is no code path here that writes to a remote.
+    4. A stale mirror contributes NO items and is reported as stale, carrying
+       the time of the last fetch that actually worked. Silence is not health.
+    5. Untrusted Slack text is parsed for ticket keys and nothing else. It is
+       never echoed into output and never acted on.
+
+WHY IT EXISTS
+    Split by what the data physically IS. Git objects hold code and history and
+    nothing else - review age, CI verdicts and board columns are not in the
+    repo at any clone depth. So merges and code questions come from a local
+    mirror against a stored cursor, and everything social comes from the API.
+
+KNOWN LIMIT
+    A mirror that has never been cloned is `MirrorUnavailable`, and
+    `repo_is_absent` distinguishes "no such repo" from "the network failed".
+    Calling both absent would delete a real problem from the report.
 """
 
 from __future__ import annotations
@@ -800,7 +826,17 @@ class Pulse:
         """
         joined = self.by_ticket(loop.get("key", ""))
         moved = joined.pr_state == "merged" or joined.pr_number is not None
-        return {**loop, "evidence_of_movement": bool(moved)}
+        # OR, never overwrite. `pulse.apply_evidence` and this one are meant to
+        # compose over the same loop, and each wrote the flag outright - so
+        # whichever ran second erased the first, and a loop whose PR provably
+        # merged went True -> False the moment the other source had nothing
+        # that run. Evidence is monotonic: finding nothing is not finding
+        # absence, and the chaser nudging work that demonstrably moved is the
+        # cost of getting that backwards.
+        return {
+            **loop,
+            "evidence_of_movement": bool(moved) or bool(loop.get("evidence_of_movement")),
+        }
 
     # -- output ----------------------------------------------------------
 

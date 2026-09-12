@@ -1,30 +1,46 @@
-"""Source recipes: SPEC section 4's prose as literal queries (issue #7).
+"""Source recipes: SPEC section 4's prose as literal queries (#7).
 
-Every loop asks the same handful of questions of the same six sources. Written
-per loop, they drift - two loops end up asking subtly different things and the
-difference only shows up as a brief that quietly omits a day. So they live here
-once, as pure functions from parameters to a query string or a parameter dict.
-Nothing in this module performs I/O, which is what makes the part that must be
-right checkable without a connector.
+USING IT
+    calendar_day(day)                       # ONE day. Never a week - see 1
+    slack_overnight(now, mentioning=principal, identities=ids, since_hour=17)
+    gmail_gemini_notes(after=day, before=day)   # from:GEMINI_SENDER + label
+    jira_jql(["PROJ"], updated_within_days=14)  # bounded fields and results
+    gh_open_prs(repo)
+    gh_pr_checks(repo, 42)
+    gh_recent_runs(repo, branch="main")
+    vault_path(ids, "Weekly Notes", weekly_note(day))
+    week_range(day), week_label(day), next_week_label(day)
+    title_from_gemini_subject(subject)
 
-Three shapes here contradict what SPEC section 4 originally asserted, and the
-issue #2 connector audit is why. They are marked in place:
+CONTRACTS
+    1. Calendar is queried DAY BY DAY. One 5-day pull returned 156,681 chars
+       and exceeded the output limit - measured, not a hunch.
+    2. Jira always names `fields` explicitly and bounds `maxResults`. Never
+       `*all`: a 14-day 4-project query with unbounded fields returned 125,231
+       chars. `JIRA_MAX_RESULTS_CAP` and `GH_LIMIT_CAP` are the caps, and
+       `smoke` builds its reported bounds FROM them.
+    3. Slack is addressed by ID, never display name. `from:@someone` does not
+       fail, it silently matches nothing.
+    4. Gmail matches the SUBJECT: `Notes: "<title>" <date>`, plus the
+       `meeting notes` label. All 201 notes in a 30-day window carry both.
+       This reverses SPEC's original "never search by subject" - subject beats
+       body, and it resolves the back-to-back-1:1 ambiguity body matching
+       cannot.
+    5. Nothing here performs I/O. Pure functions from parameters to a query
+       string or a parameter dict - which is what makes the part that must be
+       right checkable without a connector.
+    6. A recipe RAISES (`RecipeError`) rather than returning a best-effort
+       query, because every failure it guards is silent at the connector.
 
-* **Gmail.** The spec said Gemini's subject was inconsistent and the title had
-  to be recovered from the body. All 201 notes in a 30-day window carry
-  ``Notes: "<title>" <date>``, and every one also carries the ``meeting notes``
-  label. Subject beats body, and it resolves the back-to-back-1:1 ambiguity
-  that body matching cannot.
-* **Calendar.** Day-by-day was a hunch; it is now measured. One 5-day pull
-  returned 156,681 characters and exceeded the output limit.
-* **Jira.** The same failure with a different shape: a 14-day, 4-project JQL
-  with unbounded fields returned 125,231 characters. Hence explicit ``fields``
-  and a bounded ``maxResults``, never ``*all``.
+WHY IT EXISTS
+    Every loop asks the same handful of questions of the same six sources.
+    Written per loop they drift, and the difference shows up only as a brief
+    that quietly omits a day.
 
-The recurring theme in all three, and the reason several tests here are
-guardrails: a query that overflows the connector's output limit is not a
-degraded read, it is a *silent* one. Guardrail 6 buys honest failure, and an
-overflow spends it - the loop reports nothing while looking like it ran.
+    The theme behind contracts 1, 2 and 4, and the reason several tests here
+    are guardrails: a query that overflows the connector's output limit is not
+    a degraded read, it is a SILENT one. Guardrail 6 buys honest failure and an
+    overflow spends it - the loop reports nothing while looking like it ran.
 """
 
 from __future__ import annotations
@@ -518,6 +534,12 @@ def workstreams_paths() -> tuple[str, str]:
 #: What the pulse and the chase list actually read off a ticket. Explicit
 #: because `*all` ships every custom field on every issue: that is what turned
 #: a 14-day, 4-project query into 125,231 characters (#2 audit).
+#:
+#: ``resolutiondate`` and ``labels`` were added for the board reader (#12):
+#: the first is what lets ``closed_unannounced`` tell a close from a mention
+#: that merely predates it, the second is the "newly blocked" signal. Grown
+#: here rather than requested ad hoc by that module - a second, shorter field
+#: list for the same board is exactly the drift this module exists to prevent.
 JIRA_FIELDS: tuple[str, ...] = (
     "key",
     "summary",
@@ -526,6 +548,8 @@ JIRA_FIELDS: tuple[str, ...] = (
     "updated",
     "issuetype",
     "parent",
+    "resolutiondate",
+    "labels",
 )
 
 #: Page size ceiling. The connector's limit is on response *size*, which no
@@ -535,7 +559,9 @@ JIRA_DEFAULT_MAX_RESULTS = 50
 JIRA_DEFAULT_WINDOW_DAYS = 7
 
 #: Atlassian project keys: 2-10 uppercase alphanumerics starting with a letter.
-_PROJECT_KEY = re.compile(r"^[A-Z][A-Z0-9]{1,9}$")
+#: A Jira project key. Public because `board` parses the same keys out of
+#: the watchlist and a second copy is how the two drift - which they had.
+PROJECT_KEY = re.compile(r"^[A-Z][A-Z0-9]{1,9}$")
 
 
 def _project_keys(projects: Iterable[str]) -> list[str]:
@@ -546,7 +572,7 @@ def _project_keys(projects: Iterable[str]) -> list[str]:
             "DayDAG/Watchlist.md - an unscoped JQL reads every project."
         )
     for key in keys:
-        if not _PROJECT_KEY.match(key):
+        if not PROJECT_KEY.match(key):
             raise RecipeError(
                 f"{key!r} is not a Jira project key. The watchlist is hand-edited, "
                 "so keys are untrusted input to a JQL built by concatenation."

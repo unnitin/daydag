@@ -1,49 +1,43 @@
 """Reading skill manifests off disk - the step that makes the registry real.
 
-:mod:`daydag.registry` turns ARCHITECTURE's ownership table into checks. But a
-check nothing calls is a check that passes: until this module existed,
-``Registry.load`` had only ever been handed dictionaries typed into a test, so
-the one-writer invariant held over fixtures and said nothing whatsoever about
-the skills this repo actually ships.
+USING IT
+    registry = load_registry()          # reads .claude/skills/*/SKILL.md
+    read_manifests(skills_dir)          # -> [{"name": ..., "daydag": {...}}]
+    read_manifest(path)
+    parse_frontmatter(text, source)
 
-This is the missing half. It reads the ``daydag:`` block out of every
-``.claude/skills/*/SKILL.md`` and hands the set to the registry, so the
-invariant is asserted against the real manifests - by the test suite on every
-run, and by ``python -m daydag.manifests`` in ``scripts/preflight.sh`` on every
-push.
+    python -m daydag.manifests          # the ownership table and schedule
 
-Deliberately not a runtime. ARCHITECTURE is explicit that DayDAG stays a
-registry, a bus and a scheduler, and that every skill must still be useful
-invoked by hand; the ``daydag:`` block only decides *when a skill runs and what
-it is handed*. So this module reads files and validates shape. Nothing here
-executes a skill or resolves a ``${VAR}`` - artifact ids stay literal, which is
-what keeps a public repo free of the real ones.
+CONTRACTS
+    1. Validation is STRICT: an unknown key or unknown sensitivity is an error,
+       not a shrug. Both failure modes are silent otherwise - `write:` for
+       `writes:` leaves an artifact with no declared owner so a second writer
+       sails through, and `sensitivity: privat` reads as "not private", where
+       SPEC 10.1's blast radius is a person's career record.
+    2. Artifact ids stay LITERAL. Nothing here resolves a `${VAR}`, which is
+       what keeps a public repo free of the real ones.
+    3. Two vocabularies, deliberately not merged. `writes:` holds ARTIFACT ids
+       (one owner each); `Registry.route` takes a SURFACE (a destination with
+       an audience). `weekly-feedback-scan` writes the artifact
+       `drive:${GDRIVE_FEEDBACK_LOG_FOLDER}/` onto the surface `drive:private`.
+       Passing an artifact id where a surface belongs gets a refusal that looks
+       like a guardrail firing and is really a category error. Keep them apart
+       until the evidence bus (#34) gives the mapping a home.
+    4. Ids match EXACTLY. A trailing `/` marks a folder a skill owns, which is
+       honest about custody but does not authorise the files inside it -
+       `check_write("daily-loops", "vault:DayDAG/Proposals/x.md")` is still an
+       undeclared write. Prefix matching belongs in the registry;
+       `test_manifests.py` pins the current behaviour so nobody assumes.
+    5. Not a runtime. Nothing here executes a skill. ARCHITECTURE is explicit
+       that DayDAG stays a registry, a bus and a scheduler, and that every
+       skill must still be useful invoked by hand.
 
-**Why the validation is strict.** Two of the failure modes are silent rather
-than loud, and both defeat the point of the file:
-
-* ``write:`` for ``writes:`` leaves an artifact with no declared owner, so the
-  one-writer check has nothing to compare and a second writer sails through.
-* ``sensitivity: privat`` reads as "not private", and SPEC section 10.1's
-  blast radius is a person's career record.
-
-An unknown key or an unknown sensitivity is therefore an error, not a shrug.
-
-**Two vocabularies, deliberately not merged.** ``writes:`` holds *artifact ids*
-- the thing with exactly one owner. :meth:`Registry.route` takes a *surface* -
-a destination with an audience, drawn from
-:data:`~daydag.registry.PRIVATE_SURFACES`. They are not the same namespace and
-neither is derived from the other yet: ``weekly-feedback-scan`` writes the
-artifact ``drive:${GDRIVE_FEEDBACK_LOG_FOLDER}/`` onto the surface
-``drive:private``. Passing an artifact id where a surface belongs gets a
-refusal that looks like a guardrail firing and is really a category error, so
-keep them apart until the evidence bus (#34) gives the mapping a home.
-
-Artifact ids are matched **exactly**. A trailing ``/`` marks a folder a skill
-owns, which is honest about custody but does not authorise the files inside it:
-``check_write("daydag", "vault:DayDAG/Proposals/x.md")`` is still an undeclared
-write. Prefix matching belongs in the registry, on the skill-registry path;
-``test_manifests.py`` pins the current behaviour so nobody assumes otherwise.
+WHY IT EXISTS
+    `registry` turns ARCHITECTURE's ownership table into checks - but a check
+    nothing calls is a check that passes. Until this module existed,
+    `Registry.load` had only ever been handed dictionaries typed into a test,
+    so the one-writer invariant held over fixtures and said nothing about the
+    skills this repo actually ships.
 """
 
 from __future__ import annotations

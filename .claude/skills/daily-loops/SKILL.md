@@ -50,6 +50,47 @@ this file: `SPEC.md` (what each loop does), `ARCHITECTURE.md` (who owns what) an
    you cannot reach is one line in the output ("couldn't check jira"), never a stall
    and never a guess.
 
+## How to run one: plan, fetch, render
+
+The rules below are not yours to re-derive - they are code, tested, in
+`src/daydag/`. Run the loop through it rather than by hand, or you are
+reimplementing the ledger and the bounds from prose every morning.
+
+```sh
+python -m daydag.run plan morning            # what to fetch, already bounded
+#   ... you run those queries over MCP ...
+python -m daydag.run render morning < payloads.json   # the push text
+```
+
+`plan` gives you one step per source. Run each one **exactly as given** - the
+query is built from `daydag.recipes`, which carries the bounds the #2 audit
+measured: one calendar day (five days returned 156,681 chars and never
+arrived), an id-scoped Slack query (a display name silently matches nothing),
+a bounded JQL (an unbounded four-project query returned 125,231 chars).
+
+Then write a payloads file keyed by source:
+
+```json
+{"calendar": [...], "slack": [...], "gmail": [...], "vault": "the note text"}
+```
+
+**Fields that matter, because their absence fails quietly:**
+
+| source | must carry | what breaks without it |
+|---|---|---|
+| calendar | `id`, `summary`, `start`, `end`, `attendees` | no `end` and the ledger refuses the event - no notes-gap, today or tomorrow |
+| gmail | `subject`, and the mail's own `date` | a note is only matched within six hours of its meeting ending; without a date it can never attach, and its meeting is a gap forever |
+| slack | `permalink` | a claim with no link is withheld - evidence or silence |
+
+A source you could not reach: **leave the key out**. That renders one
+"couldn't check X" line and the push still ships. Do not pass an empty list to
+mean "unreachable" - an empty list means the query ran and found nothing, and
+those are different facts.
+
+Pass `--log` so the run remembers. Without it the ledger starts empty every
+morning, and a meeting seeded today cannot be reported as a gap tomorrow -
+which is the one thing this system does that nothing else does.
+
 ## The loops
 
 | Ask | Loop | Window |
