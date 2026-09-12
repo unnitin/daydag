@@ -1,11 +1,29 @@
-"""Voice and format fixtures for every push (SPEC section 5).
+"""The house voice as assertions, plus the template for every push.
 
-The voice rules here are derived from what Nitin actually writes, not from a
-style guide, which is why they are testable at all. A drift is a bug.
+USING IT
+    voice_violations(text)      # -> list[str]; empty means it reads as Nitin
+    render(Push.BRIEF, data)    # -> the text for one push kind
+    one_line(text)              # collapse whitespace to a single line
+    clipped(text, 160, ellipsis="...")   # one line, never longer than 160
 
-One rule is invisible in most editors and worth stating loudly: the sanctioned
-warning sign is plain U+26A0, not the emoji-presentation U+26A0 U+FE0F. The
-vault uses the former; the difference shows up there and nowhere else.
+CONTRACTS
+    1. Hyphens, never em or en dashes.
+    2. Emoji only from SANCTIONED_EMOJI. The warning sign is plain U+26A0, NOT
+       the emoji-presentation U+26A0 U+FE0F - invisible in most editors, and
+       visible in the vault, which is the one place it matters.
+    3. `clipped` spends the ellipsis FROM the budget, never on top of it.
+       Appending after the cut is how a 160-char limit returns 163 into a line
+       the caller had already sized.
+
+WHY IT EXISTS
+    The rules are derived from what Nitin actually writes rather than from a
+    style guide, which is the only reason they are testable at all. A drift is
+    a bug, not a matter of taste.
+
+    `one_line`/`clipped` live here because three modules had hand-rolled the
+    same `" ".join(text.split())[:cap]` - `brief`, `smoke` and `runlog`. The
+    caps stayed with their callers: a quote, a connector failure and a run row
+    are genuinely different budgets. Only the mechanism was shared.
 """
 
 from __future__ import annotations
