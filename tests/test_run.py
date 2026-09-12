@@ -294,3 +294,27 @@ def test_the_vault_step_names_the_note_once_not_twice(identities):
 
     assert path.count("Weekly Notes") == 1, f"the prefix is doubled: {path}"
     assert path.endswith(".md")
+
+
+def test_the_gmail_step_covers_the_window_the_brief_will_actually_ask_for(identities):
+    """The plan is what the agent fetches; `brief` is what consumes it. If the
+    two disagree the payload is simply wrong, and silently - `_Payloads.gmail`
+    serves whatever was fetched regardless of the query it is handed.
+
+    At 6:40am the brief reports on YESTERDAY's meetings and asks gmail for
+    `after:<yesterday>`. The plan asked for today only, so a note for a
+    meeting that ended at 16:30 the previous day was never fetched, and its
+    meeting was reported as having no notes. Found on real mail: ML Model
+    Review's note existed and arrived at 17:12 PDT; the query excluded it.
+    """
+    plan = run.plan("morning", now=MONDAY, identities=identities)
+
+    (gmail,) = [s for s in plan.steps if s.source == "gmail"]
+    query = gmail.detail["query"]
+
+    # MONDAY is 06:40 UTC = the previous evening in Pacific, so the window the
+    # brief opens starts the day before that again.
+    assert "before:" not in query, (
+        f"a closed day-window drops a note that arrives after it: {query}"
+    )
+    assert "2026/09/0" in query, f"the window does not reach back to yesterday: {query}"

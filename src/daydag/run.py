@@ -156,7 +156,19 @@ def plan(loop: str, *, now: datetime, identities: Mapping[str, str]) -> Plan:
         Step(
             "gmail",
             "search, then fetch each thread in PLAIN_TEXT - results alone are metadata",
-            {"query": recipes.gmail_gemini_notes(after=day, before=day)},
+            # The window the BRIEF will ask for, not today's. At 6:40am the
+            # brief reports on yesterday's meetings and asks gmail for
+            # `after:<the evening the overnight window opened>`. A closed
+            # today-only window fetched the wrong mail, and `_Payloads.gmail`
+            # serves whatever was fetched regardless of the query it is handed,
+            # so the two disagreed in silence.
+            #
+            # Open-ended on purpose. `before:` dropped a note that arrived at
+            # 17:12 PDT because gmail put it past the day boundary, and its
+            # meeting was then reported as having no notes - while the note
+            # sat in the mailbox. Notes also genuinely arrive the next day: a
+            # Sep 10 meeting's note landed 00:56 PDT on Sep 11.
+            {"query": recipes.gmail_gemini_notes(after=_overnight_opened(overnight))},
         ),
         Step(
             "vault",
@@ -167,6 +179,12 @@ def plan(loop: str, *, now: datetime, identities: Mapping[str, str]) -> Plan:
         ),
     ]
     return Plan(loop=loop, at=now.isoformat(), steps=tuple(steps))
+
+
+def _overnight_opened(window: recipes.OvernightWindow) -> Any:
+    """The date the overnight window opened - what `brief` keys its gmail
+    query off, so the plan asks for the same thing the consumer will."""
+    return datetime.fromtimestamp(window.min_ts, tz=recipes.PACIFIC).date()
 
 
 class _Payloads:
