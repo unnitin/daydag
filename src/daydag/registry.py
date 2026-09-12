@@ -1,19 +1,38 @@
-"""The ownership table, made executable.
+"""The ownership table, made executable: one writer per artifact.
 
-ARCHITECTURE states one writer per artifact as invariant 1, and notes that an
-invariant enforced by documentation has a half-life: the next skill gets
-written by someone who never read the table. This module turns the table into
-startup checks, so a second writer is a loud failure rather than a corrupted
-file discovered on a Friday.
+USING IT
+    registry = Registry.load(manifests)     # raises on a second writer
+    registry.writer_of("vault:DayDAG/State.md")     # -> skill name
+    registry.check_write(skill, artifact)   # raises if undeclared
+    registry.route(skill, surface)          # raises if sensitivity forbids it
+    registry.schedule()                     # -> {skill: cron-ish string}
+    registry.producers_for(skill)           # who emits what it consumes
 
-A manifest is the ``daydag:`` block of a skill's ``SKILL.md`` frontmatter:
+    A manifest is the `daydag:` block of a skill's SKILL.md frontmatter:
 
-    daydag:
-      writes:       [vault:Fact Base/Workstreams.md]
-      consumes:     [evidence.pulse]
-      emits:        [evidence.planning]
-      schedule:     "fri 13:00"
-      sensitivity:  private
+        daydag:
+          writes:       [vault:Fact Base/Workstreams.md]
+          consumes:     [evidence.pulse]
+          emits:        [evidence.planning]
+          schedule:     "fri 13:00"
+          sensitivity:  private
+
+CONTRACTS
+    1. Two writers for one artifact is a `RegistryError` AT LOAD, regardless of
+       declaration order. Not a warning, and not discovered on write.
+    2. `writes:` holds ARTIFACT ids; `route()` takes SURFACES. Different
+       namespaces - passing an artifact id to `route()` is a category error
+       that looks like a guardrail firing.
+    3. A `sensitivity: private` skill cannot be routed to any surface with an
+       audience above one. `State.md` is plaintext on every synced device, so
+       it counts as an audience.
+
+WHY IT EXISTS
+    ARCHITECTURE states one-writer-per-artifact as invariant 1, and notes that
+    an invariant enforced by documentation has a half-life: the next skill gets
+    written by someone who never read the table. This turns the table into
+    startup checks, so a second writer is a loud failure rather than a
+    corrupted file discovered on a Friday.
 """
 
 from __future__ import annotations
