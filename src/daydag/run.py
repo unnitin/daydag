@@ -55,15 +55,18 @@ from __future__ import annotations
 
 import json
 import sys
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from daydag import brief, eod_wrap, recipes, week_ahead
 from daydag.config import ConfigError, resolve_reference, timezone_for
-from daydag.ledger import Ledger
-from daydag.state import StateFolder
+from daydag.ledger import Ledger, Match, title_from_gemini_subject
+from daydag.runlog import RunLog
+from daydag.smoke import REACHED
+from daydag.state import EventLog, NotesGap, StateFolder
 
 __all__ = ["LOOPS", "Plan", "RunError", "Step", "main", "plan", "render"]
 
@@ -210,10 +213,13 @@ class _Payloads:
     #: be surfaced tomorrow.
     _INSTANTS = ("start", "end")
 
-    def _timed(self, record: Any) -> Any:
+    @classmethod
+    def timed(cls, record: Any) -> Any:
+        """A record with every instant field parsed. Shared with the replay
+        path, which reads the same JSON back out of the event log."""
         if not isinstance(record, Mapping):
             return record
-        parsed = {name: self._instant(record[name]) for name in self._INSTANTS if name in record}
+        parsed = {name: cls._instant(record[name]) for name in cls._INSTANTS if name in record}
         return {**record, **parsed} if parsed else record
 
     def _records(self, name: str) -> list[Mapping[str, Any]]:
@@ -225,7 +231,7 @@ class _Payloads:
         return value
 
     def calendar(self, window: recipes.DayWindow) -> Sequence[Mapping[str, Any]]:
-        return [self._timed(record) for record in self._records("calendar")]
+        return [self.timed(record) for record in self._records("calendar")]
 
     def slack(self, query: str) -> Sequence[Mapping[str, Any]]:
         return self._records("slack")
@@ -239,6 +245,61 @@ class _Payloads:
         return str(self._payloads["vault"])
 
 
+#: The event kind a seeded meeting is recorded under, so the next run can
+#: rehydrate it. Meetings are not sensitive as a class - a title can be, which
+#: is what `NotesGap.sensitivity` is for on the way back out.
+MEETING = "meeting"
+
+
+def _vault(identities: Mapping[str, str]) -> StateFolder | None:
+    """The `DayDAG/` folder, or None when no vault is configured.
+
+    Optional because a test and a first run both have none, and because a
+    missing vault must not stop a brief - it is one absent section, not a
+    stall (guardrail 6).
+    """
+    root = identities.get("VAULT_ROOT")
+    if not root:
+        return None
+    return StateFolder.create(Path(root) / "DayDAG")
+
+
+def _remembered(log: EventLog | None) -> Ledger:
+    """A ledger carrying every meeting seeded on a previous run.
+
+    THE reason this module exists rather than `Ledger()` being enough.
+    `_seed_and_gaps` seeds today's rows precisely so that tomorrow can report
+    the ones that produced nothing - and a ledger rebuilt empty every run has
+    no tomorrow. "meetings w/ no notes" could only ever report the empty set,
+    and an empty section is omitted rather than labelled, so the one thing
+    nothing else in the system can produce failed silently.
+
+    Replayed through `seed_day`, which is idempotent per instance, rather than
+    given a second persistence API inside `Ledger` - the composition belongs
+    here, not in the thing being composed.
+    """
+    ledger = Ledger()
+    if log is None:
+        return ledger
+    for payload in log.recorded(MEETING):
+        if isinstance(payload, Mapping):
+            ledger.seed_day([_Payloads.timed(dict(payload))])
+    return ledger
+
+
+def _remember(log: EventLog | None, events: Iterable[Mapping[str, Any]]) -> None:
+    """Record today's meetings so the next run can ask what produced nothing."""
+    if log is None:
+        return
+    for event in events:
+        if isinstance(event, Mapping) and event.get("id"):
+            log.record(MEETING, **{k: _jsonable(v) for k, v in event.items()})
+
+
+def _jsonable(value: Any) -> Any:
+    return value.isoformat() if isinstance(value, datetime) else value
+
+
 def render(
     loop: str,
     *,
@@ -246,29 +307,126 @@ def render(
     identities: Mapping[str, str],
     payloads: Mapping[str, Any],
     state: StateFolder | None = None,
+    log: Path | str | None = None,
+    pulse: Any = None,
+    write_state: bool = False,
 ) -> str:
-    """The push text for ``loop``, assembled from what the agent fetched."""
+    """The push text for ``loop``, assembled from what the agent fetched.
+
+    ``log`` is the event log's path. Given one, the loop REMEMBERS: meetings
+    seeded today are readable tomorrow, and the run leaves a row either way.
+    Without one every run starts blank, which is correct for a test and wrong
+    for a morning.
+    """
     _known(loop)
     _aware(now)
     sources = _Payloads(payloads)
-    ledger = Ledger()
+    folder = state if state is not None else _vault(identities)
+    events = log if log is None else EventLog.open(log)
+    ledger = _remembered(events)
+    _attach_notes(ledger, payloads, now)
+    runner = RunLog(events, clock=lambda: now) if events is not None else None
 
-    if loop == "morning":
-        return brief.assemble(
-            now=now, sources=sources, identities=identities, state=state, ledger=ledger
+    def _assemble() -> str:
+        if loop == "morning":
+            return brief.assemble(
+                now=now,
+                sources=sources,
+                identities=identities,
+                state=folder,
+                ledger=ledger,
+                pulse=pulse,
+            ).render()
+        if loop == "eod":
+            return eod_wrap.assemble(now=now, sources=sources, ledger=ledger, pulse=pulse).render()
+        return week_ahead.assemble(
+            now=now, sources=sources, identities=identities, state=folder, pulse=pulse
         ).render()
-    if loop == "eod":
-        return eod_wrap.assemble(now=now, sources=sources, ledger=ledger).render()
-    return week_ahead.assemble(
-        now=now, sources=sources, identities=identities, state=state
-    ).render()
+
+    if runner is None:
+        text = _assemble()
+    else:
+        # A run that dies halfway is exactly the one somebody opens the log
+        # for, so the row is written either way and the failure re-raised.
+        with runner.run(f"loop: {loop}") as active:
+            text = _assemble()
+            active.observe([{"name": loop, "source": "daydag", "status": REACHED, "reason": ""}])
+
+    _remember(events, _seeded(payloads))
+    if write_state and folder is not None and events is not None:
+        _project(folder, events, ledger, now)
+    return text
+
+
+def _attach_notes(ledger: Ledger, payloads: Mapping[str, Any], now: datetime) -> None:
+    """Offer every fetched Gemini note to the ledger.
+
+    `Ledger.offer_note` was called by five test files and by NO production
+    code - the matching half of the ledger existed and was never wired, the
+    same way `title_from_gemini_subject` was once dead code the docs described
+    as live. Unwired, no note ever attaches to a row, so every meeting is a
+    gap forever and "meetings w/ no notes" becomes every meeting every day.
+    Noise, which is worse than the absence it was meant to replace.
+
+    A note whose title is ambiguous attaches to nothing and stays in
+    `ambiguous()` - surface, do not resolve.
+    """
+    notes = payloads.get("gmail")
+    if not isinstance(notes, list):
+        return
+    for mail in notes:
+        if not isinstance(mail, Mapping):
+            continue
+        title = title_from_gemini_subject(str(mail.get("subject", "")))
+        stamp = _Payloads._instant(
+            mail.get("arrived") or mail.get("date") or mail.get("internalDate")
+        )
+        ledger.offer_note(
+            Match(
+                title=title,
+                # The mail's OWN timestamp. `ledger._in_window` only attaches a
+                # note that arrived within six hours of the meeting ending, so
+                # defaulting to `now` makes a note fetched the next morning
+                # unmatchable - and a note that never attaches leaves its
+                # meeting reported as a gap forever.
+                arrived=stamp if isinstance(stamp, datetime) else now,
+                attendees=[str(a) for a in (mail.get("attendees") or [])],
+                # "gemini", not "gmail": `ARRIVAL_WINDOW` is keyed by the
+                # system that WROTE the note, not the one that carried it, and
+                # an unknown key falls back to the default window silently.
+                source="gemini",
+            )
+        )
+
+
+def _seeded(payloads: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    raw = payloads.get("calendar")
+    return [r for r in raw if isinstance(r, Mapping)] if isinstance(raw, list) else []
+
+
+def _project(folder: StateFolder, log: EventLog, ledger: Ledger, now: datetime) -> None:
+    """Rewrite `State.md` from what this run learned.
+
+    Through `write_state`'s own `_visible` gate rather than filtering here:
+    the runner is not a second writer with its own idea of the rules, and the
+    filter that a private carry-forward once slipped past is the one that has
+    to hold.
+    """
+    folder.write_state(
+        chase=log.chase_items(),
+        notes_gaps=[NotesGap(title=gap) for gap in ledger.notes_gaps(now)],
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
     """`plan` writes JSON to stdout; `render` reads payloads from stdin."""
     args = list(sys.argv[1:] if argv is None else argv)
     if len(args) < 2 or args[0] not in {"plan", "render"}:
-        print("usage: python -m daydag.run {plan|render} {" + "|".join(LOOPS) + "}")
+        print(
+            "usage: python -m daydag.run {plan|render} {"
+            + "|".join(LOOPS)
+            + "} [--log PATH] [--write-state]"
+        )
         return 2
 
     from pathlib import Path
@@ -276,6 +434,11 @@ def main(argv: list[str] | None = None) -> int:
     from daydag.config import Identities
 
     command, loop = args[0], args[1]
+    # `--log <path>` is what makes a run remember: without it the ledger starts
+    # empty every morning and a meeting seeded today cannot be a gap tomorrow.
+    # `--write-state` projects what the run learned back into `State.md`.
+    log = args[args.index("--log") + 1] if "--log" in args[:-1] else None
+    write_state = "--write-state" in args
     try:
         identities = Identities.from_file(Path(".env"))
         now = datetime.now().astimezone()
@@ -283,7 +446,16 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(plan(loop, now=now, identities=identities).to_dict(), indent=2))
         else:
             payloads = json.load(sys.stdin)
-            print(render(loop, now=now, identities=identities, payloads=payloads))
+            print(
+                render(
+                    loop,
+                    now=now,
+                    identities=identities,
+                    payloads=payloads,
+                    log=log,
+                    write_state=write_state,
+                )
+            )
     except (RunError, ConfigError) as bad:
         print(f"{bad}", file=sys.stderr)
         return 1
