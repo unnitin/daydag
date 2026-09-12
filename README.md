@@ -75,5 +75,6 @@ it does not catch a name, which is the author's judgement.
 its own unit tests and was wrong about the world or about a neighbour: the
 ledger silently dropped 61% of meetings, the state writer filtered one list and
 not its twin, a parser the docs described was never called. That is why
-`tests/test_end_to_end.py` exists and why guardrails are marked and gated
-separately.
+the `tests/test_end_to_end_*.py` suites exist - one per walk across the
+modules, named for the path each takes - and why guardrails are marked and
+gated separately.

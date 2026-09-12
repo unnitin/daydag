@@ -1,10 +1,11 @@
-"""The whole morning, walked end to end.
+"""Watchlist to State.md: the pulse walk, end to end.
 
-The unit tests each hold one seam. This file holds the walk between them: a
-hand-edited `Watchlist.md` is read, the mirrors it names are provisioned and
-fetched against a controlled clock, the pulse renders the shipping block, and
-`State.md` is written from what came out. Nothing here reaches the network -
-the origins are local repos from `conftest.py` and the clock is hand-wound.
+One of four `test_end_to_end_*` suites, each following a different path across
+the modules - this one is the repo half. A hand-edited `Watchlist.md` is read,
+the mirrors it names are provisioned and fetched against a controlled clock,
+the pulse renders the shipping block, and `State.md` is written from what came
+out. Nothing here reaches the network - the origins are local repos from
+`conftest.py` and the clock is hand-wound.
 
 It exists because both failure modes it asserts are *composition* failures. An
 item with no permalink and a stale mirror with no date each look fine in
