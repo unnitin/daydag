@@ -45,6 +45,7 @@ artifact is the load-bearing rule; the rest is plumbing.
 | `eod_wrap` | SPEC §3.5's EOD wrap: what closed, what moved, tomorrow's first meeting |
 | `prep` | Meeting prep pings: the one interrupt, 30 min out, qualified by the ledger |
 | `week_ahead` | SPEC §3.6's Sunday week-ahead: a read of Friday's plan, assembled into one push |
+| `delivery` | The one autonomous send - the principal's DM - and the threaded prep reply |
 | `evalset` | The hand-labelled ingestion ground truth, and `score()` — so precision is measured, not asserted |
 | `ingestion` | SPEC §3.3's classifier: five labels, biased to precision, no write path |
 

@@ -1,30 +1,43 @@
 """One pre-flight pass over every source: what was reached, what was skipped.
 
-Three jobs, and they are the same code because they need the same answer. It is
-the check that runs before a loop starts, so the loop knows what it is working
-with. It is guardrail 6 made concrete - a brief ships with a one-line
-"couldn't check X" rather than stalling or guessing. And its rows are the format
-the run log (#26) appends.
+USING IT
+    report = run({"calendar": lambda: client.day(...), "jira": ...})
+    report.ok                       # every wired source answered
+    report.reached_sources          # -> frozenset of source names
+    report.degrade_lines()          # "couldn't check X - <detail>" per skip
+    report.as_rows()                # what the run log appends. NOT render()
+    report.render()
 
-**The thing this module exists to catch is overflow, not authentication.** The
-#2 audit blew the output limit three times: Calendar at 156,681 chars for five
-days, Jira at 125,231 for a 14-day query, the Jira project list at 60,000. None
-of them raised, and none of them returned an error - an over-limit response
-simply never arrives, so the loop that asked sees nothing and the brief reports
-a quiet day. A smoke test that asked "did the call succeed" would have been
-green through all three.
+    Unknown probe names are REFUSED, not ignored - a typo would otherwise
+    leave that source unprobed and reported as "no probe".
 
-So a probe is never trusted because it failed to raise. Every check asserts a
-*plausible shape came back*: a record with the fields it should have, a resolved
-id that is actually an id, `SELECT 1` answering with 1. Where a source can be
-honestly empty (a clear day on the calendar) the check says so and says why;
-where emptiness is indistinguishable from a silent failure (Slack resolving a
-display name, a JQL naming a dormant project) it is a skip, because the cost of
-being wrong is one honest apology line against a board reported clear.
+CONTRACTS
+    1. Never trust a probe because it failed to raise. Every check asserts a
+       PLAUSIBLE SHAPE came back: a record with the fields it should have, a
+       resolved id that is actually an id, `SELECT 1` answering 1.
+    2. Where a source can be honestly empty (a clear calendar day) the check
+       says so and says why. Where emptiness is indistinguishable from silent
+       failure (Slack resolving a display name, a JQL on a dormant project) it
+       is a SKIP - the cost of being wrong is one apology line against a board
+       reported clear.
+    3. Nothing here is a client. Every probe is injected, which is what lets
+       the suite run offline and keeps the connector tripwire in
+       `tests/test_guardrails.py` meaningful: this module cannot reach anything.
+    4. Each probe runs EXACTLY ONCE. A retry hides a flaky source and doubles
+       the wait on a 6:40am loop that is supposed to degrade rather than stall.
+    5. Feed the run log `as_rows()`, never `render()`. Parsing your own output
+       makes the report's wording load-bearing.
 
-Nothing here is a client. Every probe is injected by the caller, which is what
-lets the suite run offline and keeps the connector tripwire in
-`tests/test_guardrails.py` meaningful: this module cannot reach anything.
+WHY IT EXISTS
+    The thing this catches is OVERFLOW, not authentication. The #2 audit blew
+    the output limit three times - Calendar at 156,681 chars for five days,
+    Jira at 125,231 for 14 days, the Jira project list at 60,000. None raised
+    and none returned an error: an over-limit response simply never arrives, so
+    the loop that asked sees nothing and the brief reports a quiet day. A smoke
+    test asking "did the call succeed" would have been green through all three.
+
+    Each check's `bound` is built from the `recipes` constant that enforces it,
+    so a cap that moves takes the wording with it.
 """
 
 from __future__ import annotations

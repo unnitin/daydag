@@ -1,8 +1,34 @@
-"""Identity configuration.
+"""Identity configuration: every real identifier, resolved from a local .env.
 
-Real Slack/Google/Notion/Databricks identifiers live in a gitignored `.env`
-and nowhere else - this repo is public. `.env.example` is the committed schema.
-Docs and code refer to values as ``${VAR_NAME}``; this module resolves them.
+USING IT
+    ids = Identities.from_file(Path(".env"))
+    ids["SLACK_USER_PRINCIPAL"]                 # ConfigError if unset - NOT a
+                                                #   KeyError, nor a subclass
+    resolve_reference("${VAR_NAME}", ids, what="the pod channel", error=ConfigError)
+    resolve_reference("C0ALREADY", ids, what="the pod channel", error=ConfigError)
+                                                # -> unchanged, not a reference
+    timezone_for(ids)                           # ZoneInfo, TIMEZONE or the default
+
+    `what` and `error` are required, not decoration: the caller names what it
+    was resolving and which exception its own layer raises, so a missing id
+    fails in that layer's vocabulary instead of as a bare lookup error three
+    frames up.
+
+CONTRACTS
+    1. This repo is PUBLIC. No real identifier is committed - not in code, not
+       in docs, not in a test fixture. `.env` is gitignored; `.env.example` is
+       the committed schema and carries placeholders only.
+    2. Code and docs name a value as `${VAR_NAME}` and resolve it here. A raw
+       id in the tree is blocked by `scripts/scan_secrets.py` on every commit.
+    3. A missing reference RAISES rather than resolving to empty. An empty
+       Slack id does not fail loudly, it silently matches nothing - which is
+       the failure this module exists to convert into a stack trace.
+
+WHY IT EXISTS
+    The key NAMES are part of the secret too: `SLACK_USER_JANE_DOE` leaks a
+    colleague even when the id beside it is a placeholder. So keys are named
+    for the role or function they serve, never the person or codename behind
+    them. `.env.example`'s header carries the full rule.
 """
 
 from __future__ import annotations
@@ -67,9 +93,19 @@ def resolve_reference(
             "Pass identities= so it can be expanded; a literal ${...} matches nothing."
         )
     try:
-        return identities[key].strip()
+        found = identities[key]
     except (KeyError, ConfigError) as exc:
         raise error(f"{key} is not set. Add it to .env; see .env.example.") from exc
+    if not isinstance(found, str):
+        # `Mapping[str, str]` is an annotation, not a runtime guard, and this is
+        # the one function whose job is turning a bad identity into the CALLER's
+        # error. A mapping built from `os.environ.get(...)` - which returns None
+        # when unset, and is the obvious way to build one without
+        # `Identities.from_file` - reached `.strip()` and raised AttributeError:
+        # exactly the bare lookup error three frames up that `error=` exists to
+        # prevent.
+        raise error(f"{key} is set to {type(found).__name__}, not a string. Check .env.")
+    return found.strip()
 
 
 class ConfigError(RuntimeError):
