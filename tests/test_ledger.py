@@ -404,3 +404,98 @@ def test_the_window_stays_short_enough_that_a_daily_standup_is_unambiguous():
     assert span < timedelta(hours=24), (
         f"window {span} spans a daily recurrence; two rows can match one note"
     )
+
+
+# --------------------------------------------------------------------------
+# the calendar declares the note (#91)
+# --------------------------------------------------------------------------
+#
+# Google attaches the Gemini notes doc to the event itself. That is the source
+# STATING a note exists, where `ARRIVAL_WINDOW` was reconstructing the same
+# fact from a title and a guessed time bound - and it is knowable the moment
+# the meeting ends rather than whenever the mail lands.
+
+
+def test_a_meeting_whose_calendar_entry_declares_a_note_is_not_a_gap():
+    """No note ingested yet, and still not missing - because the calendar said so."""
+    led = Ledger()
+    led.seed_day([ev(notes_attached=True)])
+
+    assert led.notes_gaps(as_of=T + timedelta(hours=2)) == []
+
+
+def test_a_meeting_with_no_declaration_and_no_note_is_still_a_gap():
+    """The other half: declaring must not mean nothing is ever reported."""
+    led = Ledger()
+    led.seed_day([ev(notes_attached=False)])
+
+    assert led.notes_gaps(as_of=T + timedelta(hours=2)) == ["Discovery sync"]
+
+
+def test_googles_raw_attachment_list_is_read_when_nobody_shaped_it():
+    """The agent hands back the connector payload; shaping is a contract in
+    SKILL.md, and a contract is exactly what gets forgotten. Losing the signal
+    silently is the docs-ahead-of-code failure this repo keeps finding."""
+    led = Ledger()
+    led.seed_day([ev(attachments=[{"title": "Notes by Gemini", "fileUrl": "https://d/1"}])])
+
+    assert led.notes_gaps(as_of=T + timedelta(hours=2)) == []
+
+
+def test_a_recording_attachment_is_not_a_note_declaration():
+    """The false positive that makes 'has an attachment' the wrong test.
+
+    A Drive recording attached to the SERIES master shows up on every instance:
+    the real "Data Health Check" carries a 2024/10/28 recording on its Sep 2026
+    occurrences. Matching on the title keeps that from declaring a note for a
+    meeting that never produced one - forever, on every future instance.
+    """
+    led = Ledger()
+    led.seed_day(
+        [ev(attachments=[{"title": "Data Health Check - 2024/10/28 09:00 CST - Recording"}])]
+    )
+
+    assert led.notes_gaps(as_of=T + timedelta(hours=2)) == ["Discovery sync"]
+
+
+def test_a_declared_row_still_accepts_the_note_when_it_arrives():
+    """Declaration silences the GAP, it does not switch matching off. Ingestion
+    wants the note itself, and a declared row that refused to match would strand
+    every note whose meeting was declared."""
+    led = Ledger()
+    led.seed_day([ev(notes_attached=True)])
+
+    matched = led.offer_note(
+        Match(
+            title="Discovery sync",
+            arrived=T + timedelta(hours=1, minutes=30),
+            attendees=["nitin", "jon"],
+            source="gemini",
+        )
+    )
+
+    assert matched is not None, "a declared meeting could not receive its own note"
+    assert matched.note is not None
+
+
+def test_the_declaration_is_per_instance_not_per_series():
+    """Measured on the real "1:1 | 2x weekly" series: the Sep 1 occurrence
+    carries a notes doc and produced a note; the Sep 10 one carries neither.
+    Same `event_id` series, different instances - so a declaration on one must
+    not silence the other, or a recurring 1:1 becomes permanently unreportable
+    after its first note.
+    """
+    led = Ledger()
+    led.seed_day(
+        [
+            ev(id="s1", start=T, end=T + timedelta(minutes=30), notes_attached=True),
+            ev(
+                id="s1",
+                start=T + timedelta(days=9),
+                end=T + timedelta(days=9, minutes=30),
+                notes_attached=False,
+            ),
+        ]
+    )
+
+    assert led.notes_gaps(as_of=T + timedelta(days=10)) == ["Discovery sync"]

@@ -411,11 +411,11 @@ def _attach_notes(ledger: Ledger, payloads: Mapping[str, Any], now: datetime) ->
         ledger.offer_note(
             Match(
                 title=title,
-                # The mail's OWN timestamp. `ledger._in_window` only attaches a
-                # note that arrived within six hours of the meeting ending, so
+                # The mail's OWN timestamp. `ledger._in_window` attaches a
+                # note only inside `ARRIVAL_WINDOW` of the meeting ending, so
                 # defaulting to `now` makes a note fetched the next morning
                 # unmatchable - and a note that never attaches leaves its
-                # meeting reported as a gap forever.
+                # meeting reported as a gap unless the calendar declared one.
                 arrived=stamp if isinstance(stamp, datetime) else now,
                 attendees=[str(a) for a in (mail.get("attendees") or [])],
                 # "gemini", not "gmail": `ARRIVAL_WINDOW` is keyed by the

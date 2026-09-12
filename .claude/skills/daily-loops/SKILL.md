@@ -78,8 +78,8 @@ Then write a payloads file keyed by source:
 
 | source | must carry | what breaks without it |
 |---|---|---|
-| calendar | `id`, `summary`, `start`, `end`, `attendees`, `response_status`, `organizer`, `organizer_is_self` | no `end` and the ledger refuses the event - no notes-gap, today or tomorrow |
-| gmail | `subject`, and the mail's own `date` | a note is only matched within six hours of its meeting ending; without a date it can never attach, and its meeting is a gap forever |
+| calendar | `id`, `summary`, `start`, `end`, `attendees`, `response_status`, `organizer`, `organizer_is_self`, `notes_attached` | no `end` and the ledger refuses the event - no notes-gap, today or tomorrow |
+| gmail | `subject`, and the mail's own `date` | without a date a note can never attach to its meeting, and ingestion loses it |
 | slack | `permalink` | a claim with no link is withheld - evidence or silence |
 
 **Shaping the calendar payload**, because google's shape is not the ledger's:
@@ -94,6 +94,16 @@ Then write a payloads file keyed by source:
   calendar - so without an organizer a 45-minute interview is invisible. With
   it, his own focus blocks would read as meetings, which is what
   `organizer_is_self` prevents.
+- `notes_attached` is **the** notes-gap signal, and it makes the gap knowable
+  the same evening instead of the next morning. Google attaches the notes doc
+  to the event, so set it `true` when any entry in google's `attachments` is
+  titled `Notes by Gemini`. Match the TITLE, not merely "has an attachment": a
+  Drive RECORDING is attached to the recurring SERIES and shows on every
+  instance, so "Data Health Check" would otherwise claim a note on occurrences
+  that never produced one, permanently.
+  If you pass google's `attachments` straight through the ledger reads it
+  itself, so forgetting to shape this degrades to the arrival-window fallback
+  rather than to a wrong answer.
 
 A source you could not reach: **leave the key out**. That renders one
 "couldn't check X" line and the push still ships. Do not pass an empty list to
