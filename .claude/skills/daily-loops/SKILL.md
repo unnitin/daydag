@@ -96,12 +96,18 @@ Then write a payloads file keyed by source:
   `organizer_is_self` prevents.
 - `notes_attached` is **the** notes-gap signal, and it makes the gap knowable
   the same evening instead of the next morning. Google attaches the notes doc
-  to the event, so set it `true` when any entry in google's `attachments` is
-  titled `Notes by Gemini`. Match the TITLE, not merely "has an attachment": a
-  Drive RECORDING is attached to the recurring SERIES and shows on every
-  instance, so "Data Health Check" would otherwise claim a note on occurrences
-  that never produced one, permanently.
-  If you pass google's `attachments` straight through the ledger reads it
+  to the event, so set it `true` when any entry in google's `attachments` has
+  `usp=meet_tnfm_calendar` in its `fileUrl`.
+  Match that URL marker, not the attachment's title, and not merely "has an
+  attachment" - both fail, in opposite directions:
+  - the title is **localized**. One real event carries both `Notes by Gemini`
+    and `Anotações do Gemini`; a meeting run in a pt-BR locale carries only the
+    second, and matching English reports it as a gap forever.
+  - a Drive **recording** is attached to the recurring SERIES and shows on
+    every instance, so "Data Health Check" would otherwise claim a note on
+    occurrences that never produced one. Recordings carry `usp=drive_web`.
+
+  If you pass google's `attachments` straight through the ledger reads them
   itself, so forgetting to shape this degrades to the arrival-window fallback
   rather than to a wrong answer.
 

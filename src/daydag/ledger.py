@@ -164,12 +164,27 @@ def _is_resource(attendee: Any) -> bool:
     return _RESOURCE_DOMAIN in str(attendee).casefold()
 
 
-#: Google attaches the Gemini notes doc to the calendar event, titled exactly
-#: this. Measured as per-INSTANCE: the "1:1 | 2x weekly" series carries it on
-#: the Sep 1 instance, which produced a note, and not on the Sep 10 one, which
-#: did not. Matched on the TITLE rather than "has an attachment" because a
-#: Drive recording attached to the series master does show on every instance -
-#: "Data Health Check" carries a 2024 recording on every 2026 occurrence.
+#: Google attaches the Gemini notes doc to the calendar event. Measured as
+#: per-INSTANCE: the "1:1 | 2x weekly" series carries one on the Sep 1
+#: instance, which produced a note, and none on the Sep 10 one, which did not.
+#:
+#: Identified by this URL marker, which Meet's notetaker puts on the docs it
+#: creates, rather than by the attachment's TITLE. Two reasons, both measured:
+#:
+#: * The title is LOCALIZED. A real event carries both "Notes by Gemini" and
+#:   "Anotacoes do Gemini" - and a meeting run in a pt-BR locale would carry
+#:   only the second. Matching English would report it as a gap forever, and
+#:   this org has a large Brazilian contingent on exactly these invites.
+#: * "Has an attachment" is too loose in the other direction: a Drive RECORDING
+#:   is attached to the series master and shows on every instance, so
+#:   "Data Health Check" carries a 2024 recording on every 2026 occurrence.
+#:
+#: A recording's url carries `usp=drive_web` instead, so the marker separates
+#: the two without reading a word of any language.
+_NOTES_DOC_MARKER = "usp=meet_tnfm_calendar"
+
+#: The English title, kept only as a fallback for a payload that carried the
+#: attachment titles but dropped the urls. Never the primary test - see above.
 _NOTES_ATTACHMENT_TITLE = "notes by gemini"
 
 
@@ -184,7 +199,8 @@ def _declares_note(event: Mapping[str, Any]) -> bool:
     if "notes_attached" in event:
         return bool(event["notes_attached"])
     return any(
-        _NOTES_ATTACHMENT_TITLE in str(item.get("title", "")).casefold()
+        _NOTES_DOC_MARKER in str(item.get("fileUrl", ""))
+        or _NOTES_ATTACHMENT_TITLE in str(item.get("title", "")).casefold()
         for item in (event.get("attachments") or [])
         if isinstance(item, Mapping)
     )

@@ -499,3 +499,53 @@ def test_the_declaration_is_per_instance_not_per_series():
     )
 
     assert led.notes_gaps(as_of=T + timedelta(days=10)) == ["Discovery sync"]
+
+
+def test_a_notes_doc_in_another_language_still_declares_a_note():
+    """The title is LOCALIZED, so the title cannot be the test.
+
+    A real event carries both "Notes by Gemini" and "Anotações do Gemini"; a
+    meeting run in a pt-BR locale carries only the second. Matching English
+    would report it as a gap forever - and these invites carry a large
+    Brazilian contingent and São Paulo / Mexico City timezones, so this is a
+    live case rather than a hypothetical one.
+    """
+    led = Ledger()
+    led.seed_day(
+        [
+            ev(
+                attachments=[
+                    {
+                        "title": "Anotações do Gemini",
+                        "fileUrl": "https://docs.google.com/document/d/1f/edit?usp=meet_tnfm_calendar",
+                    }
+                ]
+            )
+        ]
+    )
+
+    assert led.notes_gaps(as_of=T + timedelta(hours=2)) == []
+
+
+def test_a_recording_of_a_meeting_named_gemini_is_still_not_a_note():
+    """The false positive that a substring match on the title would let in.
+
+    `usp=drive_web` vs `usp=meet_tnfm_calendar` separates a recording from a
+    notes doc structurally, which is why the url marker is the primary test and
+    the English title is only a fallback.
+    """
+    led = Ledger()
+    led.seed_day(
+        [
+            ev(
+                attachments=[
+                    {
+                        "title": "Gemini rollout - 2026/09/02 16:00 EDT - Recording",
+                        "fileUrl": "https://drive.google.com/file/d/1j/view?usp=drive_web",
+                    }
+                ]
+            )
+        ]
+    )
+
+    assert led.notes_gaps(as_of=T + timedelta(hours=2)) == ["Discovery sync"]
