@@ -1004,7 +1004,10 @@ def test_a_hostile_calendar_description_never_reaches_the_push():
         )
         text = run.render(
             "morning",
-            now=datetime(2026, 9, 7, 6, 40, tzinfo=UTC),
+            # 06:40 PACIFIC, so the brief renders the day these events are on.
+            # At 06:40 UTC the Pacific day is Sep 6 and the Sep 7 event is not
+            # in it - the assertions would then hold for the wrong reason.
+            now=datetime(2026, 9, 7, 13, 40, tzinfo=UTC),
             identities=Identities.from_file(env),
             payloads={
                 "calendar": [

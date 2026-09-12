@@ -25,6 +25,15 @@ from daydag.config import Identities
 
 MONDAY = datetime(2026, 9, 7, 6, 40, tzinfo=UTC)
 
+#: 06:40 PACIFIC on the same Monday - the hour a morning brief actually runs.
+#: `MONDAY` above is 06:40 UTC, which is the previous EVENING in Pacific, and
+#: the tests that use it are specifically about that convention. A test whose
+#: payload carries Sep 7 events needs a clock whose Pacific day is Sep 7 too,
+#: or it asserts on a brief for a day those events do not belong to - which is
+#: what these did, silently, while `_Payloads.calendar` served any window from
+#: one bucket and hid the mismatch.
+MONDAY_PT = datetime(2026, 9, 7, 13, 40, tzinfo=UTC)
+
 
 @pytest.fixture
 def identities(tmp_path):
@@ -192,7 +201,7 @@ def test_a_json_timestamp_becomes_a_datetime_before_the_brief_sees_it(identities
         ]
     )
 
-    text = run.render("morning", now=MONDAY, identities=identities, payloads=payloads)
+    text = run.render("morning", now=MONDAY_PT, identities=identities, payloads=payloads)
 
     assert "all day" not in text, f"a timed meeting rendered as all-day:\n{text}"
     assert "9:00" in text or "9am" in text.lower(), f"the time is missing:\n{text}"
@@ -211,7 +220,7 @@ def test_googles_nested_start_shape_is_understood_too(identities):
         ]
     )
 
-    text = run.render("morning", now=MONDAY, identities=identities, payloads=payloads)
+    text = run.render("morning", now=MONDAY_PT, identities=identities, payloads=payloads)
 
     assert "all day" not in text, f"the nested shape was not read:\n{text}"
 
@@ -228,7 +237,7 @@ def test_an_unparseable_timestamp_stays_all_day_rather_than_guessing(identities)
         ]
     )
 
-    text = run.render("morning", now=MONDAY, identities=identities, payloads=payloads)
+    text = run.render("morning", now=MONDAY_PT, identities=identities, payloads=payloads)
 
     assert "Mystery" in text, "the meeting still ships"
 
@@ -253,7 +262,7 @@ def test_the_ledger_gets_real_instants_for_both_ends_of_a_meeting(identities):
         ]
     )
 
-    text = run.render("morning", now=MONDAY, identities=identities, payloads=payloads)
+    text = run.render("morning", now=MONDAY_PT, identities=identities, payloads=payloads)
 
     assert "couldn't check the meeting ledger" not in text, text
 
@@ -318,3 +327,122 @@ def test_the_gmail_step_covers_the_window_the_brief_will_actually_ask_for(identi
         f"a closed day-window drops a note that arrives after it: {query}"
     )
     assert "2026/09/0" in query, f"the window does not reach back to yesterday: {query}"
+
+
+# --------------------------------------------------------------------------
+# the plan must fetch the window the loop will actually ask for (#94)
+# --------------------------------------------------------------------------
+
+
+def test_the_eod_plan_fetches_tomorrow_not_today(identities):
+    """`eod_wrap` reads exactly one calendar window and it is TOMORROW's.
+
+    The plan fetched today for every loop, because it never looked at `loop`
+    at all - and `_Payloads.calendar` then answered the tomorrow request from
+    the today bucket. The wrap printed this morning's 8:15 standup as
+    tomorrow's first meeting, and nothing failed.
+    """
+    (calendar,) = [
+        s
+        for s in run.plan("eod", now=MONDAY_PT, identities=identities).steps
+        if s.source == "calendar"
+    ]
+
+    assert calendar.detail["day"] == "2026-09-08", "the wrap previews tomorrow, not today"
+
+
+def test_the_week_ahead_plan_fetches_seven_days_of_next_week(identities):
+    """SKILL.md advertises "next 7 days". The plan fetched one, so the Monday
+    prep queue could only ever see a single day - and that day was in the past
+    relative to the week being previewed, so the loop rendered nothing at all.
+    """
+    days = [
+        s.detail["day"]
+        for s in run.plan("week-ahead", now=MONDAY_PT, identities=identities).steps
+        if s.source == "calendar"
+    ]
+
+    # MONDAY_PT is Mon Sep 7, so the week ahead is Mon Sep 14 - Sun Sep 20.
+    assert days == [f"2026-09-{d}" for d in range(14, 21)], days
+
+
+def test_the_morning_plan_still_fetches_exactly_one_day(identities):
+    """The loop that already worked must not change shape."""
+    days = [
+        s.detail["day"]
+        for s in run.plan("morning", now=MONDAY_PT, identities=identities).steps
+        if s.source == "calendar"
+    ]
+
+    assert days == ["2026-09-07"]
+
+
+def test_a_window_the_plan_never_fetched_comes_back_empty_not_wrong(identities):
+    """The tripwire under all of the above.
+
+    Wrong data in a push is worse than a missing section, because a missing
+    section says so. A consumer asking for a day that was never fetched used to
+    be served a different day's events with no way to tell.
+    """
+    payloads = _payloads(
+        calendar=[
+            {
+                "id": "today1",
+                "summary": "Today's standup",
+                "start": "2026-09-07T08:15:00-07:00",
+                "end": "2026-09-07T08:30:00-07:00",
+                "attendees": ["a@example.com", "b@example.com"],
+            }
+        ]
+    )
+
+    text = run.render("eod", now=MONDAY_PT, identities=identities, payloads=payloads)
+
+    assert "Today's standup" not in text, f"today's meeting was served as tomorrow's:\n{text}"
+
+
+def test_the_right_day_is_served_when_the_payload_carries_several(identities):
+    """The other half - filtering must not mean filtering everything out."""
+    payloads = _payloads(
+        calendar=[
+            {
+                "id": "today1",
+                "summary": "Today's standup",
+                "start": "2026-09-07T08:15:00-07:00",
+                "end": "2026-09-07T08:30:00-07:00",
+                "attendees": ["a@example.com", "b@example.com"],
+            },
+            {
+                "id": "tmrw1",
+                "summary": "Tomorrow's kickoff",
+                "start": "2026-09-08T09:00:00-07:00",
+                "end": "2026-09-08T09:30:00-07:00",
+                "attendees": ["a@example.com", "b@example.com"],
+            },
+        ]
+    )
+
+    text = run.render("eod", now=MONDAY_PT, identities=identities, payloads=payloads)
+
+    assert "Tomorrow's kickoff" in text, f"tomorrow's meeting was dropped:\n{text}"
+    assert "Today's standup" not in text, f"today's meeting leaked into tomorrow:\n{text}"
+
+
+def test_an_unplaceable_event_is_still_offered_rather_than_dropped(identities):
+    """An untimed meeting is still a meeting, and losing its ledger row loses a
+    notes gap permanently. It is returned for every window rather than for
+    none; `Ledger.seed_day` keys on (id, start) and absorbs the repeat."""
+    payloads = _payloads(
+        calendar=[
+            {
+                "id": "e1",
+                "summary": "Mystery",
+                "start": "sometime tuesday",
+                "attendees": ["a@example.com", "b@example.com"],
+            }
+        ]
+    )
+
+    text = run.render("eod", now=MONDAY_PT, identities=identities, payloads=payloads)
+
+    assert "Mystery" in text, f"an unplaceable meeting was silently dropped:\n{text}"
