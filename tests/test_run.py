@@ -446,3 +446,57 @@ def test_an_unplaceable_event_is_still_offered_rather_than_dropped(identities):
     text = run.render("eod", now=MONDAY_PT, identities=identities, payloads=payloads)
 
     assert "Mystery" in text, f"an unplaceable meeting was silently dropped:\n{text}"
+
+
+# --------------------------------------------------------------------------
+# the weekly note has three states, not two (#97)
+# --------------------------------------------------------------------------
+
+
+def test_a_note_that_was_never_written_says_so(identities):
+    """`brief.read_vault_note` splits three ways on exception type, and this
+    layer could only ever produce two of them. The missing one is the state the
+    vault is actually in: the note is hand-written and the series has had a gap
+    for weeks, so every real run meets it."""
+    payloads = _payloads()
+    payloads["vault"] = None
+
+    text = run.render("morning", now=MONDAY_PT, identities=identities, payloads=payloads)
+
+    assert "no weekly note" in text, f"a note that does not exist went unmentioned:\n{text}"
+
+
+def test_an_unreachable_vault_does_not_read_as_a_missing_note(identities):
+    """An absent note is a FACT about the week; a downed source is a DEGRADE.
+    They must not render the same, or a connector outage looks like "he hasn't
+    planned the week" and vice versa."""
+    payloads = _payloads()
+    del payloads["vault"]
+
+    text = run.render("morning", now=MONDAY_PT, identities=identities, payloads=payloads)
+
+    assert "couldn't check the weekly note" in text, text
+    assert "no weekly note" not in text, f"a degrade was reported as a fact:\n{text}"
+
+
+def test_an_empty_note_is_a_note_that_was_read(identities):
+    """The distinction `null` exists to make. "" means the file is there and
+    has nothing in it, which is not the same as it never having been written -
+    and sending "" was the only way to say "missing" before, so it said
+    nothing at all."""
+    payloads = _payloads(vault="")
+
+    text = run.render("morning", now=MONDAY_PT, identities=identities, payloads=payloads)
+
+    assert "no weekly note" not in text, f"an empty note was reported as absent:\n{text}"
+
+
+def test_a_null_note_never_renders_as_the_text_None(identities):
+    """`str(None)` is "None", so the body of the brief used to carry the note's
+    content as that literal four-letter string."""
+    payloads = _payloads()
+    payloads["vault"] = None
+
+    text = run.render("morning", now=MONDAY_PT, identities=identities, payloads=payloads)
+
+    assert "None" not in text, f"the note body rendered as the string None:\n{text}"

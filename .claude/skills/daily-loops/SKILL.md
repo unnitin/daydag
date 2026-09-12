@@ -111,6 +111,22 @@ Then write a payloads file keyed by source:
   itself, so forgetting to shape this degrades to the arrival-window fallback
   rather than to a wrong answer.
 
+**The weekly note has three states, and `vault` encodes all three.** The note
+is hand-written and the series has had a gap for weeks, so the middle one is
+the one a real run actually meets:
+
+| `vault` value | means | renders |
+|---|---|---|
+| key omitted | you could not reach the vault | "couldn't check the weekly note" |
+| `null` | the file does not exist | "⚠ no weekly note for MMDD-MMDD" |
+| `""` | it exists and is empty | nothing |
+| the text | the note | triage against the week's priorities |
+
+Do not send `""` for a file that is not there - it means "read it, it was
+empty", so the brief says nothing at all and the day is silently triaged
+against no plan of record. An absent note is a fact about the week; an
+unreachable vault is a degrade. They must not read the same.
+
 A source you could not reach: **leave the key out**. That renders one
 "couldn't check X" line and the push still ships. Do not pass an empty list to
 mean "unreachable" - an empty list means the query ran and found nothing, and

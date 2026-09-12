@@ -334,9 +334,35 @@ class _Payloads:
         return self._records("gmail")
 
     def weekly_note(self, path: str) -> str:
+        """The weekly note, in the THREE states `brief.read_vault_note` tells apart.
+
+        It splits on exception type - text, `FileNotFoundError` for a note that
+        was never written, anything else for a source it could not reach - and
+        this layer could only ever produce two of the three. `null` had no
+        meaning, so an agent reporting "the file is not there" had to choose
+        between omitting the key, which renders "couldn't check the weekly
+        note" and reads as a downed connector, and sending "", which renders
+        NOTHING AT ALL because an empty note is a note that was read.
+
+        The third state is the one that is true: the note is hand-written, and
+        the series has had a gap for weeks, so every real run meets it. It is
+        also the one worth saying out loud, because the brief cannot triage the
+        day against a plan of record that does not exist.
+
+        `str(None)` also used to render the note's body as the literal text
+        "None".
+
+            key absent  -> could not reach the vault   (RunError -> degrade)
+            null        -> the note does not exist     (FileNotFoundError)
+            ""          -> it exists and is empty
+            text        -> the note
+        """
         if "vault" not in self._payloads:
             raise RunError("the weekly note was not read")
-        return str(self._payloads["vault"])
+        note = self._payloads["vault"]
+        if note is None:
+            raise FileNotFoundError(path)
+        return str(note)
 
 
 #: The event kind a seeded meeting is recorded under, so the next run can
