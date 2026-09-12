@@ -36,6 +36,7 @@ from __future__ import annotations
 import re
 from collections.abc import Iterator, Mapping
 from pathlib import Path
+from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 _REFERENCE = re.compile(r"\$\{([A-Z0-9_]+)\}")
@@ -138,6 +139,24 @@ class Identities(Mapping[str, str]):
             key, _, value = line.partition("=")
             values[key.strip()] = value.strip()
         return cls(values, path)
+
+    def get(self, key: str, default: Any = None) -> Any:
+        """The Mapping contract: absent means the default, not an exception.
+
+        `Mapping.get` implements this by catching `KeyError`, and
+        `__getitem__` raises `ConfigError`, which is not one - so `.get()`
+        propagated and every caller treating a key as OPTIONAL got a crash
+        instead. `timezone_for` defaulted to Pacific and raised; `board` read
+        an optional `ATLASSIAN_SITE` the same way.
+
+        Raising loudly is right for a REQUIRED id, which is what `[]` is for.
+        `.get` is the caller saying this one is optional, and that has to mean
+        something.
+        """
+        try:
+            return self[key]
+        except ConfigError:
+            return default
 
     def __getitem__(self, key: str) -> str:
         try:
