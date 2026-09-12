@@ -9,13 +9,16 @@ them. And it owns almost nothing: five weekly routines already produce the
 plan, the progress report and the pod update, so DayDAG reads their output
 instead of re-deriving it.
 
-**Status: in development.** The foundations are built and tested; the loops that
-consume them are not wired up yet. Nothing runs on a schedule.
+**Status: in development.** The morning brief runs against real data. The EOD
+wrap and week-ahead are wired but unproven live; four of the seven loops in the
+skill have no runner entry point yet. Nothing runs on a schedule. See
+[USAGE.md](USAGE.md) for what works today and how to run it.
 
 ## Where to start
 
 | Document | What it answers |
 |---|---|
+| [USAGE.md](USAGE.md) | **How to actually run it**, what works today, and the gotchas |
 | [SPEC.md](SPEC.md) | What the agent does — the loops, the sources, the guardrails |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | How the pieces fit, and **who owns each artifact** |
 | [BUILD.md](BUILD.md) | What gets built in what order, and why that order |
