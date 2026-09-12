@@ -44,9 +44,17 @@ COVERED (behavioural - real code, real assertions)
     - `notes_gaps` carries the same sensitivity channel `chase` and `watch` do,
       via `NotesGap`, so a meeting whose own title is sensitive is withheld the
       same way a private chase or watch item is (was GAP 3, #61)
+    - `daydag.delivery.deliver_push` and `deliver_prep_ping` have no
+      destination parameter at all - the resolved principal id is the only
+      channel a send can ever name (#10, full coverage in `tests/test_delivery.py`)
+    - a message for anyone else is a `Draft`, and no function in `daydag.delivery`
+      accepts a `Draft` and a `Transport` together
 
 TRIPWIRES (no implementation exists - these fail when one lands unguarded)
-    - no autonomous send path of any kind (Slack, Gmail, Calendar, drafts)
+    - no literal Slack/Gmail/Calendar client call anywhere in `src/daydag/`
+      outside the transport `daydag.delivery` is handed - unchanged by #10,
+      which added real behavioural coverage of `daydag.delivery` itself
+      alongside this rather than replacing it
     - no Jira write path (transition, comment, assign)
     - no inbound command surface, so no injection parser and no sender check
     - no connector client besides the git mirror: every other source is probed
@@ -76,6 +84,7 @@ GAPS - not covered here, and not pretended to be
 from __future__ import annotations
 
 import ast
+import inspect
 import re
 import subprocess
 from datetime import UTC, datetime
@@ -83,9 +92,11 @@ from pathlib import Path
 
 import pytest
 
+from daydag import delivery
 from daydag.pulse import Item, Mirror, Pulse
 from daydag.registry import PRIVATE_SURFACES, Registry, RegistryError
 from daydag.state import DecisionQueue, EventLog, NotesGap, StateFolder
+from daydag.voice import Push
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -203,6 +214,16 @@ def folder(tmp_path: Path) -> StateFolder:
 # 1. no autonomous send outside the principal's own DM (guardrail 1, inv. 4)
 # --------------------------------------------------------------------------
 
+#: Kept whole, including "slack send" (#10): `daydag.delivery` is now a real
+#: send path, but it holds no literal Slack-client symbol - the transport is
+#: an injected callable, never `slack_send_message`/`postMessage` themselves
+#: (contract 4). So this tripwire still fires exactly as before if some OTHER
+#: module in the package ever calls a Slack client directly, bypassing
+#: `daydag.delivery`'s channel resolution and its `Draft`/`Transport` split.
+#: What changed is not this dict, but that the send path it defends against
+#: now has real behavioural coverage too - see
+#: `test_the_only_autonomous_destination_is_the_resolved_principal_id` and
+#: `test_a_draft_never_reaches_the_transport` below.
 OUTBOUND_PATTERNS = {
     "slack send": r"slack_send_message|postMessage|slack_schedule_message",
     "slack draft": r"send_message_draft",
@@ -214,11 +235,14 @@ OUTBOUND_PATTERNS = {
 
 @pytest.mark.guardrail
 def test_no_outbound_send_path_exists_unguarded():
-    """TRIPWIRE. Guardrail 1: exactly one autonomous channel, the principal's DM.
+    """TRIPWIRE + BEHAVIOURAL. Guardrail 1, narrowed by #10, not weakened.
 
-    There is no send path in the package today, so there is no behaviour to
-    assert - only the absence to defend. The day a send appears without an
-    allowlist in front of it is the day this fires.
+    The tripwire is unchanged: it still fails the moment a literal Slack (or
+    Gmail, or calendar) client call lands anywhere in `src/daydag/`. What #10
+    narrows is the CLAIM the docstring made - "there is no send path in the
+    package today" is no longer true, `daydag.delivery.deliver_push` is one.
+    Its real coverage lives in the tests immediately below, which drive it
+    rather than merely defending its absence.
     """
     _self_check_scanner()
     hits = _scan(OUTBOUND_PATTERNS)
@@ -229,6 +253,100 @@ def test_no_outbound_send_path_exists_unguarded():
         "awaiting a per-action yes.",
         hits,
     )
+
+
+@pytest.mark.guardrail
+def test_the_only_autonomous_destination_is_the_resolved_principal_id():
+    """BEHAVIOURAL. Guardrail 1, narrowed now that a send path exists (#10).
+
+    `deliver_push` has no destination parameter at all - not a default, not
+    an override - so "send this to someone else" cannot be expressed, let
+    alone reached by a bug. The injected transport only ever sees the id this
+    module resolved from ``${SLACK_USER_PRINCIPAL}``.
+    """
+    params = set(inspect.signature(delivery.deliver_push).parameters)
+    forbidden = params & {"channel", "to", "destination", "recipient"}
+    assert not forbidden, (
+        f"deliver_push accepts {forbidden} - a destination parameter makes "
+        "'send to someone else' representable, which guardrail 1 forbids"
+    )
+
+    seen: dict[str, str] = {}
+
+    def transport(*, channel: str, text: str, thread_ts: str | None = None):
+        seen["channel"] = channel
+        return {"ts": "100.001"}
+
+    sent = delivery.deliver_push(
+        "hello",
+        kind=Push.MORNING_BRIEF,
+        transport=transport,
+        identities={"SLACK_USER_PRINCIPAL": "UPRINCIPAL1"},
+    )
+    assert seen["channel"] == "UPRINCIPAL1" == sent.channel
+
+
+@pytest.mark.guardrail
+def test_a_draft_never_reaches_the_transport():
+    """BEHAVIOURAL. Guardrail 1's other half: anyone else gets a `Draft`, not a send.
+
+    No function in `daydag.delivery` accepts a `Draft` and a `Transport`
+    together - "send to someone else" is unrepresentable, not merely unused.
+    """
+    called: list[dict[str, object]] = []
+
+    def transport(**kwargs):
+        called.append(kwargs)
+        return {"ts": "1"}
+
+    note = delivery.draft("hey vp-data - is this still open?", to="UVPDATA01", reason="chase nudge")
+
+    assert isinstance(note, delivery.Draft)
+    assert not called, "drafting a message must never call the transport"
+
+    for name, member in vars(delivery).items():
+        if not inspect.isfunction(member) or member.__module__ != delivery.__name__:
+            continue
+        rendered = " ".join(
+            str(p.annotation) for p in inspect.signature(member).parameters.values()
+        )
+        assert not ("Draft" in rendered and "Transport" in rendered), (
+            f"{name} accepts both a Draft and a Transport in one call"
+        )
+
+
+@pytest.mark.guardrail
+def test_delivery_respects_the_registry_for_a_private_skill():
+    """BEHAVIOURAL. `daydag.registry.route` is consulted, not bypassed, by delivery.
+
+    The DM is inside `PRIVATE_SURFACES`, so a private skill may always reach
+    it - but an unregistered skill still fails closed, which is what proves
+    the check actually runs rather than being skipped because the destination
+    happens to be the one surface everything is allowed to reach.
+    """
+    private = Registry.load(
+        [{"name": "weekly-feedback-scan", "daydag": {"writes": [], "sensitivity": "private"}}]
+    )
+    sent = delivery.deliver_push(
+        "hi",
+        kind=Push.MORNING_BRIEF,
+        transport=lambda **kw: {"ts": "1"},
+        identities={"SLACK_USER_PRINCIPAL": "UPRINCIPAL1"},
+        registry=private,
+        skill="weekly-feedback-scan",
+    )
+    assert sent.channel == "UPRINCIPAL1"
+
+    unregistered = Registry.load([])
+    with pytest.raises(RegistryError, match="unknown skill"):
+        delivery.deliver_push(
+            "hi",
+            kind=Push.MORNING_BRIEF,
+            transport=lambda **kw: {"ts": "1"},
+            identities={"SLACK_USER_PRINCIPAL": "UPRINCIPAL1"},
+            registry=unregistered,
+            skill="ghost-skill",
+        )
 
 
 @pytest.mark.guardrail

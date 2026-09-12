@@ -2,7 +2,7 @@
 
 import pytest
 
-from daydag.config import ConfigError, Identities
+from daydag.config import ConfigError, Identities, resolve_reference
 
 
 def test_loads_values_from_env_file(tmp_path):
@@ -97,3 +97,26 @@ def test_example_parses_and_names_roles_not_people():
     example = Identities.from_file(Path(__file__).resolve().parents[1] / ".env.example")
     assert example, "example schema is empty"
     assert all(k.isupper() for k in example)
+
+
+def test_a_none_value_fails_in_the_callers_vocabulary_not_as_an_attribute_error():
+    """`error=` is the whole point: a missing id must fail in the caller's own
+    vocabulary rather than as a bare lookup error three frames up.
+
+    A `None` value escaped that. `identities[key].strip()` sat inside a `try`
+    catching only `(KeyError, ConfigError)`, so a mapping built from
+    `os.environ.get("SLACK_USER_PRINCIPAL")` - which returns None when unset,
+    and is the obvious way to build one without `Identities.from_file` - raised
+    `AttributeError` instead. The declared type is `Mapping[str, str]`, but a
+    type annotation is not a runtime guard, and this is the function whose one
+    job is converting a bad identity into the caller's error.
+    """
+
+    class Loud(RuntimeError):
+        pass
+
+    for identities in ({}, {"SLACK_USER_PRINCIPAL": None}, {"SLACK_USER_PRINCIPAL": 7}):
+        with pytest.raises(Loud):
+            resolve_reference(
+                "${SLACK_USER_PRINCIPAL}", identities, what="the principal", error=Loud
+            )

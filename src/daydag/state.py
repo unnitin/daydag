@@ -1,29 +1,48 @@
-"""The two state stores, split by requirement.
+"""The two state stores, split by opposite requirements.
 
-ARCHITECTURE keeps these apart deliberately, because they carry opposite needs:
+USING IT
+    folder = StateFolder.create(root)       # DayDAG/, idempotent
+    folder.write_state(chase=..., watch=..., notes_gaps=...)   # REPLACES
 
-* The ``DayDAG/`` vault folder is markdown a human corrects by hand. It is the
-  reason this is not a black box.
-* The event log is SQLite outside the vault. Markdown cannot answer "median
-  days to answer", and five scheduled loops appending to one iCloud-synced file
-  with no locking is a lost update.
+    queue = DecisionQueue(folder)
+    item = queue.add("draft nudge to VP-Data?")
+    queue.answer_for(item)                  # whatever a human wrote beside it
+    queue.status(item)                      # answered | parked | open
+    queue.render()                          # the block for the next push
 
-Within the folder, ``State.md`` and ``Decisions.md`` are also split on purpose.
-State is a projection the agent rewrites every loop; Decisions is appended and
-never regenerated, so an answer written in the margin cannot be overwritten
-before it is read.
+    log = EventLog.open(path)               # SQLite, OUTSIDE the vault
+    log.record("loop_opened", sensitivity="private", **payload)
+    log.chase_items()
+    log.median_days_to_answer()
 
-Two shapes hold that seam together, both added for #63 and #61. A chase entry
-is a ``ChaseItem`` on BOTH sides of the log/vault boundary - the log returns
-one, and ``write_state`` coerces whatever it is handed to one before
-rendering, so the two cannot drift apart again the way they had. A notes gap
-is a ``NotesGap``, which exists so it has a ``sensitivity`` field to filter on
-at all; as a bare string it could not be withheld.
+CONTRACTS
+    1. Anything sensitive goes to the EVENT LOG, never the vault. The vault is
+       plaintext on every device it syncs to.
+    2. `write_state` runs `chase`, `watch` AND `notes_gaps` through one
+       `_visible` gate before anything is rendered - one filter, so
+       `sensitivity == "private"` cannot be wired to two of the three lists and
+       forgotten on the third. It was once wired to `chase` and not to its twin
+       `watch`, and a private carry-forward reached a synced file (#63's
+       sibling); `notes_gaps` had no sensitivity field to filter on at all
+       until `NotesGap` gave it one (#61).
+    3. One shape per list, held on BOTH sides of the log/vault seam. A chase
+       entry is a `ChaseItem` - `EventLog.chase_items()` returns one and
+       `write_state` coerces whatever it is handed before rendering, so the two
+       cannot drift apart the way they had (#63). A notes gap is a `NotesGap`.
+       Both coercions are idempotent and accept their own type first.
+    4. `State.md` is a PROJECTION, rewritten wholesale every loop. Park nothing
+       there you need kept.
+    5. `Decisions.md` is APPENDED and never regenerated, so an answer written
+       in the margin cannot be overwritten before it is read.
+    6. Rendering a decision counts as ASKING it. That is what lets an
+       unanswered item age out instead of being re-asked forever.
 
-All three lists then pass through one ``_visible`` gate rather than three call
-sites that happen to agree. That is deliberate: the filter was once wired to
-``chase`` and not to its twin ``watch``, and a private carry-forward reached a
-synced file.
+WHY IT EXISTS
+    The folder is markdown a human corrects by hand, and that is the reason
+    this is not a black box - a hand edit is an event and wins over anything
+    derived. The event log is SQLite because markdown cannot answer "median
+    days to answer", and because five scheduled loops appending to one
+    iCloud-synced file with no locking is a lost update.
 """
 
 from __future__ import annotations
