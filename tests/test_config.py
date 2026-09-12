@@ -2,7 +2,7 @@
 
 import pytest
 
-from daydag.config import ConfigError, Identities, resolve_reference
+from daydag.config import ConfigError, Identities, resolve_reference, timezone_for
 
 
 def test_loads_values_from_env_file(tmp_path):
@@ -120,3 +120,33 @@ def test_a_none_value_fails_in_the_callers_vocabulary_not_as_an_attribute_error(
             resolve_reference(
                 "${SLACK_USER_PRINCIPAL}", identities, what="the principal", error=Loud
             )
+
+
+def test_get_honours_the_mapping_contract_and_returns_the_default(tmp_path):
+    """`Identities` is a Mapping, and `Mapping.get` returns the default when a
+    key is absent - it does that by catching `KeyError`.
+
+    `__getitem__` raises `ConfigError`, which is not a `KeyError`, so `.get()`
+    propagated instead of defaulting. Two callers were already relying on the
+    contract: `timezone_for` defaulted to Pacific and raised instead, and
+    `board` read an optional `ATLASSIAN_SITE` the same way. A loud failure is
+    right for a REQUIRED id - that is what `__getitem__` is for - but `.get`
+    is the caller saying this one is optional.
+    """
+    env = tmp_path / ".env"
+    env.write_text("SLACK_USER_PRINCIPAL=UPRINCIPAL1\n", encoding="utf-8")
+    ids = Identities.from_file(env)
+
+    assert ids.get("NOT_SET", "fallback") == "fallback"
+    assert ids.get("NOT_SET") is None
+    assert ids.get("SLACK_USER_PRINCIPAL") == "UPRINCIPAL1"
+
+    with pytest.raises(ConfigError):
+        ids["NOT_SET"]
+
+
+def test_timezone_for_falls_back_when_timezone_is_unset(tmp_path):
+    env = tmp_path / ".env"
+    env.write_text("SLACK_USER_PRINCIPAL=UPRINCIPAL1\n", encoding="utf-8")
+
+    assert timezone_for(Identities.from_file(env)) is not None
