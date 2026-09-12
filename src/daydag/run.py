@@ -156,15 +156,35 @@ def plan(loop: str, *, now: datetime, identities: Mapping[str, str]) -> Plan:
         Step(
             "gmail",
             "search, then fetch each thread in PLAIN_TEXT - results alone are metadata",
-            {"query": recipes.gmail_gemini_notes(after=day, before=day)},
+            # The window the BRIEF will ask for, not today's. At 6:40am the
+            # brief reports on yesterday's meetings and asks gmail for
+            # `after:<the evening the overnight window opened>`. A closed
+            # today-only window fetched the wrong mail, and `_Payloads.gmail`
+            # serves whatever was fetched regardless of the query it is handed,
+            # so the two disagreed in silence.
+            #
+            # Open-ended on purpose. `before:` dropped a note that arrived at
+            # 17:12 PDT because gmail put it past the day boundary, and its
+            # meeting was then reported as having no notes - while the note
+            # sat in the mailbox. Notes also genuinely arrive the next day: a
+            # Sep 10 meeting's note landed 00:56 PDT on Sep 11.
+            {"query": recipes.gmail_gemini_notes(after=_overnight_opened(overnight))},
         ),
         Step(
             "vault",
             "read this note; it may not exist, which is itself a finding",
-            {"path": f"Weekly Notes/{note}"},
+            # `weekly_note` already returns the full connector-relative path,
+            # prefix included. Prepending a folder to it named nothing.
+            {"path": note},
         ),
     ]
     return Plan(loop=loop, at=now.isoformat(), steps=tuple(steps))
+
+
+def _overnight_opened(window: recipes.OvernightWindow) -> Any:
+    """The date the overnight window opened - what `brief` keys its gmail
+    query off, so the plan asks for the same thing the consumer will."""
+    return datetime.fromtimestamp(window.min_ts, tz=recipes.PACIFIC).date()
 
 
 class _Payloads:
@@ -324,6 +344,13 @@ def render(
     folder = state if state is not None else _vault(identities)
     events = log if log is None else EventLog.open(log)
     ledger = _remembered(events)
+    # SEED TODAY BEFORE OFFERING NOTES. `brief._seed_and_gaps` seeds during
+    # assembly, which is too late: a note offered to a ledger that has no rows
+    # yet attaches to nothing, and on a FIRST run there are no rehydrated rows
+    # either - so every meeting became a gap while its note was listed by name
+    # in the section directly above. `seed_day` is idempotent per instance, so
+    # brief's own seeding stays a no-op for these.
+    ledger.seed_day(_seedable(payloads))
     _attach_notes(ledger, payloads, now)
     runner = RunLog(events, clock=lambda: now) if events is not None else None
 
@@ -397,6 +424,23 @@ def _attach_notes(ledger: Ledger, payloads: Mapping[str, Any], now: datetime) ->
                 source="gemini",
             )
         )
+
+
+def _seedable(payloads: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Today's events, parsed, and only the ones `seed_day` can actually take.
+
+    Tolerant on purpose. This pre-seed exists so a note offered in the same run
+    has a row to attach to; it is not the place that judges a malformed event.
+    `brief._seed_and_gaps` still refuses one loudly during assembly, which is
+    where a missing `end` should surface - skipping it twice would hide it.
+    """
+    needed = ("id", "start", "end", "summary")
+    ready = []
+    for raw in _seeded(payloads):
+        event = dict(_Payloads.timed(raw))
+        if all(event.get(key) for key in needed):
+            ready.append(event)
+    return ready
 
 
 def _seeded(payloads: Mapping[str, Any]) -> list[Mapping[str, Any]]:

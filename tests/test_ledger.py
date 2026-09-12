@@ -4,11 +4,13 @@ The point is not that every meeting has notes. It is that a missing one is
 visible the next morning instead of discovered a month later.
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
 from daydag.ledger import Ledger, Match, title_from_gemini_subject
+
+_PT = timezone(timedelta(hours=-7))
 
 T = datetime(2026, 9, 8, 14, 0)
 
@@ -243,3 +245,40 @@ def test_unmatched_by_next_morning_becomes_a_notes_gap():
     led.seed_day([ev(summary="Discovery sync"), ev(id="e2", summary="Deal Modeler")])
     gaps = led.notes_gaps(as_of=T + timedelta(days=1))
     assert sorted(gaps) == ["Deal Modeler", "Discovery sync"]
+
+
+def test_a_note_from_a_meeting_that_ended_early_still_attaches():
+    """Meetings end early, and Gemini sends notes when the meeting ACTUALLY
+    ends - not when the invite said it would.
+
+    `_in_window` required `row.end <= note.arrived`, so a note that landed
+    before the scheduled end attached to nothing and its meeting was reported
+    as a gap. Found on a real Friday: "Discovery Content Discussions" was
+    scheduled 10:15-11:00, the note arrived 10:48, and the brief called it a
+    meeting with no notes while listing its note directly above.
+    """
+    ledger = Ledger()
+    start = datetime(2026, 9, 11, 10, 15, tzinfo=_PT)
+    ledger.seed_day(
+        [
+            {
+                "id": "e1",
+                "summary": "Discovery Content Discussions",
+                "start": start,
+                "end": start.replace(hour=11, minute=0),
+                "attendees": ["a@example.com", "b@example.com"],
+            }
+        ]
+    )
+
+    attached = ledger.offer_note(
+        Match(
+            title="Discovery Content Discussions",
+            arrived=start.replace(hour=10, minute=48),
+            attendees=[],
+            source="gemini",
+        )
+    )
+
+    assert attached is not None, "a note from a meeting that ran short was dropped"
+    assert ledger.notes_gaps(start.replace(hour=17)) == []
