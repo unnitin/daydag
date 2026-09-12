@@ -275,3 +275,22 @@ def test_the_cli_accepts_the_log_flag_the_skill_documents(tmp_path, monkeypatch,
 
     assert code == 0, capsys.readouterr().err
     assert (tmp_path / "events.db").exists(), "the run did not remember anything"
+
+
+def test_the_vault_step_names_the_note_once_not_twice(identities):
+    """`recipes.weekly_note` already returns a full connector-relative path -
+    the vault prefix included, because the Obsidian connector addresses from
+    the vault's PARENT. Prepending "Weekly Notes/" to it produced
+    `Weekly Notes/Create Music Group/Weekly Notes/0907-0911.md`, which names
+    nothing. Found by running `plan` against a real vault and reading it.
+    """
+    (vault,) = [
+        s
+        for s in run.plan("morning", now=MONDAY, identities=identities).steps
+        if s.source == "vault"
+    ]
+
+    path = vault.detail["path"]
+
+    assert path.count("Weekly Notes") == 1, f"the prefix is doubled: {path}"
+    assert path.endswith(".md")

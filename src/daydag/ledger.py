@@ -50,6 +50,10 @@ ARRIVAL_WINDOW = {
 }
 DEFAULT_ARRIVAL_WINDOW = timedelta(hours=6)
 
+#: How far BEFORE a meeting's scheduled end its notes may still arrive. A
+#: meeting that runs short ends when it ends, and Gemini sends notes then.
+ENDS_EARLY = timedelta(minutes=30)
+
 #: Gemini's subject line, which the issue #2 audit found to be rigidly
 #: structured: `Notes: "<meeting title>" <date>`. SPEC section 4 claimed the
 #: opposite - that the title lived in the body and the subject was inconsistent -
@@ -198,8 +202,22 @@ class Ledger:
         return hits[0] if len(hits) == 1 else None
 
     def _in_window(self, row: Row, note: Match) -> bool:
+        """Whether ``note`` arrived close enough to ``row`` ending to be its own.
+
+        The lower bound is the SCHEDULED end minus `ENDS_EARLY`, not the
+        scheduled end itself. Meetings finish early and Gemini sends notes when
+        the meeting actually ends, so a strict `row.end <= arrived` dropped
+        notes that arrived first: a real Friday had "Discovery Content
+        Discussions" scheduled 10:15-11:00 with its note at 10:48, and the
+        brief reported it as a meeting with no notes while listing its note in
+        the section directly above.
+
+        Bounded rather than open: a note arriving long before a meeting ends
+        belongs to something else, and half an hour is the largest early
+        finish that is still plausibly the same meeting.
+        """
         window = ARRIVAL_WINDOW.get(note.source, DEFAULT_ARRIVAL_WINDOW)
-        return row.end <= note.arrived <= row.end + window
+        return row.end - ENDS_EARLY <= note.arrived <= row.end + window
 
     def offer_note(self, note: Match) -> Row | None:
         """Attach a note to the row it belongs to, or surface that it is unclear.

@@ -202,3 +202,37 @@ def test_a_run_leaves_a_row_so_a_silent_failure_is_diagnosable(home):
     rows = EventLog.open(home["log"]).recorded("run")
 
     assert rows, "a run left no trace, which is what runlog exists to prevent"
+
+
+def test_a_note_that_arrived_today_matches_todays_meeting(home):
+    """The same-day case, which the two-day test above does not reach.
+
+    Notes were offered to the ledger BEFORE `_seed_and_gaps` created today's
+    rows, so on a first run there was nothing to attach to and every meeting
+    became a gap - while its note was listed, by name, in the section directly
+    above. Found by running it against a real Friday: 9 meetings reported as
+    having no notes, 8 of them with notes printed above.
+    """
+    meeting = _meeting(MONDAY, "Pod Steering", "e1")
+    text = run.render(
+        "morning",
+        now=MONDAY.replace(hour=17),
+        identities=home["identities"],
+        payloads={
+            "calendar": [meeting],
+            "slack": [],
+            "gmail": [
+                {
+                    "subject": "Notes: “Pod Steering” Sep 7, 2026",
+                    "date": MONDAY.replace(hour=10, minute=30).isoformat(),
+                    "id": "m1",
+                }
+            ],
+            "vault": "",
+        },
+        log=home["log"],
+    )
+
+    assert "no note found" not in text, (
+        f"a meeting whose note is listed above was still called a gap:\n{text}"
+    )
