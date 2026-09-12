@@ -740,7 +740,7 @@ def test_a_naive_event_start_is_his_local_time_not_the_hosts():
 
 
 def test_a_parenthesised_bare_url_does_not_capture_its_bracket():
-    from daydag.brief import _BARE_URL
+    from daydag.state import _BARE_URL
 
     found = _BARE_URL.search("see (https://example.com/x) for detail")
     assert found is not None
@@ -772,21 +772,21 @@ def test_a_nested_heading_does_not_end_the_red_section():
 
 def test_a_nested_heading_does_not_end_a_state_section():
     """State.md is hand-edited; a `### Snoozed` under `## Chase list` is normal."""
-    from daydag.brief import _md_section
+    from daydag.state import read_section
 
     text = (
         "## Chase list\n- VP-Data · rehearsal\n"
         "### Snoozed\n- CTO · vpc move\n"
         "## Watch items\n- nightly\n"
     )
-    assert _md_section(text, "Chase list") == ["VP-Data · rehearsal", "CTO · vpc move"]
+    assert read_section(text, "Chase list") == ["VP-Data · rehearsal", "CTO · vpc move"]
 
 
 def test_removing_a_bare_url_does_not_strand_its_bracket():
     """Excluding `)` from the URL kept it out of the link but left "(see )"."""
-    from daydag.brief import _split_link
+    from daydag.state import split_link
 
-    text, url = _split_link("see (https://example.com/7) for detail")
+    text, url = split_link("see (https://example.com/7) for detail")
     assert url == "https://example.com/7"
     assert "(" not in text and ")" not in text
     assert text == "see for detail"
@@ -809,3 +809,110 @@ def test_a_calendar_record_without_attendees_is_refused_not_ignored():
             [{"id": "e1", "start": NOW, "end": NOW, "summary": "standup"}],
             now=NOW,
         )
+
+
+# --------------------------------------------------------------------------
+# shared with the EOD wrap: closed_red_items, first_meeting_line,
+# read_vault_note, render_push, Reader - factored out rather than copied.
+# --------------------------------------------------------------------------
+
+
+def test_closed_red_items_is_the_mirror_of_red_items():
+    """Same note, same heading-scoped legend rules - the opposite side of the
+    checkbox. The wrap's "what closed today" (SPEC 3.5) reads this."""
+    from daydag.brief import closed_red_items
+
+    assert [text for _, text in closed_red_items(NOTE_PRIORITIES)] == [
+        "🔴 send the pod update *(mine)*",
+    ]
+    # And `red_items` itself is unaffected by the extraction.
+    assert [text for _, text in red_items(NOTE_PRIORITIES)] == [
+        "🔴 note to Sponsor on data platform access *(mine)*",
+        "🔴 chase the artifacts access call *(mine)*",
+    ]
+
+
+def test_closed_red_items_respects_the_same_heading_scoping():
+    """The heading-scoped `## 🔴 High` layout, mirrored for the ticked side."""
+    from daydag.brief import closed_red_items
+
+    note = (
+        "## 🔴 High — needs my hand this week\n"
+        "- [ ] land the discovery cutover *(mine)*\n"
+        "- [x] send the sponsor note *(mine)*\n"
+        "## 🟡 Medium\n"
+        "- [x] not a red item, ignore\n"
+    )
+    assert [text for _, text in closed_red_items(note)] == ["send the sponsor note *(mine)*"]
+
+
+def test_closed_red_items_skips_the_triage_legend_too():
+    from daydag.brief import closed_red_items
+
+    assert closed_red_items("- [x] triage: 🔴 high, 🟡 medium, 🟢 low") == []
+
+
+def test_first_meeting_line_is_none_with_no_events():
+    from daydag.brief import first_meeting_line
+
+    assert first_meeting_line([]) is None
+
+
+def test_first_meeting_line_picks_the_earliest_by_instant_not_by_order():
+    from daydag.brief import first_meeting_line
+
+    events = [_event("b", "later thing", 15), _event("a", "pod steering", 9)]
+    result = first_meeting_line(events)
+
+    assert result is not None
+    line, summary = result
+    assert summary == "pod steering"
+    assert "9:00 pod steering" in line
+    assert "https://calendar.example.com/e/a" in line
+
+
+def test_first_meeting_line_admits_a_missing_link():
+    from daydag.brief import first_meeting_line, unsourced_claims
+
+    event = _event("a", "mystery hold", 9)
+    del event["permalink"]
+    line, _summary = first_meeting_line([event])
+
+    assert unsourced_claims(line) == []
+
+
+def _raise(exc):
+    def _fetch():
+        raise exc
+
+    return _fetch
+
+
+def test_read_vault_note_tells_apart_clean_missing_and_downed():
+    from daydag.brief import Reader, read_vault_note
+
+    read = Reader()
+    text, missing = read_vault_note(read, lambda: "hello", label="x")
+    assert (text, missing, read.unreachable) == ("hello", False, [])
+
+    read = Reader()
+    text, missing = read_vault_note(read, _raise(FileNotFoundError()), label="x")
+    assert (text, missing, read.unreachable) == ("", True, [])
+
+    read = Reader()
+    text, missing = read_vault_note(read, _raise(RuntimeError("down")), label="x")
+    assert (text, missing, read.unreachable) == ("", False, ["x"])
+
+
+def test_render_push_omits_empty_sections_and_names_dead_sources():
+    from daydag.brief import Section, render_push
+
+    text = render_push(
+        "wrap: 1 closed, 0 moved",
+        [Section("closed today (1)", ("- thing (path.md#L1)",)), Section("moved (0)", ())],
+        ["the pulse"],
+    )
+
+    assert "closed today (1)" in text
+    assert "moved (0)" not in text
+    assert "couldn't check the pulse" in text
