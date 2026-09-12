@@ -34,7 +34,7 @@ from __future__ import annotations
 
 import difflib
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
@@ -122,6 +122,21 @@ class Row:
         return (self.event_id, self.start)
 
 
+#: Google lists conference rooms as attendees, on this domain. A room is not a
+#: participant: it cannot take a note, so counting it made a solo block with a
+#: room booked look like a two-person meeting and chased it forever (#90).
+_RESOURCE_DOMAIN = "resource.calendar.google.com"
+
+
+def _is_resource(attendee: Any) -> bool:
+    """Whether an attendee is a room or other bookable thing, not a person."""
+    if isinstance(attendee, Mapping):
+        if attendee.get("resource"):
+            return True
+        attendee = attendee.get("email", "")
+    return _RESOURCE_DOMAIN in str(attendee).casefold()
+
+
 def _qualifies(event: dict[str, Any]) -> bool:
     """Whether a calendar entry is a meeting the ledger should track.
 
@@ -129,11 +144,28 @@ def _qualifies(event: dict[str, Any]) -> bool:
     says "no notes"; a false negative is a meeting the system cannot see at all.
     """
     response = event.get("response_status", "needsAction")
-    return (
-        response not in DISQUALIFYING_RESPONSES
-        and event.get("kind", "meeting") not in NON_MEETING_KINDS
-        and len(event.get("attendees") or []) >= 2
-    )
+    if response in DISQUALIFYING_RESPONSES:
+        return False
+    if event.get("kind", "meeting") in NON_MEETING_KINDS:
+        return False
+
+    people = [a for a in (event.get("attendees") or []) if not _is_resource(a)]
+    if len(people) >= 2:
+        return True
+
+    # Somebody ELSE put this in his day. An ATS interview invite lists only
+    # the principal - the candidate is invited through a separate calendar -
+    # so the attendee count made a 45-minute interview invisible, and three
+    # landed on one real Friday (#90). An organizer who is not him is the
+    # evidence that distinguishes it from a hold he made for himself.
+    if event.get("organizer_is_self"):
+        # Every entry has an organizer, his own holds included. Google marks
+        # the self case and the shaper passes it through; without it a focus
+        # block would read as somebody else's meeting.
+        return False
+    organizer = str(event.get("organizer") or "").strip().casefold()
+    principal = str(event.get("principal") or "").strip().casefold()
+    return bool(organizer) and organizer != principal
 
 
 class Ledger:

@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from daydag.ledger import Ledger, Match, title_from_gemini_subject
+from daydag.ledger import Ledger, Match, _qualifies, title_from_gemini_subject
 
 _PT = timezone(timedelta(hours=-7))
 
@@ -282,3 +282,87 @@ def test_a_note_from_a_meeting_that_ended_early_still_attaches():
 
     assert attached is not None, "a note from a meeting that ran short was dropped"
     assert ledger.notes_gaps(start.replace(hour=17)) == []
+
+
+# --------------------------------------------------------------------------
+# qualification, from a backtest against real calendar data (#90)
+# --------------------------------------------------------------------------
+
+
+def _event(**over):
+    base = {
+        "id": "e1",
+        "summary": "a meeting",
+        "start": datetime(2026, 9, 8, 9, 0, tzinfo=_PT),
+        "end": datetime(2026, 9, 8, 10, 0, tzinfo=_PT),
+        "attendees": ["a@example.com", "b@example.com"],
+    }
+    base.update(over)
+    return base
+
+
+def test_an_interview_qualifies_even_though_only_the_principal_is_invited():
+    """An ATS invite lists ONLY the principal - the candidate is invited
+    through a separate calendar - so the 2+ attendee rule made a 45-minute
+    interview invisible. Three of them landed on one real Friday.
+
+    The organizer is the evidence: somebody else put this in his day, which
+    is what distinguishes it from a focus block he made for himself.
+    """
+    interview = _event(
+        summary="Interview - a candidate - Product Lead",
+        attendees=["principal@example.com"],
+        organizer="recruiting@example.com",
+    )
+
+    assert _qualifies(interview)
+
+
+def test_a_solo_block_he_made_himself_is_still_not_a_meeting():
+    """The other side of that rule - it must not sweep in his own holds."""
+    own_hold = _event(summary="Focus time", attendees=["principal@example.com"])
+
+    assert not _qualifies(own_hold)
+    assert not _qualifies(_event(summary="Veda pick up", attendees=[]))
+
+
+def test_a_booked_room_is_not_a_participant():
+    """Google lists conference rooms as attendees. A solo block with a room
+    booked therefore had two "attendees" and was chased as a meeting - and a
+    room cannot take a note, so it was a gap that could never close.
+    """
+    room = "c_1887ml11ltcrgh14m2e0ahj80ojns@resource.calendar.google.com"
+    solo_in_a_room = _event(
+        summary="Focus block, room booked", attendees=["principal@example.com", room]
+    )
+
+    assert not _qualifies(solo_in_a_room)
+
+
+def test_a_real_meeting_in_a_room_still_qualifies():
+    room = "c_1887ml11ltcrgh14m2e0ahj80ojns@resource.calendar.google.com"
+    real = _event(attendees=["a@example.com", "b@example.com", room])
+
+    assert _qualifies(real)
+
+
+def test_a_hold_he_organised_himself_is_not_a_meeting_even_with_an_organizer():
+    """Every calendar entry has an organizer, including his own holds. The
+    rule is "somebody ELSE put this in his day", so the self case has to be
+    distinguishable - google marks it, and the shaper passes it through."""
+    own = _event(
+        summary="Focus time",
+        attendees=["principal@example.com"],
+        organizer="principal@example.com",
+        organizer_is_self=True,
+    )
+
+    assert not _qualifies(own)
+
+
+def test_an_organizer_with_no_self_marker_and_no_principal_is_not_assumed():
+    """If we cannot tell whose hold it is, we do not invent an answer - the
+    attendee count is the only evidence left, and it says no."""
+    unknown = _event(attendees=["principal@example.com"], organizer="someone@example.com")
+
+    assert _qualifies(unknown), "an organizer we cannot match to him reads as somebody else"
