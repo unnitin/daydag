@@ -740,7 +740,7 @@ def test_a_naive_event_start_is_his_local_time_not_the_hosts():
 
 
 def test_a_parenthesised_bare_url_does_not_capture_its_bracket():
-    from daydag.brief import _BARE_URL
+    from daydag.state import _BARE_URL
 
     found = _BARE_URL.search("see (https://example.com/x) for detail")
     assert found is not None
@@ -772,21 +772,21 @@ def test_a_nested_heading_does_not_end_the_red_section():
 
 def test_a_nested_heading_does_not_end_a_state_section():
     """State.md is hand-edited; a `### Snoozed` under `## Chase list` is normal."""
-    from daydag.brief import _md_section
+    from daydag.state import read_section
 
     text = (
         "## Chase list\n- VP-Data · rehearsal\n"
         "### Snoozed\n- CTO · vpc move\n"
         "## Watch items\n- nightly\n"
     )
-    assert _md_section(text, "Chase list") == ["VP-Data · rehearsal", "CTO · vpc move"]
+    assert read_section(text, "Chase list") == ["VP-Data · rehearsal", "CTO · vpc move"]
 
 
 def test_removing_a_bare_url_does_not_strand_its_bracket():
     """Excluding `)` from the URL kept it out of the link but left "(see )"."""
-    from daydag.brief import _split_link
+    from daydag.state import split_link
 
-    text, url = _split_link("see (https://example.com/7) for detail")
+    text, url = split_link("see (https://example.com/7) for detail")
     assert url == "https://example.com/7"
     assert "(" not in text and ")" not in text
     assert text == "see for detail"

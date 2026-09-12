@@ -40,7 +40,7 @@ from daydag import recipes
 from daydag.config import resolve_reference
 from daydag.ledger import Ledger, title_from_gemini_subject
 from daydag.pulse import Pulse
-from daydag.state import StateFolder
+from daydag.state import StateFolder, read_section, split_link
 from daydag.voice import Push, clipped, render
 
 __all__ = [
@@ -324,61 +324,11 @@ def closed_red_items(note: str) -> list[tuple[int, str]]:
 
 # --------------------------------------------------------------------------
 # State.md - read, because a hand edit wins over anything derived
+#
+# The parse itself lives in `daydag.state`, beside the writer: the week-ahead
+# loop (SPEC 3.6) reads the same hand-edited sections, and a second regex here
+# would be a second set of bugs that agree only on the easy cases.
 # --------------------------------------------------------------------------
-
-_HEADING = re.compile(r"^(?P<hashes>#{1,6})\s+(?P<name>.+?)\s*$")
-_BULLET = re.compile(r"^\s*[-*]\s+(?P<body>\S.*?)\s*$")
-_MD_LINK = re.compile(r"\[(?P<label>[^\]]*)\]\((?P<url>[^)\s]+)\)")
-#: `)` excluded so a hand-written "(see https://x)" does not capture the
-#: bracket into the link and strand its opener in the text.
-_BARE_URL = re.compile(r"<?(?P<url>https?://[^\s>)]+)>?")
-
-
-def _md_section(text: str, name: str) -> list[str]:
-    """Bullet bodies under the heading called ``name``, whatever its level."""
-    wanted = name.casefold()
-    collecting = False
-    section_level = 0
-    bodies: list[str] = []
-    for line in text.splitlines():
-        heading = _HEADING.match(line)
-        if heading:
-            level = len(heading["hashes"])
-            if heading["name"].casefold() == wanted:
-                collecting, section_level = True, level
-            elif collecting and level <= section_level:
-                # A hand-added `### Snoozed` under `## Chase list` must not end
-                # the section. State.md is edited by a human; nesting is normal.
-                collecting = False
-            continue
-        bullet = _BULLET.match(line)
-        if collecting and bullet:
-            bodies.append(bullet["body"])
-    return bodies
-
-
-def _split_link(body: str) -> tuple[str, str | None]:
-    """A hand-written line's text and the link in it, if there is one.
-
-    Both forms appear in a file a human edits: a markdown link, and a URL pasted
-    bare. The link is pulled out so the line renders like every other claim -
-    otherwise a bare URL would read as unsourced to :func:`unsourced_claims`.
-    """
-    link = _MD_LINK.search(body)
-    if link:
-        return (body[: link.start()] + link["label"] + body[link.end() :]).strip(" -·"), link["url"]
-    bare = _BARE_URL.search(body)
-    if bare:
-        # Drop a bracket left wrapping nothing. Excluding `)` from the URL kept
-        # it out of the link but left "(see )" behind - half a fix reads worse
-        # than none, because it looks deliberate.
-        head, tail = body[: bare.start()], body[bare.end() :]
-        if head.rstrip().endswith("(") and tail.lstrip().startswith(")"):
-            head, tail = head.rstrip()[:-1], tail.lstrip()[1:]
-        # Collapse the gap the removal leaves: "see  for detail" reads as a
-        # typo in a brief, which spends the reader's trust on nothing.
-        return re.sub(r"\s{2,}", " ", head + tail).strip(" -·"), bare["url"]
-    return body.strip(), None
 
 
 # --------------------------------------------------------------------------
@@ -629,8 +579,8 @@ def assemble(
     # -- chase and watch, read out of the file he corrects by hand --------
     if state is not None:
         written = read("the chase list", state.read_state, "")
-        chase = [_line_from_state(body) for body in _md_section(written, "Chase list")]
-        watch = [_line_from_state(body) for body in _md_section(written, "Watch items")]
+        chase = [_line_from_state(body) for body in read_section(written, "Chase list")]
+        watch = [_line_from_state(body) for body in read_section(written, "Watch items")]
         if chase:
             sections.append(Section(f"owed to you ({len(chase)})", tuple(chase)))
 
@@ -687,7 +637,7 @@ def _day_label(day: date) -> str:
 
 
 def _line_from_state(body: str) -> str:
-    text, link = _split_link(body)
+    text, link = split_link(body)
     return claim(text, link)
 
 

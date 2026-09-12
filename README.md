@@ -44,6 +44,7 @@ artifact is the load-bearing rule; the rest is plumbing.
 | `brief` | SPEC §3.1's morning brief: the assembler every other loop composes from |
 | `eod_wrap` | SPEC §3.5's EOD wrap: what closed, what moved, tomorrow's first meeting |
 | `prep` | Meeting prep pings: the one interrupt, 30 min out, qualified by the ledger |
+| `week_ahead` | SPEC §3.6's Sunday week-ahead: a read of Friday's plan, assembled into one push |
 | `evalset` | The hand-labelled ingestion ground truth, and `score()` — so precision is measured, not asserted |
 
 ## Working on it
