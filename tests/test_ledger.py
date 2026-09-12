@@ -366,3 +366,41 @@ def test_an_organizer_with_no_self_marker_and_no_principal_is_not_assumed():
     unknown = _event(attendees=["principal@example.com"], organizer="someone@example.com")
 
     assert _qualifies(unknown), "an organizer we cannot match to him reads as somebody else"
+
+
+def test_a_note_generated_hours_late_still_attaches():
+    """Measured across ~100 real notes: DELIVERY is tight (2-94 min from
+    generation to inbox), but GENERATION runs late. A Sep 10 11:00-12:00
+    meeting was generated Sep 11 00:52 - 12.9 hours after it ended - and the
+    six-hour window dropped it, so the meeting was a gap forever.
+    """
+    ledger = Ledger()
+    start = datetime(2026, 9, 10, 11, 0, tzinfo=_PT)
+    ledger.seed_day(
+        [_event(summary="Finance x Data meeting", start=start, end=start.replace(hour=12))]
+    )
+
+    attached = ledger.offer_note(
+        Match(
+            title="Finance x Data meeting",
+            arrived=datetime(2026, 9, 11, 0, 56, tzinfo=_PT),
+            attendees=[],
+            source="gemini",
+        )
+    )
+
+    assert attached is not None, "a late-generated note was dropped"
+
+
+def test_the_window_stays_short_enough_that_a_daily_standup_is_unambiguous():
+    """The bound on widening. A daily recurring meeting has rows 24h apart, so
+    a window of 24h or more lets one note match two rows - and an ambiguous
+    note attaches to NEITHER, which trades a late gap for a lost note.
+    """
+    from daydag.ledger import ARRIVAL_WINDOW, ENDS_EARLY
+
+    span = ARRIVAL_WINDOW["gemini"] + ENDS_EARLY
+
+    assert span < timedelta(hours=24), (
+        f"window {span} spans a daily recurrence; two rows can match one note"
+    )

@@ -43,8 +43,18 @@ from typing import Any
 #: Source-dependent by necessity: Gemini mails within hours of the call, while
 #: the Notion database lags about a week. One constant would either reject every
 #: real Notion note or accept a Gemini note from two meetings later.
+#: How long after a meeting ends its notes may still arrive, by the system that
+#: WROTE them. Measured across ~100 real Gemini notes: delivery is tight (2-94
+#: minutes from generation to inbox) but GENERATION runs late, and a Sep 10
+#: 11:00-12:00 meeting was generated at 00:52 the next morning - 12.9 hours out.
+#: Six hours dropped it and the meeting was a gap forever.
+#:
+#: Bounded BELOW 24 hours on purpose, and that is the real constraint rather
+#: than a guess: a daily standup has rows 24 hours apart, so a wider window
+#: lets one note match two rows - and an ambiguous note attaches to neither,
+#: which trades a late gap for a lost note.
 ARRIVAL_WINDOW = {
-    "gemini": timedelta(hours=6),
+    "gemini": timedelta(hours=18),
     "granola": timedelta(hours=6),
     "notion": timedelta(days=10),
 }
@@ -52,7 +62,12 @@ DEFAULT_ARRIVAL_WINDOW = timedelta(hours=6)
 
 #: How far BEFORE a meeting's scheduled end its notes may still arrive. A
 #: meeting that runs short ends when it ends, and Gemini sends notes then.
-ENDS_EARLY = timedelta(minutes=30)
+#:
+#: 45, not 30: a real note arrived 37 minutes before its scheduled end
+#: (Discovery Content Discussions, scheduled 10:15-11:00, note at 10:08), so
+#: 30 dropped it. Still far short of a meeting's own length, which is what
+#: keeps it from reaching back into whatever ran before.
+ENDS_EARLY = timedelta(minutes=45)
 
 #: Gemini's subject line, which the issue #2 audit found to be rigidly
 #: structured: `Notes: "<meeting title>" <date>`. SPEC section 4 claimed the
