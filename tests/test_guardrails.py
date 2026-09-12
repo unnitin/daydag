@@ -510,11 +510,22 @@ JIRA_WRITE_PATTERNS = {
 
 @pytest.mark.guardrail
 def test_no_jira_write_path_exists_unguarded():
-    """TRIPWIRE. Nobody else's ticket is transitioned or commented on.
+    """TRIPWIRE, still - now alongside a behavioural check rather than instead
+    of one. Nobody else's ticket is transitioned or commented on.
 
-    There is no Jira client in the package - not a reader, not a writer - so
-    the checklist item "no one else's ticket is ever transitioned without
-    approval" has nothing to exercise. This holds the door.
+    This was vacuous when it was written: there was no Jira client in the
+    package at all. `board.py` (#12) is now the package's first Jira reader,
+    so "there is nothing to drive" stopped being true - but "nothing here
+    drives it" still is, and that is what stays asserted here across the
+    *whole* package rather than just the one module most likely to grow a
+    write. `tests/test_board.py` carries the same check scoped to that module
+    (`test_the_module_exposes_no_way_to_drive_the_board`), parsing its source
+    directly rather than trusting this one to have caught everything.
+
+    The token is the strongest layer: `read:jira-work` plus Confluence read
+    and no write scope at all, so a transition is refused one level below any
+    code in this repo. This tripwire is the cheapest of the three, and it
+    still fires the day a write-shaped name appears anywhere in the package.
     """
     _self_check_scanner()
     hits = _scan(JIRA_WRITE_PATTERNS)

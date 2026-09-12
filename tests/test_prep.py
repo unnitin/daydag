@@ -20,7 +20,7 @@ Two things here are easy to get subtly wrong and are therefore asserted hard:
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
@@ -301,6 +301,39 @@ def test_sources_name_the_weeks_meeting_prep_note(identities):
     row = _row("s", "Pod Steering", MONDAY_9AM, attendees=(NITIN, VP_DATA, "e@example.com"))
     plan = prep.sources(row, MONDAY_9AM, identities=identities)
     assert plan.prep_note.endswith("Meeting Prep/0907-0911.md")
+
+
+def test_sources_names_the_meetings_week_not_the_caller_week(identities):
+    """`prep_note` is `meeting_prep(row.start)`, never `meeting_prep(now)`.
+
+    They agree for a same-day, 30-min ping - which is why this looked right -
+    and disagree the first time `sources()` runs ahead of time, from a
+    different week: the Sunday week-ahead (SPEC 3.6) builds Monday's prep the
+    evening before, from the closing week. Naming `now`'s week there pointed
+    at a real file, just the wrong one - Meeting Prep for the week ending, not
+    the week the meeting is actually in.
+    """
+    sunday_before = MONDAY_9AM - timedelta(hours=15, minutes=30)  # sun 5:30pm
+    row = _row("s", "Pod Steering", MONDAY_9AM, attendees=(NITIN, VP_DATA, "e@example.com"))
+    plan = prep.sources(row, sunday_before, identities=identities)
+    assert plan.prep_note.endswith("Meeting Prep/0907-0911.md"), (
+        f"named the caller's week instead of the meeting's: {plan.prep_note}"
+    )
+
+
+def test_a_naive_meeting_start_names_its_own_wall_clock_day_not_the_hosts():
+    """`_local_day` must not reinterpret a naive start via the host's zone.
+
+    Found by `/code-review` on the fix above: `.astimezone()` called directly
+    on a NAIVE value adopts whatever zone the runner has - the same failure
+    class `brief._local` guards against for an event's start, and the reason
+    that fix reads `start.replace(tzinfo=PACIFIC)` first rather than calling
+    `.astimezone(PACIFIC)` on the naive value straight away. A midnight-thirty
+    meeting is the case that catches a host-zone leak: under a host east of
+    Pacific it would roll back to the PRIOR calendar day.
+    """
+    early = datetime(2026, 9, 7, 0, 30)  # naive - no host zone should move this
+    assert prep._local_day(early) == date(2026, 9, 7)
 
 
 def test_sources_refuse_a_row_that_does_not_qualify(identities):

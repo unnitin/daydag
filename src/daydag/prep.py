@@ -338,9 +338,31 @@ def sources(
         window=(start, end),
         gemini=gemini,
         slack=tuple(queries),
-        prep_note=meeting_prep(end),
+        # The MEETING's week, not `now`'s. They agree for a same-day, 30-min
+        # ping - which is why this shipped looking right - and disagree the
+        # first time `sources()` is built ahead of time, from a different
+        # week: the week-ahead loop (SPEC 3.6) calls this on Sunday night for
+        # Monday's meetings, and `meeting_prep(end)` there named Meeting
+        # Prep/<the closing week>.md - a real file, just the wrong one.
+        prep_note=meeting_prep(_local_day(row.start)),
         degraded=tuple(degraded),
     )
+
+
+def _local_day(start: datetime) -> date:
+    """``start``'s calendar day in the principal's zone.
+
+    A naive ``start`` is assumed to already be his local wall-clock time - the
+    same contract `brief._local` and `week_ahead._local` use for an event's
+    start - never reinterpreted via the host's zone: plain `.astimezone()` on a
+    naive value adopts whatever zone the *runner* has, which is exactly the
+    class of bug `slack_overnight` and `_as_of` were both fixed for elsewhere in
+    this codebase. `Schedule.due` already refuses a naive `row.start` outright;
+    this path can be reached without going through `Schedule` at all (the
+    week-ahead loop calls `sources()` directly, well before the 30-minute
+    window), so it degrades to the same wall-clock reading rather than raising.
+    """
+    return (start if start.tzinfo else start.replace(tzinfo=PACIFIC)).astimezone(PACIFIC).date()
 
 
 # ---------------------------------------------------------------------------
