@@ -256,3 +256,22 @@ def test_the_ledger_gets_real_instants_for_both_ends_of_a_meeting(identities):
     text = run.render("morning", now=MONDAY, identities=identities, payloads=payloads)
 
     assert "couldn't check the meeting ledger" not in text, text
+
+
+def test_the_cli_accepts_the_log_flag_the_skill_documents(tmp_path, monkeypatch, capsys):
+    """`SKILL.md` tells the agent to pass `--log` so the run remembers. A
+    documented flag the parser rejects is the same docs-ahead-of-code failure
+    this repo keeps finding, and it would have failed on the first real run."""
+    env = tmp_path / ".env"
+    env.write_text(
+        f"SLACK_USER_PRINCIPAL=UPRINCIPAL1\nVAULT_ROOT={tmp_path / 'vault'}\n", encoding="utf-8"
+    )
+    (tmp_path / "vault" / "Weekly Notes").mkdir(parents=True)
+    monkeypatch.chdir(tmp_path)
+    payloads = '{"calendar": [], "slack": [], "gmail": [], "vault": ""}'
+    monkeypatch.setattr("sys.stdin", __import__("io").StringIO(payloads))
+
+    code = run.main(["render", "morning", "--log", str(tmp_path / "events.db")])
+
+    assert code == 0, capsys.readouterr().err
+    assert (tmp_path / "events.db").exists(), "the run did not remember anything"
