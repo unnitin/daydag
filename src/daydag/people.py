@@ -47,19 +47,25 @@ KNOWN LIMIT
     someone.
 
     `observe` cannot tell a colleague from a candidate or a vendor. It records
-    that a meeting happened. Whether that person is external is
-    `Person.external`, which is derived from the address domain and is only as
-    good as `ORG_EMAIL_DOMAIN`.
+    that a meeting happened. Inside-vs-outside is `prep.Audience`'s question,
+    answered from the org domain - `ORG_EMAIL_DOMAIN`, or the principal's own
+    address domain when that is unset.
+
+    WIRING. `run._prep` reads leadership from here and the loops that seed a
+    ledger observe the meetings that have already happened. `brief` and
+    `week_ahead` still build their Audience from `PREP_LEADERSHIP` in `.env`
+    until #119 lands, so that key is unioned in, not replaced.
 """
 
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import date
 from typing import Any
 
+from daydag.ledger import attendee_parts, is_resource
 from daydag.state import EventLog
 
 __all__ = [
@@ -81,10 +87,6 @@ _TRUST = {OBSERVED: 1, PROFILE: 2, STATED: 3}
 
 #: The event kind every fact is appended under.
 FACT = "person_fact"
-
-#: Google books conference rooms as attendees on this domain. A room in the
-#: directory would be "met" more often than any human.
-_RESOURCE_DOMAIN = "resource.calendar.google.com"
 
 _TOKENS = re.compile(r"[^a-z0-9]+")
 
@@ -128,25 +130,6 @@ class Person:
         """The address to address them at - the first one learned."""
         return self.emails[0] if self.emails else None
 
-    def external(self, internal_domains: Iterable[str]) -> bool | None:
-        """Whether they are outside the org, or None when that is unknowable.
-
-        Three-valued on purpose. `False` means "checked, internal"; `None`
-        means "no domain configured, or no address" - and the whole reason this
-        module exists is that those two were the same answer before.
-        """
-        domains = {d.strip().casefold() for d in internal_domains if d.strip()}
-        if not domains or not self.emails:
-            return None
-        return any(
-            (domain := address.partition("@")[2].casefold()) and domain not in domains
-            for address in self.emails
-        )
-
-
-def _is_resource(address: str) -> bool:
-    return _RESOURCE_DOMAIN in str(address).casefold()
-
 
 class People:
     """The directory, folded from the event log on construction."""
@@ -174,7 +157,21 @@ class People:
         groups: Sequence[str] = (),
         leadership: bool | None = None,
     ) -> Person:
-        """Record what is known about ``key``, at ``source``'s level of trust."""
+        """Record what is known about ``key``, at ``source``'s level of trust.
+
+        If the address or slack id already belongs to someone under ANOTHER
+        key - typically one `observe` minted from the address before he named
+        the role - that entry is folded into ``key`` first. Without this a
+        correction created a second person and `resolve(address)` kept
+        returning the observed stub with no dm, no title and no leadership:
+        the precedence contract bypassed entirely, verified by running it.
+        """
+        for handle in (email, slack_id):
+            existing = self._by_address(handle) if handle else None
+            if existing is not None and existing.key != key:
+                merge = {"key": key, "source": source, "merge_from": existing.key}
+                self._events.record(FACT, sensitivity="private", **merge)
+                self._apply(merge)
         fact: dict[str, Any] = {"key": key, "source": source}
         for name, value in (
             ("email", email),
@@ -197,39 +194,67 @@ class People:
         Contract 4 - co-attendance only. The meeting is not evidence of anyone's
         job, so nothing here writes a title, and `OBSERVED` keeps whatever it
         does write below anything he states later.
+
+        Identity here is the EXACT address, never name tokens. A first version
+        resolved observations through the name fallback, so `wren@vendorco.com`
+        matched the VP's `{wren, alder}` and the vendor's address was appended to
+        her entry - the store that decides who to message pointed a stranger at
+        her DM.
+
+        One marker per (person, event, DAY). `Row.event_id` is google's series
+        id, so keying on it alone counted a weekly 1:1 once and never again.
         """
         event_id = str(getattr(row, "event_id", "") or "")
-        day = getattr(getattr(row, "start", None), "date", lambda: None)()
-        for attendee in getattr(row, "attendees", ()) or ():
-            address = str(attendee).strip()
-            if not address or _is_resource(address):
+        start = getattr(row, "start", None)
+        met_on = start.date().isoformat() if start is not None else None
+        attendees = list(getattr(row, "attendees", ()) or ())
+        names = list(getattr(row, "attendee_names", ()) or ())
+        names += [""] * (len(attendees) - len(names))
+        for raw, name in zip(attendees, names, strict=False):
+            if is_resource(raw):
                 continue  # a room is not a person
+            # Rows from `seed_day` are already bare; `attendee_parts` makes a
+            # legacy "Name <addr>" string come out the same way.
+            address, parsed_name = attendee_parts(raw)
+            name = name or parsed_name
+            if not address:
+                continue
             if principal and address.casefold() == principal.casefold():
                 continue  # he is in every meeting
-            handle = _address_of(address)
-            existing = self._lookup(handle)
-            key = existing.key if existing else _slug(handle)
-            marker = f"{key}@{event_id}"
+            existing = self._by_address(address)
+            key = existing.key if existing else _slug(address)
+            if f"{key}@{event_id}@{met_on}" in self._seen_events:
+                continue  # the same instance twice counts once
             fact: dict[str, Any] = {
                 "key": key,
                 "source": OBSERVED,
-                "email": handle,
-                "met_on": day.isoformat() if day else None,
+                "email": address,
+                "met_on": met_on,
                 "event_id": event_id,
             }
-            name = _display_of(address)
             if name:
                 fact["display_name"] = name
-            if marker in self._seen_events:
-                continue  # contract: the same meeting twice counts once
             self._events.record(FACT, sensitivity="private", **fact)
             self._apply(fact)
 
     # -- reading -----------------------------------------------------------
 
     def resolve(self, handle: str) -> Person | None:
-        """The person this address, id or name refers to, or None."""
-        return self._lookup(str(handle).strip())
+        """The person this key, address, id or name refers to, or None.
+
+        Key first - `people show vp-data` is the form every doc uses, and the
+        first version matched everything except the key and printed "not in
+        the directory" for it. Name tokens are tried only for a query that looks
+        like a name: an address never falls through to them, because
+        `wren@vendorco.com` must not resolve to Wren Alder.
+        """
+        handle = str(handle).strip()
+        if handle in self._by_key:
+            return self._by_key[handle]
+        exact = self._by_address(handle)
+        if exact is not None or "@" in handle:
+            return exact
+        return self._by_name(handle)
 
     def all(self) -> tuple[Person, ...]:
         return tuple(self._by_key.values())
@@ -239,7 +264,8 @@ class People:
 
     # -- the fold ----------------------------------------------------------
 
-    def _lookup(self, handle: str) -> Person | None:
+    def _by_address(self, handle: str) -> Person | None:
+        """Exact match on an address or slack id - the only identity `observe` uses."""
         if not handle:
             return None
         lowered = handle.casefold()
@@ -248,6 +274,10 @@ class People:
                 return person
             if person.slack_id and person.slack_id.casefold() == lowered:
                 return person
+        return None
+
+    def _by_name(self, handle: str) -> Person | None:
+        """Every token of the query present in someone's name - for humans typing."""
         wanted = _name_tokens(handle)
         if not wanted:
             return None
@@ -265,6 +295,20 @@ class People:
         """Fold one recorded fact in, honouring precedence (contract 1)."""
         key = str(fact.get("key", "")) or "unknown"
         source = str(fact.get("source", OBSERVED))
+
+        if fact.get("merge_from"):
+            # Fold an observation-minted entry into the key he chose. Its
+            # facts keep their own provenance, so a stated field on either side
+            # still wins over an observed one; its met-markers move with it.
+            old = self._by_key.pop(str(fact["merge_from"]), None)
+            if old is not None:
+                target = self._by_key.get(key) or Person(key=key)
+                self._by_key[key] = _fold(target, old)
+                moved = {m for m in self._seen_events if m.startswith(f"{old.key}@")}
+                self._seen_events -= moved
+                self._seen_events |= {f"{key}@" + m.split("@", 1)[1] for m in moved}
+            return self._by_key.get(key) or Person(key=key)
+
         person = self._by_key.get(key) or Person(key=key)
         sources = dict(person.sources)
         changes: dict[str, Any] = {}
@@ -289,7 +333,7 @@ class People:
 
         met_on = fact.get("met_on")
         event_id = str(fact.get("event_id", "") or "")
-        marker = f"{key}@{event_id}"
+        marker = f"{key}@{event_id}@{met_on}"  # per INSTANCE: event_id is the series
         if met_on and marker not in self._seen_events:
             self._seen_events.add(marker)
             when = date.fromisoformat(str(met_on))
@@ -302,19 +346,28 @@ class People:
         return updated
 
 
-def _address_of(attendee: str) -> str:
-    """The bare address out of `"Full Name <addr>"`, or the value unchanged."""
-    if "<" in attendee and ">" in attendee:
-        return attendee.split("<", 1)[1].split(">", 1)[0].strip()
-    return attendee.strip()
-
-
-def _display_of(attendee: str) -> str | None:
-    """The display name out of `"Full Name <addr>"`, if there is one."""
-    if "<" in attendee:
-        name = attendee.split("<", 1)[0].strip()
-        return name or None
-    return None
+def _fold(target: Person, other: Person) -> Person:
+    """`other`'s facts into `target`, each field keeping the better-sourced value."""
+    sources = dict(target.sources)
+    changes: dict[str, Any] = {}
+    for name in ("slack_id", "display_name", "title", "dm", "leadership"):
+        value = getattr(other, name)
+        if value in (None, False, ""):
+            continue
+        theirs = _TRUST.get(other.sources.get(name, OBSERVED), 0)
+        ours = _TRUST.get(sources.get(name, OBSERVED), 0)
+        if theirs > ours or (theirs == ours and not getattr(target, name)):
+            changes[name] = value
+            sources[name] = other.sources.get(name, OBSERVED)
+    known = {e.casefold() for e in target.emails}
+    changes["emails"] = (*target.emails, *(e for e in other.emails if e.casefold() not in known))
+    changes["groups"] = (*target.groups, *(g for g in other.groups if g not in target.groups))
+    changes["met"] = target.met + other.met
+    firsts = [d for d in (target.first_met, other.first_met) if d]
+    lasts = [d for d in (target.last_met, other.last_met) if d]
+    changes["first_met"] = min(firsts) if firsts else None
+    changes["last_met"] = max(lasts) if lasts else None
+    return replace(target, sources=sources, **changes)
 
 
 def _slug(address: str) -> str:
@@ -343,7 +396,19 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     def opt(name: str) -> str | None:
-        return args[args.index(name) + 1] if name in args[:-1] else None
+        """The value after ``name``, or None if the flag is absent.
+
+        A flag that is present but has NO value - last on the line, or followed
+        by another flag - is refused loudly. `--log` at the end used to return
+        None, which `str()` turned into a sqlite file literally named "None" in
+        whatever directory was current, holding real addresses and ids.
+        """
+        if name not in args:
+            return None
+        after = args[args.index(name) + 1 :]
+        if not after or after[0].startswith("--"):
+            raise SystemExit(f"{name} needs a value")
+        return after[0]
 
     directory = People(EventLog.open(str(opt("--log"))))
     command = args[0]

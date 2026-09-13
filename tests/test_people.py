@@ -21,7 +21,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from daydag.ledger import Row
+from daydag.ledger import Row, attendee_parts
 from daydag.people import OBSERVED, PROFILE, STATED, People
 from daydag.state import EventLog
 
@@ -33,14 +33,19 @@ def directory(tmp_path):
     return People(EventLog.open(tmp_path / "events.db"))
 
 
-def _row(summary: str, *attendees: str, days: int = 0) -> Row:
+def _row(summary: str, *attendees: str, days: int = 0, event_id: str = "") -> Row:
+    """Split attendees the way `Ledger.seed_day` does, so these rows look like
+    real ones - the first fixture put `"Name <addr>"` straight into
+    `attendees` and hid that `observe` could never learn a name."""
     start = MON + timedelta(days=days)
+    parts = [attendee_parts(a) for a in attendees]
     return Row(
-        event_id=f"{summary}-{days}",
+        event_id=event_id or f"{summary}-{days}",
         start=start,
         end=start + timedelta(minutes=30),
         summary=summary,
-        attendees=list(attendees),
+        attendees=[addr for addr, _ in parts],
+        attendee_names=[name for _, name in parts],
     )
 
 
@@ -338,3 +343,128 @@ def test_an_empty_directory_falls_back_to_the_configured_list(directory):
     audience = Audience.from_directory(directory, {"PREP_LEADERSHIP": "old@example.com"})
 
     assert audience.has_leadership(["old@example.com"])
+
+
+# --------------------------------------------------------------------------
+# what the review found
+# --------------------------------------------------------------------------
+
+
+def test_a_correction_after_an_observation_lands_on_the_same_person(directory):
+    """Observation minted key `alder-wren` from the address; then he ran
+    `people add vp-data --email wren.alder@... --dm D0AWREN --leadership`.
+    Two entries, and resolve(address) kept returning the stub with no dm and
+    no leadership - the precedence contract bypassed. Verified by running it."""
+    directory.observe(
+        _row("1:1", "me@example.com", "wren.alder@example.com"), principal="me@example.com"
+    )
+
+    directory.remember(
+        "vp-data", email="wren.alder@example.com", dm="D0AWREN", leadership=True, source=STATED
+    )
+
+    found = directory.resolve("wren.alder@example.com")
+    assert found.key == "vp-data" and found.dm == "D0AWREN" and found.leadership
+    assert found.met == 1, "the observation was lost in the fold"
+    assert len(directory.all()) == 1
+
+
+def test_the_fold_survives_a_reload(tmp_path):
+    log = tmp_path / "events.db"
+    first = People(EventLog.open(log))
+    first.observe(
+        _row("1:1", "me@example.com", "wren.alder@example.com"), principal="me@example.com"
+    )
+    first.remember("vp-data", email="wren.alder@example.com", dm="D0AWREN", source=STATED)
+
+    reloaded = People(EventLog.open(log))
+
+    assert reloaded.resolve("wren.alder@example.com").key == "vp-data"
+    assert len(reloaded.all()) == 1
+
+
+def test_a_strangers_address_never_folds_into_a_known_person(directory):
+    """`wren@vendorco.com` shares a token with Wren Alder. The first version
+    resolved observations through the name fallback, appended the vendor's
+    address to the VP and so pointed a stranger at her DM channel."""
+    directory.remember("vp-data", email="wren.alder@example.com", dm="D0AWREN", leadership=True)
+
+    directory.observe(
+        _row("Vendor call", "me@example.com", "wren@vendorco.com"), principal="me@example.com"
+    )
+
+    vp = directory.resolve("wren.alder@example.com")
+    assert vp.emails == ("wren.alder@example.com",)
+    stranger = directory.resolve("wren@vendorco.com")
+    assert stranger is not None and stranger.key != "vp-data" and stranger.dm is None
+
+
+def test_an_address_query_never_falls_through_to_name_tokens(directory):
+    directory.remember("vp-data", email="wren.alder@example.com", display_name="Wren Alder")
+
+    assert directory.resolve("wren@vendorco.com") is None
+
+
+def test_each_instance_of_a_recurring_meeting_counts(directory):
+    """`Row.event_id` is google's SERIES id, so a marker on it alone counted a
+    weekly 1:1 once and `met` stuck at 1 forever."""
+    for days in (0, 7, 14):
+        directory.observe(
+            _row("1:1", "me@example.com", "wren@example.com", days=days, event_id="series-1"),
+            principal="me@example.com",
+        )
+
+    person = directory.resolve("wren@example.com")
+    assert person.met == 3
+    assert person.last_met == (MON + timedelta(days=14)).date()
+
+
+def test_resolve_finds_a_person_by_their_key(directory):
+    """`people show vp-data` is the form every doc uses, and it printed
+    "not in the directory"."""
+    directory.remember("vp-data", email="wren.alder@example.com", display_name="Wren Alder")
+
+    assert directory.resolve("vp-data") is not None
+
+
+def test_a_meeting_teaches_a_display_name(directory):
+    """`observe` parsed names out of `attendees`; `seed_day` puts them in
+    `attendee_names`. So no real row ever taught a name."""
+    directory.observe(
+        _row("Summit", "me@example.com", "Jo Strauss <jo@example.com>"), principal="me@example.com"
+    )
+
+    assert directory.resolve("jo@example.com").display_name == "Jo Strauss"
+    assert directory.resolve("jo strauss") is not None
+
+
+def test_a_valueless_log_flag_is_refused_not_written_to_a_file_named_None(tmp_path, monkeypatch):
+    from daydag.people import main
+
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit):
+        main(["add", "x", "--email", "a@example.com", "--log"])
+    assert not (tmp_path / "None").exists()
+
+
+def test_directory_leadership_is_unioned_with_the_configured_list(directory):
+    """Either/or dropped every configured leader the moment one was stored."""
+    from daydag.prep import Audience
+
+    directory.remember("cto", email="cto@example.com", leadership=True)
+
+    audience = Audience.from_directory(directory, {"PREP_LEADERSHIP": "ceo@example.com"})
+
+    assert audience.has_leadership(["ceo@example.com"])
+    assert audience.has_leadership(["cto@example.com"])
+
+
+def test_the_org_domain_falls_back_to_the_principals_address(directory):
+    """`ORG_EMAIL_DOMAIN` unset was the documented state, and it left the
+    external-party rule dead. He works for the org; his address is its domain."""
+    from daydag.prep import Audience
+
+    audience = Audience.from_directory(directory, {"EMAIL_PRINCIPAL": "me@example.com"})
+
+    assert audience.has_external(["rdinh@vendor.example"])
+    assert not audience.has_external(["wren@example.com"])

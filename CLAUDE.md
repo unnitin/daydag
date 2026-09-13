@@ -16,8 +16,10 @@ Ownership map (from the weekly notes, stable): **VP-AI** → A&R Discovery + AI 
 
 **Who people are lives in the people directory, not in this file.** Slack ids,
 addresses, titles, the DM with Nitin, the group DMs they sit in, and how often
-he has met them - keyed by role token, learned from every meeting the ledger
-seeds, corrected by hand when wrong (a stated fact outranks an inferred one):
+he has met them - keyed by role token, learned from every PAST meeting the
+morning/wrap/prep loops seed, corrected by hand when wrong (a stated fact
+outranks an inferred one; `prep` reads it, brief and week-ahead still read
+`PREP_LEADERSHIP` until #119):
 
 ```sh
 python -m daydag.people show vp-data  --log ~/.local/state/daydag/events.db

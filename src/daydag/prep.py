@@ -201,16 +201,27 @@ class Audience:
         person attached, and is needed before any lookup can be trusted - so it
         stays configuration.
 
-        Falls back to the CSV when the store knows no leadership yet, so a
-        directory that is still filling up does not silently switch the rule
-        off for someone who had configured it the old way.
+        UNIONED with the `PREP_LEADERSHIP` CSV, not either/or. The first version
+        used the CSV only while the store was empty, so the first name added to
+        the store silently dropped every configured leader - the CEO in .env
+        stopped qualifying the moment the CTO was entered. And `brief` /
+        `week_ahead` still read the CSV (#119), so it has to keep working.
+
+        Internal domains: `ORG_EMAIL_DOMAIN`, or - when that is unset - the
+        domain of `EMAIL_PRINCIPAL`. He works for the org; his address is its
+        domain. Without this the external-party rule stayed dead for anyone who
+        never set the org key, which was everyone.
         """
         from_store = frozenset(
             address.casefold() for person in directory.leadership() for address in person.emails
         )
+        domains = _csv(identities, ORG_DOMAIN_KEY)
+        if not domains:
+            principal = str(identities.get("EMAIL_PRINCIPAL", "") or "")
+            _, _, domain = principal.casefold().partition("@")
+            domains = frozenset({domain}) if domain else frozenset()
         return cls(
-            leadership=from_store or _csv(identities, LEADERSHIP_KEY),
-            internal_domains=_csv(identities, ORG_DOMAIN_KEY),
+            leadership=from_store | _csv(identities, LEADERSHIP_KEY), internal_domains=domains
         )
 
     def has_leadership(self, attendees: Iterable[str]) -> bool:

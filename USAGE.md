@@ -172,10 +172,15 @@ python -m daydag.people show vp-data --log $LOG
 python -m daydag.people list         --log $LOG
 ```
 
-It **learns from meetings**: every calendar row a loop seeds adds the people in
-it, counts how often you meet them, and remembers when. It never invents a
-title from a meeting. And **what you state outranks what it infers** - correct
-an entry and no later run un-learns it.
+It **learns from meetings that have happened**: the morning, wrap and prep loops
+add the people in each seeded meeting once it is over, count how often you meet
+them, and remember when. It never invents a title from a meeting. **What you
+state outranks what it infers** - correct an entry and no later run un-learns
+it, and a correction made after someone was already observed folds the observed
+entry into the role you named.
+
+Today `prep` reads leadership from here (unioned with `PREP_LEADERSHIP`); the
+morning brief and week-ahead still read the `.env` list until #119.
 
 The Slack roster and the per-person DM/group ids that used to be `.env` keys
 live here now. `.env` keeps only the principal's id, because that has to be

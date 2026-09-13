@@ -897,3 +897,50 @@ def test_a_slack_message_with_null_text_is_not_quoted_as_the_word_None(identitie
     text = run.render("prep", now=MONDAY_PT, identities=identities, payloads=payloads)
 
     assert "None" not in text, text
+
+
+def test_a_room_never_reaches_the_stored_attendees(identities):
+    """Rooms were filtered only inside the qualifying COUNT; stored, the room's
+    domain read as an outside party to has_external and as the second person
+    of a 1:1 (#116)."""
+    from daydag.ledger import Ledger
+
+    ledger = Ledger()
+    ledger.seed_day(
+        run._seedable(
+            _payloads(
+                calendar=[
+                    _meeting(
+                        "Finance x Data",
+                        "principal@x.com",
+                        "yoni@x.com",
+                        "c_1@resource.calendar.google.com",
+                    )
+                ]
+            )
+        )
+    )
+    (row,) = ledger.open_rows()
+
+    assert row.attendees == ["principal@x.com", "yoni@x.com"]
+
+
+def test_a_past_meeting_teaches_the_directory_and_a_future_one_does_not(identities, tmp_path):
+    from daydag.people import People
+    from daydag.state import EventLog
+
+    log = tmp_path / "events.db"
+    payloads = _payloads(
+        calendar=[
+            _meeting(
+                "Yesterday sync", "principal@x.com", "wren@x.com", day="2026-09-06", at="09:00"
+            ),
+            _meeting("Tomorrow sync", "principal@x.com", "bo@x.com", day="2026-09-08", at="09:00"),
+        ]
+    )
+    run.render("morning", now=MONDAY_PT, identities=identities, payloads=payloads, log=log)
+
+    directory = People(EventLog.open(log))
+    assert directory.resolve("wren@x.com") is not None, "a past meeting taught nothing"
+    assert directory.resolve("bo@x.com") is None, "a meeting not yet held was recorded as met"
+    assert directory.resolve("principal@x.com") is None, "he was added to his own directory"

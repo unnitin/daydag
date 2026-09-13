@@ -184,13 +184,17 @@ def attendee_parts(attendee: Any) -> tuple[str, str]:
     return addr.strip(), name.strip()
 
 
-def _is_resource(attendee: Any) -> bool:
+def is_resource(attendee: Any) -> bool:
     """Whether an attendee is a room or other bookable thing, not a person."""
     if isinstance(attendee, Mapping):
         if attendee.get("resource"):
             return True
         attendee = attendee.get("email", "")
     return _RESOURCE_DOMAIN in str(attendee).casefold()
+
+
+#: Internal callers predate the public name.
+_is_resource = is_resource
 
 
 #: Google attaches the Gemini notes doc to the calendar event. Measured as
@@ -287,7 +291,12 @@ class Ledger:
                 continue
             # The one place an attendee is parsed. Everything downstream reads
             # `attendees` as bare addresses and `attendee_names` beside them.
-            parts = [attendee_parts(a) for a in (event.get("attendees") or [])]
+            # Rooms filtered HERE, not only in the qualifying count: stored, a
+            # room's resource.calendar.google.com domain read as an outside
+            # party to has_external and as the second person of a "1:1".
+            parts = [
+                attendee_parts(a) for a in (event.get("attendees") or []) if not _is_resource(a)
+            ]
             parts = [(addr, name) for addr, name in parts if addr]
             row = Row(
                 event_id=event["id"],
