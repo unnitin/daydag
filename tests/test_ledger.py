@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from daydag.ledger import Ledger, Match, title_from_gemini_subject
+from daydag.ledger import Ledger, Match, _qualifies, title_from_gemini_subject
 
 _PT = timezone(timedelta(hours=-7))
 
@@ -282,3 +282,125 @@ def test_a_note_from_a_meeting_that_ended_early_still_attaches():
 
     assert attached is not None, "a note from a meeting that ran short was dropped"
     assert ledger.notes_gaps(start.replace(hour=17)) == []
+
+
+# --------------------------------------------------------------------------
+# qualification, from a backtest against real calendar data (#90)
+# --------------------------------------------------------------------------
+
+
+def _event(**over):
+    base = {
+        "id": "e1",
+        "summary": "a meeting",
+        "start": datetime(2026, 9, 8, 9, 0, tzinfo=_PT),
+        "end": datetime(2026, 9, 8, 10, 0, tzinfo=_PT),
+        "attendees": ["a@example.com", "b@example.com"],
+    }
+    base.update(over)
+    return base
+
+
+def test_an_interview_qualifies_even_though_only_the_principal_is_invited():
+    """An ATS invite lists ONLY the principal - the candidate is invited
+    through a separate calendar - so the 2+ attendee rule made a 45-minute
+    interview invisible. Three of them landed on one real Friday.
+
+    The organizer is the evidence: somebody else put this in his day, which
+    is what distinguishes it from a focus block he made for himself.
+    """
+    interview = _event(
+        summary="Interview - a candidate - Product Lead",
+        attendees=["principal@example.com"],
+        organizer="recruiting@example.com",
+    )
+
+    assert _qualifies(interview)
+
+
+def test_a_solo_block_he_made_himself_is_still_not_a_meeting():
+    """The other side of that rule - it must not sweep in his own holds."""
+    own_hold = _event(summary="Focus time", attendees=["principal@example.com"])
+
+    assert not _qualifies(own_hold)
+    assert not _qualifies(_event(summary="Veda pick up", attendees=[]))
+
+
+def test_a_booked_room_is_not_a_participant():
+    """Google lists conference rooms as attendees. A solo block with a room
+    booked therefore had two "attendees" and was chased as a meeting - and a
+    room cannot take a note, so it was a gap that could never close.
+    """
+    room = "c_1887ml11ltcrgh14m2e0ahj80ojns@resource.calendar.google.com"
+    solo_in_a_room = _event(
+        summary="Focus block, room booked", attendees=["principal@example.com", room]
+    )
+
+    assert not _qualifies(solo_in_a_room)
+
+
+def test_a_real_meeting_in_a_room_still_qualifies():
+    room = "c_1887ml11ltcrgh14m2e0ahj80ojns@resource.calendar.google.com"
+    real = _event(attendees=["a@example.com", "b@example.com", room])
+
+    assert _qualifies(real)
+
+
+def test_a_hold_he_organised_himself_is_not_a_meeting_even_with_an_organizer():
+    """Every calendar entry has an organizer, including his own holds. The
+    rule is "somebody ELSE put this in his day", so the self case has to be
+    distinguishable - google marks it, and the shaper passes it through."""
+    own = _event(
+        summary="Focus time",
+        attendees=["principal@example.com"],
+        organizer="principal@example.com",
+        organizer_is_self=True,
+    )
+
+    assert not _qualifies(own)
+
+
+def test_an_organizer_with_no_self_marker_and_no_principal_is_not_assumed():
+    """If we cannot tell whose hold it is, we do not invent an answer - the
+    attendee count is the only evidence left, and it says no."""
+    unknown = _event(attendees=["principal@example.com"], organizer="someone@example.com")
+
+    assert _qualifies(unknown), "an organizer we cannot match to him reads as somebody else"
+
+
+def test_a_note_generated_hours_late_still_attaches():
+    """Measured across ~100 real notes: DELIVERY is tight (2-94 min from
+    generation to inbox), but GENERATION runs late. A Sep 10 11:00-12:00
+    meeting was generated Sep 11 00:52 - 12.9 hours after it ended - and the
+    six-hour window dropped it, so the meeting was a gap forever.
+    """
+    ledger = Ledger()
+    start = datetime(2026, 9, 10, 11, 0, tzinfo=_PT)
+    ledger.seed_day(
+        [_event(summary="Finance x Data meeting", start=start, end=start.replace(hour=12))]
+    )
+
+    attached = ledger.offer_note(
+        Match(
+            title="Finance x Data meeting",
+            arrived=datetime(2026, 9, 11, 0, 56, tzinfo=_PT),
+            attendees=[],
+            source="gemini",
+        )
+    )
+
+    assert attached is not None, "a late-generated note was dropped"
+
+
+def test_the_window_stays_short_enough_that_a_daily_standup_is_unambiguous():
+    """The bound on widening. A daily recurring meeting has rows 24h apart, so
+    a window of 24h or more lets one note match two rows - and an ambiguous
+    note attaches to NEITHER, which trades a late gap for a lost note.
+    """
+    from daydag.ledger import ARRIVAL_WINDOW, ENDS_EARLY
+
+    span = ARRIVAL_WINDOW["gemini"] + ENDS_EARLY
+
+    assert span < timedelta(hours=24), (
+        f"window {span} spans a daily recurrence; two rows can match one note"
+    )

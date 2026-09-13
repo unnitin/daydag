@@ -78,9 +78,22 @@ Then write a payloads file keyed by source:
 
 | source | must carry | what breaks without it |
 |---|---|---|
-| calendar | `id`, `summary`, `start`, `end`, `attendees` | no `end` and the ledger refuses the event - no notes-gap, today or tomorrow |
+| calendar | `id`, `summary`, `start`, `end`, `attendees`, `response_status`, `organizer`, `organizer_is_self` | no `end` and the ledger refuses the event - no notes-gap, today or tomorrow |
 | gmail | `subject`, and the mail's own `date` | a note is only matched within six hours of its meeting ending; without a date it can never attach, and its meeting is a gap forever |
 | slack | `permalink` | a claim with no link is withheld - evidence or silence |
+
+**Shaping the calendar payload**, because google's shape is not the ledger's:
+
+- `start`/`end` are `{"dateTime": ...}` - pass the inner value or the whole object, both are read.
+- `response_status` is per-attendee in google. Take it from the attendee marked `self`, or a meeting he DECLINED counts as one he attended.
+- `attendees` must be PEOPLE. Google lists conference rooms as attendees on
+  `resource.calendar.google.com`; a room cannot take a note, and counting one
+  made a solo block with a room booked look like a two-person meeting.
+- `organizer` and `organizer_is_self` decide the one-attendee case. An ATS
+  interview invite lists only him - the candidate comes through a different
+  calendar - so without an organizer a 45-minute interview is invisible. With
+  it, his own focus blocks would read as meetings, which is what
+  `organizer_is_self` prevents.
 
 A source you could not reach: **leave the key out**. That renders one
 "couldn't check X" line and the push still ships. Do not pass an empty list to

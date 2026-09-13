@@ -34,7 +34,7 @@ from __future__ import annotations
 
 import difflib
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
@@ -43,8 +43,18 @@ from typing import Any
 #: Source-dependent by necessity: Gemini mails within hours of the call, while
 #: the Notion database lags about a week. One constant would either reject every
 #: real Notion note or accept a Gemini note from two meetings later.
+#: How long after a meeting ends its notes may still arrive, by the system that
+#: WROTE them. Measured across ~100 real Gemini notes: delivery is tight (2-94
+#: minutes from generation to inbox) but GENERATION runs late, and a Sep 10
+#: 11:00-12:00 meeting was generated at 00:52 the next morning - 12.9 hours out.
+#: Six hours dropped it and the meeting was a gap forever.
+#:
+#: Bounded BELOW 24 hours on purpose, and that is the real constraint rather
+#: than a guess: a daily standup has rows 24 hours apart, so a wider window
+#: lets one note match two rows - and an ambiguous note attaches to neither,
+#: which trades a late gap for a lost note.
 ARRIVAL_WINDOW = {
-    "gemini": timedelta(hours=6),
+    "gemini": timedelta(hours=18),
     "granola": timedelta(hours=6),
     "notion": timedelta(days=10),
 }
@@ -52,7 +62,12 @@ DEFAULT_ARRIVAL_WINDOW = timedelta(hours=6)
 
 #: How far BEFORE a meeting's scheduled end its notes may still arrive. A
 #: meeting that runs short ends when it ends, and Gemini sends notes then.
-ENDS_EARLY = timedelta(minutes=30)
+#:
+#: 45, not 30: a real note arrived 37 minutes before its scheduled end
+#: (Discovery Content Discussions, scheduled 10:15-11:00, note at 10:08), so
+#: 30 dropped it. Still far short of a meeting's own length, which is what
+#: keeps it from reaching back into whatever ran before.
+ENDS_EARLY = timedelta(minutes=45)
 
 #: Gemini's subject line, which the issue #2 audit found to be rigidly
 #: structured: `Notes: "<meeting title>" <date>`. SPEC section 4 claimed the
@@ -122,6 +137,21 @@ class Row:
         return (self.event_id, self.start)
 
 
+#: Google lists conference rooms as attendees, on this domain. A room is not a
+#: participant: it cannot take a note, so counting it made a solo block with a
+#: room booked look like a two-person meeting and chased it forever (#90).
+_RESOURCE_DOMAIN = "resource.calendar.google.com"
+
+
+def _is_resource(attendee: Any) -> bool:
+    """Whether an attendee is a room or other bookable thing, not a person."""
+    if isinstance(attendee, Mapping):
+        if attendee.get("resource"):
+            return True
+        attendee = attendee.get("email", "")
+    return _RESOURCE_DOMAIN in str(attendee).casefold()
+
+
 def _qualifies(event: dict[str, Any]) -> bool:
     """Whether a calendar entry is a meeting the ledger should track.
 
@@ -129,11 +159,28 @@ def _qualifies(event: dict[str, Any]) -> bool:
     says "no notes"; a false negative is a meeting the system cannot see at all.
     """
     response = event.get("response_status", "needsAction")
-    return (
-        response not in DISQUALIFYING_RESPONSES
-        and event.get("kind", "meeting") not in NON_MEETING_KINDS
-        and len(event.get("attendees") or []) >= 2
-    )
+    if response in DISQUALIFYING_RESPONSES:
+        return False
+    if event.get("kind", "meeting") in NON_MEETING_KINDS:
+        return False
+
+    people = [a for a in (event.get("attendees") or []) if not _is_resource(a)]
+    if len(people) >= 2:
+        return True
+
+    # Somebody ELSE put this in his day. An ATS interview invite lists only
+    # the principal - the candidate is invited through a separate calendar -
+    # so the attendee count made a 45-minute interview invisible, and three
+    # landed on one real Friday (#90). An organizer who is not him is the
+    # evidence that distinguishes it from a hold he made for himself.
+    if event.get("organizer_is_self"):
+        # Every entry has an organizer, his own holds included. Google marks
+        # the self case and the shaper passes it through; without it a focus
+        # block would read as somebody else's meeting.
+        return False
+    organizer = str(event.get("organizer") or "").strip().casefold()
+    principal = str(event.get("principal") or "").strip().casefold()
+    return bool(organizer) and organizer != principal
 
 
 class Ledger:
