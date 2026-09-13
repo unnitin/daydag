@@ -781,3 +781,119 @@ def test_a_blank_selector_is_one_line_on_stderr_not_a_traceback(identities):
         run.render(
             "prep", now=MONDAY_PT, identities=identities, payloads=_payloads(), selector="  "
         )
+
+
+# --------------------------------------------------------------------------
+# what the review of the simplify pass found
+# --------------------------------------------------------------------------
+
+
+def test_two_meetings_at_the_same_time_cluster_instead_of_crashing():
+    """`sorted((start, end, event))` compared the event dicts when the instants
+    tied - TypeError on exactly the stacked-at-11:00 case, and `_clash_lines`
+    sits outside `read()`, so the whole Sunday push died."""
+    from datetime import UTC, datetime
+
+    from daydag.brief import overlap_clusters
+
+    at = datetime(2026, 9, 17, 18, 0, tzinfo=UTC)
+    a = {"summary": "Finance x Data", "start": at, "end": at.replace(hour=19)}
+    b = {"summary": "Nitin x Tony", "start": at, "end": at.replace(hour=19)}
+
+    clusters = overlap_clusters([a, b])
+
+    assert len(clusters) == 1 and len(clusters[0]) == 2
+
+
+def test_a_meeting_with_a_start_but_no_end_can_still_sit_inside_another():
+    """Same asymmetry as `_overlap_flags`, so the two detectors agree: a
+    tentative invite with no end that begins inside a hold is a clash."""
+    from datetime import UTC, datetime
+
+    from daydag.brief import overlap_clusters
+
+    hold = {
+        "summary": "Hold",
+        "start": datetime(2026, 9, 17, 16, 0, tzinfo=UTC),
+        "end": datetime(2026, 9, 17, 19, 0, tzinfo=UTC),
+    }
+    tentative = {"summary": "Maybe", "start": datetime(2026, 9, 17, 18, 0, tzinfo=UTC)}
+
+    assert len(overlap_clusters([hold, tentative])) == 1
+
+
+def test_chase_with_write_state_does_not_wipe_the_notes_gaps_a_morning_wrote(identities, tmp_path):
+    """The ledger gate handed chase an EMPTY ledger, and `_project` still ran,
+    writing `notes_gaps=[]` over the section the morning had just recorded."""
+    log = tmp_path / "events.db"
+    yesterday = _meeting("Pod Steering", "a@x.com", "b@x.com", day="2026-09-06", at="09:00")
+    run.render(
+        "morning",
+        now=MONDAY_PT,
+        identities=identities,
+        payloads=_payloads(calendar=[yesterday]),
+        log=log,
+        write_state=True,
+    )
+    (state,) = [p for p in (tmp_path / "vault").rglob("State.md")]
+    assert "Pod Steering" in state.read_text(), "the morning did not record the gap"
+
+    run.render(
+        "chase",
+        now=MONDAY_PT,
+        identities=identities,
+        payloads=_payloads(),
+        log=log,
+        write_state=True,
+    )
+
+    assert "Pod Steering" in state.read_text(), "chase --write-state erased the notes gaps"
+
+
+def test_ingest_lines_are_bulleted_like_every_other_section(identities):
+    text = run.render(
+        "ingest",
+        now=MONDAY_PT,
+        identities=identities,
+        payloads=_payloads(gmail=[{"id": "m1", "subject": "x"}, {"id": "m2"}]),
+    )
+
+    body = [
+        line
+        for line in text.splitlines()[1:]
+        if line and not line.startswith(("placed", "unplaced"))
+    ]
+    assert body and all(line.startswith("- ") for line in body), text
+
+
+def test_a_carried_chase_item_keeps_its_quote_and_permalink(identities, tmp_path):
+    """House rule 1. Bare `owner: ask` dropped both, and was invisible to
+    `brief.unsourced_claims` for want of a bullet."""
+    from daydag.state import EventLog, StateFolder
+
+    folder = StateFolder.create(tmp_path / "vault" / "DayDAG")
+    folder.write_state(chase=[{"owner": "VP-Data", "ask": "the compute plan"}])
+    log = tmp_path / "events.db"
+    EventLog.open(log).record(
+        "carry_forward",
+        owner="VP-AI",
+        ask="confirm the cutover",
+        quote="we cut over friday iirc",
+        permalink="https://slack/x",
+        key="k9",
+    )
+
+    text = run.render("chase", now=MONDAY_PT, identities=identities, payloads=_payloads(), log=log)
+
+    assert "https://slack/x" in text and "cut over friday" in text, text
+
+
+def test_a_slack_message_with_null_text_is_not_quoted_as_the_word_None(identities):
+    payloads = _payloads(
+        calendar=[_meeting("1:1 | Nitin x Wren", "a@x.com", "wren@x.com", at="11:00")],
+        slack=[{"text": None, "permalink": "https://slack/file-only"}],
+    )
+
+    text = run.render("prep", now=MONDAY_PT, identities=identities, payloads=payloads)
+
+    assert "None" not in text, text

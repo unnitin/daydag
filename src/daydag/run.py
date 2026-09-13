@@ -44,12 +44,12 @@ WHY IT EXISTS
     goes exactly where the capability boundary already is.
 
 KNOWN LIMIT
-    All seven loops in `LOOPS` render. `prep` renders the NEXT meeting worth
-    prepping, not a named one - there is no selector - and its points come
-    from the overnight Slack payload rather than the row-specific searches
-    `prep.sources` would build, because the two-phase plan cannot know the row
-    before the fetch. FIRING a prep ping at a meeting's start time is
-    scheduling, and belongs to #25, not here.
+    All seven loops in `LOOPS` render. Without `--for`, `prep` renders the
+    NEXT meeting worth prepping; with it, the one he named (`prep_selector`).
+    Either way its points come from the overnight Slack payload rather than
+    the row-specific searches `prep.sources` would build, because the two-phase
+    plan cannot know the row before the fetch. FIRING a prep ping at a
+    meeting's start time is scheduling, and belongs to #25, not here.
 
     The plan is advisory. Nothing verifies the agent actually ran the query it
     was given rather than one of its own, which is why every check that
@@ -75,8 +75,7 @@ from daydag.prep import Audience, Reason, build, point, prep_worthy
 from daydag.prep_selector import HORIZON_DAYS, select
 from daydag.runlog import RunLog
 from daydag.smoke import REACHED
-from daydag.state import EventLog, NotesGap, StateFolder, read_section, split_link
-from daydag.voice import clipped
+from daydag.state import EventLog, NotesGap, StateFolder, read_section
 
 __all__ = ["LOOPS", "Plan", "RunError", "Step", "main", "plan", "render"]
 
@@ -91,6 +90,13 @@ LOOPS = ("morning", "eod", "week-ahead", "prep", "ingest", "chase", "ship")
 
 #: Loops whose plan asks for no calendar at all.
 _NO_CALENDAR = frozenset({"ingest", "chase", "ship"})
+
+#: Loops that READ the rehydrated ledger - and therefore the only loops whose
+#: `--write-state` may project notes gaps. `week-ahead` builds its own ledger;
+#: `chase`, `ingest` and `ship` never look at one. The first gate was
+#: `_NO_CALENDAR`, which handed chase an EMPTY ledger and then let `_project`
+#: write `notes_gaps=[]` over the section the morning run had just recorded.
+_NEEDS_LEDGER = frozenset({"morning", "eod", "prep"})
 
 
 class RunError(RuntimeError):
@@ -533,7 +539,11 @@ def _jsonable(value: Any) -> Any:
 
 
 def _chase(folder: StateFolder | None, log: EventLog | None) -> str:
-    """What is owed to him, oldest first, with the ones past the clock marked.
+    """What is owed to him, oldest first.
+
+    Not yet marked against the 2-business-day clock - that is the chaser's
+    work (#18) and needs asked-on dates this loop does not have. An earlier
+    docstring promised the marks; nothing produced them.
 
     Reads `State.md` rather than deriving the list: it is the file he CORRECTS
     BY HAND, and CLAUDE.md is explicit that a hand edit is an event which wins
@@ -559,7 +569,7 @@ def _chase(folder: StateFolder | None, log: EventLog | None) -> str:
     # item without one is admitted as unsourced - which is what lets the shared
     # `brief.unsourced_claims` check see this loop's output at all. Hand-rolled
     # `f"- {line}"` bullets were a second format for one list.
-    sections = [brief.Section("chase list", tuple(brief.claim(*split_link(b)) for b in lines))]
+    sections = [brief.Section("chase list", tuple(brief.line_from_state(b) for b in lines))]
 
     # Items the log is carrying that the file has not got to yet. `_visible`
     # is the ONE gate on sensitivity and it lives in `state`; this reads what
@@ -575,8 +585,17 @@ def _chase(folder: StateFolder | None, log: EventLog | None) -> str:
             sections.append(
                 brief.Section(
                     f"not yet in State.md ({len(carried)})",
+                    # Through `claim`, so the row's own quote and permalink
+                    # render - house rule 1 - and the line is bulleted like the
+                    # section above it. Bare `owner: ask` strings dropped both
+                    # and were invisible to `brief.unsourced_claims`.
                     tuple(
-                        f"{item.get('owner', 'someone')}: {item.get('ask', '')}" for item in carried
+                        brief.claim(
+                            f"{item.get('owner', 'someone')} · {item.get('ask', '')}",
+                            item.get("permalink") or None,
+                            quote=item.get("quote") or None,
+                        )
+                        for item in carried
                     ),
                 )
             )
@@ -611,14 +630,15 @@ def _ingest(sources: _Payloads) -> str:
     placed = classify_items(items)
     counts = Counter(record.label for record in placed if record.label)
     sections = [
-        brief.Section("placed", tuple(f"{label}: {n}" for label, n in sorted(counts.items())))
+        brief.Section("placed", tuple(f"- {label}: {n}" for label, n in sorted(counts.items())))
     ]
     # `ingestion.unplaced` is the one definition of "could not be placed"; a
     # second predicate here stopped following it the moment the first changed.
     if missing := unplaced(placed):
         sections.append(
             brief.Section(
-                f"unplaced ({len(missing)}) - these need you, not a guess", tuple(missing)
+                f"unplaced ({len(missing)}) - these need you, not a guess",
+                tuple(f"- {item_id}" for item_id in missing),
             )
         )
     return brief.render_push(
@@ -700,21 +720,30 @@ def _points(payloads: Mapping[str, Any]) -> list[Any]:
     that a claim carries its link, and a prep point he cannot click through to
     is one he has to take on trust in a meeting.
     """
-    # `clipped`, not a raw slice: it collapses a multi-line message onto the one
-    # line `Point.render` has, and marks a mid-word cut with an ellipsis rather
-    # than presenting it as verbatim - house rule 1. QUOTE_CAP, not a literal,
-    # so the quote budget is spelt in one place.
-    return [
-        point(
-            clipped(message.get("text", ""), brief.QUOTE_CAP, ellipsis="..."),
-            "raised since you last met",
-            quote=clipped(message.get("text", ""), brief.QUOTE_CAP, ellipsis="..."),
-            permalink=message.get("permalink"),
-            source="slack",
+    # `brief.short`, not a raw slice: it collapses a multi-line message onto
+    # the one line `Point.render` has, marks a mid-word cut with an ellipsis
+    # rather than presenting it as verbatim (house rule 1), and holds the quote
+    # budget in one place. `or ""` because a file-only message carries
+    # `"text": null`, and str(None) is the word None quoted as if he said it.
+    points: list[Any] = []
+    for message in payloads.get("slack", []):
+        if not isinstance(message, Mapping) or not message.get("permalink"):
+            continue
+        text = brief.short(message.get("text") or "")
+        if not text:
+            continue
+        points.append(
+            point(
+                text,
+                "raised since you last met",
+                quote=text,
+                permalink=message.get("permalink"),
+                source="slack",
+            )
         )
-        for message in payloads.get("slack", [])
-        if isinstance(message, Mapping) and message.get("permalink")
-    ][:3]
+        if len(points) == 3:
+            break
+    return points
 
 
 def render(
@@ -741,11 +770,12 @@ def render(
     sources = _Payloads(payloads)
     folder = state if state is not None else _vault(identities)
     events = log if log is None else EventLog.open(log)
-    if loop in _NO_CALENDAR:
-        # `chase`, `ingest` and `ship` never read the ledger. Rehydrating every
-        # remembered meeting and offering every note to it is a full replay of
-        # the meeting table for a loop that then ignores the result - and the
-        # table grows with every run, so the waste grows with the log.
+    if loop not in _NEEDS_LEDGER:
+        # `chase`, `ingest`, `ship` and `week-ahead` never read this ledger
+        # (week-ahead builds its own). Rehydrating every remembered meeting and
+        # offering every note to it is a full replay of the meeting table for a
+        # loop that then ignores the result - and the table grows with every
+        # run, so the waste grows with the log.
         ledger = Ledger()
     else:
         ledger = _remembered(events)
@@ -804,7 +834,11 @@ def render(
         # reported as a permanent "meeting w/ no notes", and a rescheduled one
         # became two rows - a phantom gap beside the real meeting.
         _remember(events, _seeded(payloads))
-    if write_state and folder is not None and events is not None:
+    # `_project` writes the notes-gaps section FROM the ledger, so a loop that
+    # was handed an empty one must not project - it would replace what the
+    # morning run recorded with nothing, silently, under a flag main() accepts
+    # for every loop.
+    if write_state and loop in _NEEDS_LEDGER and folder is not None and events is not None:
         _project(folder, events, ledger, now)
     return text
 

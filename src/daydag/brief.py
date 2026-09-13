@@ -459,19 +459,29 @@ def overlap_clusters(events: Sequence[Mapping[str, Any]]) -> list[list[Mapping[s
     rather than spelt again in a second module.
 
     Linear after the sort: starts are ascending, so a meeting either overlaps
-    the running end of the open cluster or opens a new one. A meeting missing
-    either instant cannot be shown to collide and is left out.
+    the running end of the open cluster or opens a new one. Sorted on the two
+    INSTANTS only - the first version sorted `(start, end, event)` tuples, so two
+    invites at the same 11:00-12:00 fell through to comparing the event dicts
+    and raised TypeError. That is the stacked-at-11:00 case this exists for, and
+    it took the whole Sunday push down.
+
+    A meeting with a start but no end is read as ending when it starts, so it
+    can still fall INSIDE another's span - the same asymmetry `_overlap_flags`
+    has, where only the earlier of a pair needs an end. A meeting with no start
+    cannot be placed and is left out; both detectors agree on that too.
     """
     spans = sorted(
-        (start, end, event)
-        for event in events
-        if (start := _local(event.get("start"))) is not None
-        and (end := _local(event.get("end"))) is not None
+        (
+            (start, _local(event.get("end")) or start, event)
+            for event in events
+            if (start := _local(event.get("start"))) is not None
+        ),
+        key=lambda span: (span[0], span[1]),
     )
     clusters: list[list[Mapping[str, Any]]] = []
     reach: datetime | None = None
     for start, end, event in spans:
-        if clusters and reach is not None and start < reach:
+        if reach is not None and start < reach:
             clusters[-1].append(event)
             reach = max(reach, end)
         else:
@@ -700,6 +710,12 @@ def _line_from_state(body: str) -> str:
     return claim(text, link)
 
 
+#: Public names for the two helpers `run` and `week_ahead` were re-spelling -
+#: one bullet-from-State.md rule and one quote budget, held here.
+line_from_state = _line_from_state
+short = _short
+
+
 def _seed_and_gaps(ledger: Ledger, events: Sequence[Mapping[str, Any]], now: datetime) -> list[str]:
     """Seed today's rows, then report yesterday's meetings that produced nothing.
 
@@ -774,7 +790,9 @@ def _overnight_lines(now: datetime, principal: str, sources: Sources, read: Read
         if not _is_overnight(message, window):
             continue
         who = message.get("who") or message.get("from") or "someone"
-        lines.append(claim(str(who), _link(message), quote=str(message.get("text", ""))))
+        # `or ""`: a file-only Slack message carries `"text": null`, and str(None)
+        # is the word None, quoted as if he had said it.
+        lines.append(claim(str(who), _link(message), quote=str(message.get("text") or "")))
 
     # `after` is the evening the window opens, not today: a note that landed
     # at 7pm yesterday is overnight mail, and today-only would miss all of it.
