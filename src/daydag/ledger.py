@@ -206,8 +206,15 @@ def _declares_note(event: Mapping[str, Any]) -> bool:
     )
 
 
-def _qualifies(event: dict[str, Any]) -> bool:
-    """Whether a calendar entry is a meeting the ledger should track.
+def qualifies(event: Mapping[str, Any]) -> bool:
+    """Whether a calendar entry is a meeting worth tracking or reporting.
+
+    PUBLIC because more than one loop has to agree on it. The week-ahead built
+    its own idea of "a meeting" - one check, `kind not in NON_MEETING_KINDS` -
+    against the four here, and so rendered a meeting he had DECLINED and a
+    personal errand with no attendees as part of his week, while
+    `monday_prep_queue`, reading the same events through the ledger, dropped
+    both. Two qualification paths in one module, disagreeing silently.
 
     Deliberately inclusive. A false positive costs one line in a brief that
     says "no notes"; a false negative is a meeting the system cannot see at all.
@@ -250,7 +257,7 @@ class Ledger:
     def seed_day(self, events: Iterable[dict[str, Any]]) -> None:
         """Create a row per qualifying event. Idempotent per instance."""
         for event in events:
-            if not _qualifies(event):
+            if not qualifies(event):
                 continue
             row = Row(
                 event_id=event["id"],
@@ -389,3 +396,38 @@ class Ledger:
         return [
             row.summary for row in self.open_rows() if row.end < as_of and not row.notes_declared
         ]
+
+
+def part_of_the_week(event: Mapping[str, Any]) -> bool:
+    """Whether an entry belongs on the page describing his week.
+
+    Close to `qualifies`, and deliberately NOT the same question. `qualifies`
+    asks "should the ledger track this for notes", and answers no for a record
+    missing the fields it reads. Here the question is "is this his week", where
+    dropping an unreadable record loses a real meeting from the page - the
+    under-reporting failure he has no way to notice, as against a stray line he
+    skims past.
+
+    So this drops only what it can POSITIVELY read as not his week:
+
+      * a response he declined
+      * a non-meeting kind - OOO, a focus block, a hold
+      * a solo entry he organised himself, which means `attendees` is PRESENT
+        and holds fewer than two people. Present-and-empty is a personal
+        errand; ABSENT is a record we cannot judge, and that one is kept.
+    """
+    if event.get("response_status", "needsAction") in DISQUALIFYING_RESPONSES:
+        return False
+    if event.get("kind", "meeting") in NON_MEETING_KINDS:
+        return False
+    attendees = event.get("attendees")
+    if attendees is not None and event.get("organizer_is_self"):
+        people = [a for a in attendees if not _is_resource(a)]
+        if len(people) < 2:
+            return False
+    return True
+
+
+#: The old private name. `tests/test_ledger.py` and any caller written before
+#: the week-ahead needed this too still import it.
+_qualifies = qualifies
