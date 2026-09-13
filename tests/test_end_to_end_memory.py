@@ -112,7 +112,7 @@ def test_a_meeting_that_did_produce_a_note_is_not_a_gap(home):
                     "subject": 'Notes: "Pod Steering" 2026-09-07',
                     "id": "m1",
                     # Its own arrival, as a real payload carries - a note is
-                    # only matched inside six hours of the meeting ending.
+                    # only matched inside `ARRIVAL_WINDOW` of the meeting ending.
                     "date": MONDAY.replace(hour=10, minute=30).isoformat(),  # after it ended
                 }
             ],

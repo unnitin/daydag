@@ -257,7 +257,16 @@ def test_slack_is_asked_by_id_and_ordered_by_time():
     assert len(sources.slack_queries) == 1
     query = sources.slack_queries[0]
     assert f"<@{PRINCIPAL}>" in query, "a display name in a search silently matches nothing"
-    assert "sort:timestamp sort_dir:asc" in query
+    # DESCENDING, and the direction is load-bearing rather than cosmetic.
+    # `after:` resolves to a whole day, so the query returns from midnight while
+    # the window opens at 6pm - and Slack pages its results. Ascending fills
+    # page one with the OLDEST messages in the range, every one of which this
+    # window discards, and leaves the ones it wants on a page nobody fetches.
+    # Measured against a real day: all 20 ascending results predated the cutoff,
+    # so the overnight section was structurally empty on any busy day.
+    assert "sort:timestamp sort_dir:desc" in query, (
+        "ascending puts the wanted messages on a page the plan never requests"
+    )
 
 
 def test_the_overnight_delta_is_cut_at_6pm_not_at_midnight():
@@ -916,3 +925,29 @@ def test_render_push_omits_empty_sections_and_names_dead_sources():
     assert "closed today (1)" in text
     assert "moved (0)" not in text
     assert "couldn't check the pulse" in text
+
+
+def test_a_message_from_after_now_is_not_overnight():
+    """The window is bounded at BOTH ends, which only bites in backfill.
+
+    `now` is a parameter, so a replayed or backfilled run has a `now` in the
+    past - and Slack's day-granular `after:` happily returns everything since.
+    Measured on real data: a brief for 06:40 reported a message sent at 18:06
+    THAT EVENING as "overnight", twelve hours of its own future, and nothing in
+    the output said so.
+    """
+    after_now = (NOW + timedelta(hours=12)).timestamp()
+    sources = FakeSources(
+        messages=[
+            {
+                "ts": str(after_now),
+                "who": "Jonathan",
+                "text": "sent twelve hours after the brief ran",
+                "permalink": "https://slack/after",
+            }
+        ]
+    )
+
+    text = _assemble(sources).render()
+
+    assert "twelve hours after" not in text, f"the brief reported its own future:\n{text}"
