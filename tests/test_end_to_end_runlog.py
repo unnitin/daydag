@@ -105,7 +105,14 @@ def test_a_morning_run_leaves_its_row_in_the_log_and_nothing_in_the_vault(
         )
         assert [item.title for item in pulse.items()] == ["CDI-596 cutover rehearsal"]
 
-        log.record("loop_opened", key="CDI-596", owner="VP-Data", ask="cutover rehearsal", day=1)
+        log.record(
+            "loop_opened",
+            sensitivity="normal",
+            key="CDI-596",
+            owner="VP-Data",
+            ask="cutover rehearsal",
+            day=1,
+        )
         log.record(
             "carry_forward",
             sensitivity="private",

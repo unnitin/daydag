@@ -193,7 +193,14 @@ def test_a_whole_morning_arrives_as_one_assembled_brief(tmp_path, landings, git_
     # -- event log -> State.md, private items withheld ---------------------
     folder = StateFolder.create(tmp_path / "DayDAG")
     log = EventLog.open(tmp_path / "events.db")
-    log.record("loop_opened", key="CDI-596", owner="VP-Data", ask="cutover rehearsal", day=1)
+    log.record(
+        "loop_opened",
+        sensitivity="normal",
+        key="CDI-596",
+        owner="VP-Data",
+        ask="cutover rehearsal",
+        day=1,
+    )
     log.record(
         "carry_forward",
         sensitivity="private",

@@ -507,7 +507,14 @@ def test_a_damaged_run_row_cannot_blank_the_chase_list(runlog, log):
     decode would take `State.md` down wholesale - over a row that has nothing to
     do with the chase list at all.
     """
-    log.record("loop_opened", key="CDI-596", owner="VP-Data", ask="cutover rehearsal", day=1)
+    log.record(
+        "loop_opened",
+        sensitivity="normal",
+        key="CDI-596",
+        owner="VP-Data",
+        ask="cutover rehearsal",
+        day=1,
+    )
     log._db.execute("INSERT INTO events (kind, payload) VALUES (?, ?)", (RUN, '{"at": "2026-'))
     log._db.commit()
 

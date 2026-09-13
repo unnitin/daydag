@@ -80,9 +80,9 @@ def test_sensitive_items_never_reach_the_vault(folder):
 def test_event_log_answers_median_days_to_answer():
     """The reason the log exists: markdown cannot answer this (SPEC section 8)."""
     log = EventLog.open(":memory:")
-    log.record("loop_opened", key="a", day=0)
+    log.record("loop_opened", sensitivity="normal", key="a", day=0)
     log.record("loop_answered", key="a", day=4)
-    log.record("loop_opened", key="b", day=0)
+    log.record("loop_opened", sensitivity="normal", key="b", day=0)
     log.record("loop_answered", key="b", day=2)
     assert log.median_days_to_answer() == 3
 
@@ -158,7 +158,14 @@ def test_a_stamp_in_another_offset_comes_back_as_utc():
 def test_chase_items_returns_the_one_shape_both_sides_are_held_to():
     """`EventLog.chase_items` builds `ChaseItem`, not a bare dict merge."""
     log = EventLog.open(":memory:")
-    log.record("loop_opened", key="a", owner="seth", ask="compute consolidation", day=0)
+    log.record(
+        "loop_opened",
+        sensitivity="normal",
+        key="a",
+        owner="seth",
+        ask="compute consolidation",
+        day=0,
+    )
 
     (item,) = log.chase_items()
 
@@ -174,7 +181,7 @@ def test_a_chase_item_recorded_with_only_a_key_warns_instead_of_a_bare_bullet(fo
     """The exact bug in #63: a log entry with only `key` used to render `- ?`,
     a formatting glitch standing in for data nobody agreed had to be there."""
     log = EventLog.open(":memory:")
-    log.record("loop_opened", key="DATA-812", day=0)
+    log.record("loop_opened", sensitivity="normal", key="DATA-812", day=0)
 
     folder.write_state(chase=log.chase_items())
 
@@ -259,7 +266,7 @@ def test_a_chase_item_keeps_fields_outside_its_own_schema():
     read into a `KeyError`. The nine are GUARANTEED to exist; they were never
     meant to be all there is.
     """
-    log.record("loop_opened", key="k1", owner="VP-Data", ask="ship it", day=5)
+    log.record("loop_opened", sensitivity="normal", key="k1", owner="VP-Data", ask="ship it", day=5)
 
     item = log.chase_items()[0]
 
@@ -331,3 +338,77 @@ def test_a_caller_passing_a_plain_dict_still_gets_its_own_sensitivity_honoured()
         ChaseItem.from_payload({"owner": "o", "sensitivity": "private"}).get("sensitivity")
         == "private"
     )
+
+
+# --------------------------------------------------------------------------
+# guardrail 3 fails CLOSED (#105)
+# --------------------------------------------------------------------------
+
+
+def test_a_vault_bound_record_without_a_sensitivity_is_refused(tmp_path):
+    """The gate filters what is MARKED private. Nothing marked automatically, so
+    an unmarked comp item reached a plaintext State.md. Now the writer cannot
+    forget: the omission raises instead of defaulting to normal."""
+    from daydag.state import EventLog, SensitivityRequired
+
+    log = EventLog.open(tmp_path / "events.db")
+
+    with pytest.raises(SensitivityRequired):
+        log.record("carry_forward", owner="VP-AI", ask="comp: 145k base plus equity", key="k1")
+    with pytest.raises(SensitivityRequired):
+        log.record("loop_opened", owner="VP-Data", ask="the compute plan", key="k2")
+
+
+def test_a_kind_that_never_reaches_the_vault_still_defaults(tmp_path):
+    """Run-log rows and remembered meetings are not projected; requiring the
+    argument there would be ceremony with no gate behind it."""
+    from daydag.state import EventLog
+
+    log = EventLog.open(tmp_path / "events.db")
+    log.record("run", loop="morning")
+    log.record("meeting", id="e1")
+
+    assert len(log.recorded("run")) == 1
+
+
+def test_classify_reads_house_rule_7_vocabulary_as_private():
+    from daydag.state import classify_sensitivity
+
+    for text in (
+        "comp: 145k base plus equity",
+        "discussed her relocation package",
+        "PIP conversation with the contractor",
+        "term sheet from the acquirer",
+        "headcount for Q4",
+    ):
+        assert classify_sensitivity(text) == "private", text
+
+
+def test_classify_reads_a_dm_origin_as_private_whatever_the_words():
+    from daydag.state import classify_sensitivity
+
+    assert classify_sensitivity("can you send the deck", origin="dm") == "private"
+    assert classify_sensitivity("standup moved to 9:15", origin="mpim") == "private"
+
+
+def test_classify_leaves_ordinary_work_normal():
+    from daydag.state import classify_sensitivity
+
+    assert classify_sensitivity("the compute consolidation plan") == "normal"
+    assert classify_sensitivity("cutover rehearsal for CDI-596", origin="channel") == "normal"
+
+
+def test_an_item_classified_from_a_comp_quote_never_reaches_the_vault(tmp_path):
+    """End to end: the probe that opened #105, with the classifier in the loop."""
+    from daydag.state import EventLog, StateFolder, classify_sensitivity
+
+    log = EventLog.open(tmp_path / "events.db")
+    ask = "comp discussion: relocation package"
+    log.record(
+        "carry_forward", sensitivity=classify_sensitivity(ask), owner="VP-AI", ask=ask, key="k"
+    )
+    folder = StateFolder.create(tmp_path / "vault" / "DayDAG")
+
+    folder.write_state(chase=log.chase_items())
+
+    assert "relocation" not in folder.state_path.read_text()

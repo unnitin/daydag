@@ -11,7 +11,7 @@ USING IT
     queue.render()                          # the block for the next push
 
     log = EventLog.open(path)               # SQLite, OUTSIDE the vault
-    log.record("loop_opened", sensitivity="private", **payload)
+    log.record("loop_opened", sensitivity=classify_sensitivity(ask, origin="dm"), **payload)
     log.chase_items()
     log.median_days_to_answer()
 
@@ -36,6 +36,12 @@ CONTRACTS
        in the margin cannot be overwritten before it is read.
     6. Rendering a decision counts as ASKING it. That is what lets an
        unanswered item age out instead of being re-asked forever.
+    7. A VAULT-BOUND kind cannot be recorded without saying how sensitive it
+       is. `record("loop_opened", ...)` with no `sensitivity` raises; the gate
+       in (2) filters what is MARKED private, and a gate that depends on the
+       writer remembering to mark is not a gate (#105). `classify_sensitivity`
+       is the answer to pass: private for anything from a DM, or carrying
+       personnel / comp / M&A vocabulary - house rule 7's three categories.
 
 WHY IT EXISTS
     The folder is markdown a human corrects by hand, and that is the reason
@@ -551,6 +557,58 @@ class _Event:
     payload: dict[str, Any]
 
 
+#: Kinds `chase_items` projects into `State.md`. Recording one without an
+#: explicit sensitivity is refused - see contract 7.
+VAULT_BOUND = frozenset({"loop_opened", "carry_forward"})
+
+#: House rule 7's categories, as the words that carry them. A FLOOR, not a
+#: ceiling: matching any of these makes an item private; matching none proves
+#: nothing, which is why a DM origin is decisive on its own - that is where
+#: these conversations actually happen. Extend it, never narrow it.
+_SENSITIVE_TERMS = re.compile(
+    r"\b(?:"
+    r"salar(?:y|ies)|comp(?:ensation)?|pay(?:\s*(?:band|rise|cut|bump))?|"
+    r"\$?\d{2,3}k|equity|stock|rsus?|options? grant|bonus|raise|offer(?:\s*letter)?|"
+    r"relocation|severance|pip|performance (?:plan|review|improvement)|"
+    r"terminat(?:e|ed|ion)|fir(?:e|ed|ing)|let go|layoffs?|resign(?:ation|ed|ing)?|"
+    r"headcount|promot(?:e|ed|ion)|demot(?:e|ed|ion)|visa|immigration|medical|"
+    r"leave of absence|acqui(?:re|red|sition)|merger|m&a|due diligence|term sheet|"
+    r"valuation|investor|board (?:deck|meeting)"
+    r")\b",
+    re.IGNORECASE,
+)
+
+#: Slack conversation types that are a DM or group DM.
+_DM_ORIGINS = frozenset({"dm", "im", "gdm", "mpim", "group_dm", "group dm"})
+
+
+def classify_sensitivity(*texts: Any, origin: str = "") -> str:
+    """``"private"`` or ``"normal"`` for something about to be recorded.
+
+    Two rules, either sufficient. ``origin`` naming a DM or group DM is
+    private on its own: house rule 7's three categories - personnel, comp,
+    M&A - are exactly the conversations that happen in DMs, and the one time
+    an unmarked item was traced it had come from one. Any text carrying the
+    vocabulary in `_SENSITIVE_TERMS` is private regardless of where it came
+    from.
+
+    Wrong-way-private costs a line missing from a vault file he can still read
+    in his DM. Wrong-way-normal has already synced to every device by the time
+    anyone notices. So when in doubt this says private, and a caller who knows
+    better says ``"normal"`` explicitly.
+    """
+    if str(origin).strip().casefold() in _DM_ORIGINS:
+        return "private"
+    for text in texts:
+        if text and _SENSITIVE_TERMS.search(str(text)):
+            return "private"
+    return "normal"
+
+
+class SensitivityRequired(ValueError):
+    """A vault-bound record was written without saying how sensitive it is."""
+
+
 class EventLog:
     """Append-mostly SQLite, outside the vault.
 
@@ -573,7 +631,22 @@ class EventLog:
     def open(cls, path: str | Path) -> EventLog:
         return cls(sqlite3.connect(str(path)))
 
-    def record(self, kind: str, *, sensitivity: str = "normal", **payload: Any) -> None:
+    def record(self, kind: str, *, sensitivity: str | None = None, **payload: Any) -> None:
+        """Append one event.
+
+        ``sensitivity`` may be omitted for a kind that never reaches the vault -
+        a run-log row, a remembered meeting. For a kind in `VAULT_BOUND` it is
+        REQUIRED, and the omission raises rather than defaulting to "normal":
+        the default was how an unmarked comp item reached a plaintext
+        `State.md` (#105). Pass `classify_sensitivity(...)` if you do not know.
+        """
+        if sensitivity is None:
+            if kind in VAULT_BOUND:
+                raise SensitivityRequired(
+                    f"{kind!r} is projected into the vault: say sensitivity="
+                    '"private" or "normal" explicitly - classify_sensitivity() decides it'
+                )
+            sensitivity = "normal"
         self._db.execute(
             "INSERT INTO events (kind, sensitivity, payload) VALUES (?, ?, ?)",
             (kind, sensitivity, json.dumps(payload)),
