@@ -78,7 +78,7 @@ Then write a payloads file keyed by source:
 
 | source | must carry | what breaks without it |
 |---|---|---|
-| calendar | `id`, `summary`, `start`, `end`, `attendees`, `response_status`, `organizer`, `organizer_is_self`, `notes_attached` | no `end` and the ledger refuses the event - no notes-gap, today or tomorrow |
+| calendar | `id`, `summary`, `start`, `end`, `attendees`, `response_status`, `organizer`, `organizer_is_self`, `notes_attached`, `permalink` (`htmlLink`) | no `end` and the ledger refuses the event - no notes-gap, today or tomorrow. No `permalink` and EVERY line renders "couldn't source this one", because a claim without evidence is tagged rather than trusted |
 | gmail | `subject`, and the mail's own `date` | without a date a note can never attach to its meeting, and ingestion loses it |
 | slack | `permalink` | a claim with no link is withheld - evidence or silence |
 

@@ -497,3 +497,132 @@ def test_a_thin_week_still_renders_a_short_honest_push():
     assert text.startswith("week ahead")
     assert brief.unsourced_claims(text) == []
     assert voice_violations(text) == []
+
+
+# --------------------------------------------------------------------------
+# clashes, and one qualification shared with the ledger (#98)
+# --------------------------------------------------------------------------
+
+
+def test_overlapping_meetings_are_surfaced_as_a_clash():
+    """The most valuable thing on a "prepare my week" page, and it was absent.
+
+    `brief._overlap_flags` does exactly this for a single day; the week-ahead
+    never called it. Measured on a real week: eleven overlapping clusters,
+    including four meetings stacked at Thursday 11:00, every one unflagged.
+    """
+    nine = datetime(2026, 9, 7, 9, 0, tzinfo=PT)
+    sources = FakeSources(
+        events=[
+            _event("a", "Pod Steering", nine, minutes=60),
+            _event("b", "Finance x Data", nine + timedelta(minutes=30), minutes=60),
+        ]
+    )
+
+    rendered = _assemble(sources=sources).render()
+
+    assert "2 at once" in rendered, f"an overlap went unflagged:\n{rendered}"
+    assert "Pod Steering" in rendered and "Finance x Data" in rendered
+
+
+def test_a_pile_up_is_one_line_not_every_pair():
+    """Four meetings at once is SIX pairs. Pairwise, that is six near-identical
+    lines for one decision - so clusters collapse and the count of clash lines
+    matches the number of choices he actually has to make."""
+    nine = datetime(2026, 9, 7, 9, 0, tzinfo=PT)
+    sources = FakeSources(
+        events=[
+            _event(str(n), f"Meeting {n}", nine + timedelta(minutes=10 * n), minutes=60)
+            for n in range(4)
+        ]
+    )
+
+    rendered = _assemble(sources=sources).render()
+
+    assert rendered.count("at once") == 1, f"one pile-up became several lines:\n{rendered}"
+    assert "4 at once" in rendered
+
+
+def test_back_to_back_meetings_are_not_a_clash():
+    """Half-open, same as `brief._overlap_flags`: 9-10 and 10-11 are a busy
+    morning, not a conflict. Flagging them trains him to ignore the section."""
+    nine = datetime(2026, 9, 7, 9, 0, tzinfo=PT)
+    sources = FakeSources(
+        events=[
+            _event("a", "First", nine, minutes=60),
+            _event("b", "Second", nine + timedelta(minutes=60), minutes=60),
+        ]
+    )
+
+    assert "at once" not in _assemble(sources=sources).render()
+
+
+def test_a_meeting_he_declined_is_not_part_of_his_week():
+    """`monday_prep_queue` reads events through the ledger and dropped these;
+    the rendered sections applied one of the ledger's four rules and kept them.
+    Two qualification paths in one module, disagreeing silently."""
+    event = _event("dhc", "Data Health Check", datetime(2026, 9, 7, 9, 0, tzinfo=PT))
+    event["response_status"] = "declined"
+
+    rendered = _assemble(sources=FakeSources(events=[event])).render()
+
+    assert "Data Health Check" not in rendered, f"a declined meeting rendered:\n{rendered}"
+
+
+def test_a_solo_block_he_organised_himself_is_not_a_meeting():
+    """A personal errand with no one else in it. Real example: "Veda pick up",
+    which rendered every weekday as part of his working week."""
+    event = _event("veda", "Veda pick up", datetime(2026, 9, 7, 16, 15, tzinfo=PT))
+    # Set after construction: `_event` does `attendees or [...]`, so passing an
+    # empty list silently gets the two-person default instead.
+    event["attendees"] = []
+    event["organizer_is_self"] = True
+
+    rendered = _assemble(sources=FakeSources(events=[event])).render()
+
+    assert "Veda pick up" not in rendered, f"a personal errand rendered:\n{rendered}"
+
+
+def test_an_unreadable_record_is_kept_rather_than_dropped():
+    """Where `part_of_the_week` deliberately parts company with `qualifies`.
+
+    A record missing the fields qualification reads cannot be judged, and
+    dropping it loses a real meeting off the page silently - the under-reporting
+    failure he has no way to notice. `attendees` PRESENT and short is a solo
+    block; `attendees` ABSENT is a record we simply cannot read.
+    """
+    sources = FakeSources(
+        events=[
+            {
+                "id": "steering",
+                "summary": "Pod Steering",
+                "start": datetime(2026, 9, 7, 9, 0, tzinfo=PT),
+                "end": datetime(2026, 9, 7, 10, 0, tzinfo=PT),
+                "permalink": "https://calendar.example.com/e/steering",
+            }
+        ]
+    )
+
+    assert "Pod Steering" in _assemble(sources=sources).render()
+
+
+def test_a_busy_day_is_named_not_enumerated():
+    """Nineteen titles inline is a wall of text in a Slack DM, which is the
+    delivery surface. The point of the line is the shape of the day."""
+    tuesday = datetime(2026, 9, 8, 9, 0, tzinfo=PT)
+    sources = FakeSources(
+        events=[
+            _event(str(n), f"Meeting number {n}", tuesday + timedelta(hours=n), minutes=30)
+            for n in range(9)
+        ]
+    )
+
+    (line,) = [
+        line
+        for section in _assemble(sources=sources).sections
+        if section.heading == "the week"
+        for line in section.lines
+    ]
+
+    assert "+6 more" in line, line
+    assert "Meeting number 8" not in line, f"the whole day was enumerated:\n{line}"
