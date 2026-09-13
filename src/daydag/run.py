@@ -62,6 +62,7 @@ import json
 import sys
 from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Set as AbstractSet
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
@@ -98,10 +99,6 @@ _NO_CALENDAR = frozenset({"ingest", "chase", "ship"})
 #: `_NO_CALENDAR`, which handed chase an EMPTY ledger and then let `_project`
 #: write `notes_gaps=[]` over the section the morning run had just recorded.
 _NEEDS_LEDGER = frozenset({"morning", "eod", "prep"})
-
-#: Loops whose calendar payload IS today, and so may be remembered for
-#: tomorrow's notes-gap report. `prep` and `week-ahead` fetch the future.
-_SEEDS_TODAY = frozenset({"morning", "eod"})
 
 
 class RunError(RuntimeError):
@@ -533,25 +530,39 @@ def _remembered(log: EventLog | None) -> Ledger:
 def _remember(
     log: EventLog | None,
     events: Iterable[Mapping[str, Any]],
-    known: set[tuple[str, datetime]] | frozenset[tuple[str, datetime]] = frozenset(),
+    *,
+    fresh: AbstractSet[tuple[Any, Any]],
+    today: date,
 ) -> None:
-    """Record today's meetings so the next run can ask what produced nothing.
+    """Persist the meetings this run was FIRST to see, so tomorrow can ask
+    what produced nothing.
 
-    Skips what the log already holds. Every render appended the day's meetings
-    again - morning, eod, a prep - so the meeting table grew two to three times
-    the day's count every day, and `_remembered` replayed all of it (SELECT,
-    json.loads, `timed`, `seed_day`) on every later run, forever. `seed_day`
-    deduped in memory so nothing was WRONG, only unbounded (#114).
+    ``events`` is the list `seed_day` was fed and ``fresh`` the keys it added -
+    so the log holds exactly what a replay can use, and nothing else. Two
+    other shapes were tried and both grew the table without bound (#114):
+    persisting every calendar record (holds, declined invites, all-day
+    entries, which `seed_day` rejects again on every replay), and deduping
+    against a hand-built key that disagreed with `Row.key` on the id's type
+    and could not hash an all-day start.
+
+    Only rows dated ``today`` or earlier. A prep fetches seven future days and
+    eod fetches tomorrow; persisting those made a meeting cancelled after the
+    snapshot a permanent "meeting w/ no notes", and a rescheduled one two rows.
+    The morning that seeds a day is its writer - decided per row from the data,
+    not per loop from a membership set that was already wrong about eod.
     """
-    if log is None:
+    if log is None or not fresh:
         return
-    for event in events:
-        if not isinstance(event, Mapping) or not event.get("id"):
-            continue
-        timed = _Payloads.timed(event)
-        if (str(event["id"]), timed.get("start")) in known:
-            continue
-        log.record(MEETING, **{k: _jsonable(v) for k, v in event.items()})
+    log.record_all(
+        MEETING,
+        [
+            {k: _jsonable(v) for k, v in event.items()}
+            for event in events
+            if (event.get("id"), event.get("start")) in fresh
+            and (when := _Payloads._day_of(event)) is not None
+            and when <= today
+        ],
+    )
 
 
 def _jsonable(value: Any) -> Any:
@@ -798,7 +809,7 @@ def render(
     folder = state if state is not None else _vault(identities)
     events = log if log is None else EventLog.open(log)
     directory = People(events) if events is not None and loop in _NEEDS_LEDGER else None
-    known: set[tuple[str, datetime]] = set()
+    fresh: set[tuple[Any, Any]] = set()
     if loop not in _NEEDS_LEDGER:
         # `chase`, `ingest`, `ship` and `week-ahead` never read this ledger
         # (week-ahead builds its own). Rehydrating every remembered meeting and
@@ -815,7 +826,9 @@ def render(
         # rehydrated rows either - so every meeting became a gap while its note
         # was listed by name in the section directly above. `seed_day` is
         # idempotent per instance, so brief's own seeding stays a no-op.
-        ledger.seed_day(_seedable(payloads))
+        seedable = _seedable(payloads)
+        ledger.seed_day(seedable)
+        fresh = ledger.keys() - known  # what THIS run was first to see
         _attach_notes(ledger, payloads, now)
         if directory is not None:
             _observe_past(directory, ledger, identities, now)
@@ -859,13 +872,8 @@ def render(
             text = _assemble()
             active.observe([{"name": loop, "source": "daydag", "status": REACHED, "reason": ""}])
 
-    if loop in _SEEDS_TODAY:
-        # Only the loops that seed TODAY remember. A prep fetches seven future
-        # days and the week-ahead fetches next week; persisting those made a
-        # meeting cancelled after the snapshot a permanent "meeting w/ no
-        # notes", and a rescheduled one two rows - a phantom gap beside the
-        # real meeting. Tomorrow's morning run seeds tomorrow.
-        _remember(events, _seeded(payloads), known)
+    if fresh:
+        _remember(events, seedable, fresh=fresh, today=now.astimezone(recipes.PACIFIC).date())
     # `_project` writes the notes-gaps section FROM the ledger, so a loop that
     # was handed an empty one must not project - it would replace what the
     # morning run recorded with nothing, silently, under a flag main() accepts
@@ -946,7 +954,11 @@ def _seedable(payloads: Mapping[str, Any]) -> list[dict[str, Any]]:
     ready = []
     for raw in _seeded(payloads):
         event = dict(_Payloads.timed(raw))
-        if all(event.get(key) for key in needed):
+        # `Row.key` is (id, start) and is hashed. An all-day entry's start is
+        # google's `{"date": ...}` mapping, untouched by `timed` on purpose, so
+        # it has no instant to key on - and a dict in a key is a TypeError from
+        # inside `seed_day`, after the brief was assembled. Not ledger material.
+        if all(event.get(key) for key in needed) and isinstance(event["start"], datetime):
             ready.append(event)
     return ready
 
