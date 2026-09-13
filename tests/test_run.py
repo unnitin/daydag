@@ -771,7 +771,8 @@ def test_a_trailing_for_is_refused_not_silently_dropped(tmp_path, monkeypatch, c
     monkeypatch.setattr("sys.stdin", __import__("io").StringIO('{"calendar":[],"slack":[]}'))
 
     assert run.main(["render", "prep", "--for"]) == 2
-    assert "--for needs" in capsys.readouterr().err
+    assert "--for" in capsys.readouterr().err
+    assert run.main(["render", "prep", "--for", "   "]) == 2
 
 
 def test_a_blank_selector_is_one_line_on_stderr_not_a_traceback(identities):
@@ -1163,3 +1164,10 @@ def test_a_leader_added_without_an_address_is_warned_about(tmp_path, capsys):
 
     assert code == 0
     assert "no email" in capsys.readouterr().out
+
+
+def test_an_unknown_loop_exits_two_with_the_choices_named(capsys):
+    """argparse's job, now that it has it: the choices are printed, not just
+    a refusal."""
+    assert run.main(["plan", "mornign"]) == 2
+    assert "morning" in capsys.readouterr().err

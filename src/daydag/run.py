@@ -1001,35 +1001,49 @@ def _project(folder: StateFolder, log: EventLog, ledger: Ledger, now: datetime) 
 
 def main(argv: list[str] | None = None) -> int:
     """`plan` writes JSON to stdout; `render` reads payloads from stdin."""
-    args = list(sys.argv[1:] if argv is None else argv)
-    if len(args) < 2 or args[0] not in {"plan", "render"}:
-        print(
-            "usage: python -m daydag.run {plan|render} {"
-            + "|".join(LOOPS)
-            + '} [--log PATH] [--write-state] [--for "<meeting or person>"]'
-        )
-        return 2
+    import argparse
 
     from daydag.config import Identities
 
-    command, loop = args[0], args[1]
+    raw = list(sys.argv[1:] if argv is None else argv)
+    parser = argparse.ArgumentParser(
+        prog="python -m daydag.run",
+        description="Run one DayDAG loop in two halves: plan the fetch, render the push.",
+    )
+    parser.add_argument("command", choices=("plan", "render"))
+    parser.add_argument("loop", choices=LOOPS)
     # `--log <path>` is what makes a run remember: without it the ledger starts
     # empty every morning and a meeting seeded today cannot be a gap tomorrow.
+    parser.add_argument("--log", metavar="PATH", help="the event log; without it the run forgets")
     # `--write-state` projects what the run learned back into `State.md`.
-    log = args[args.index("--log") + 1] if "--log" in args[:-1] else None
-    write_state = "--write-state" in args
+    parser.add_argument("--write-state", action="store_true", help="project into DayDAG/State.md")
     # `--for` names the meeting to prep. Without it `prep` takes the next
-    # qualifying one, which is the scheduled ping's behaviour.
-    selector = ""
-    if "--for" in args:
-        after = args[args.index("--for") + 1 :]
-        if not after or after[0].startswith("--"):
-            # Falling through to the next-qualifying meeting here would prep a
-            # meeting he did not ask about and say nothing - the wrong-meeting
-            # failure prep_selector calls worse than no prep.
-            print("--for needs a meeting or a person after it", file=sys.stderr)
-            return 2
-        selector = after[0]
+    # qualifying one, which is the scheduled ping's behaviour. argparse refuses
+    # a bare `--for` for us - the hand-rolled parser silently dropped it and
+    # prepped a meeting he did not ask about.
+    parser.add_argument(
+        "--for",
+        dest="selector",
+        metavar="MEETING",
+        default="",
+        help="prep a named meeting or person",
+    )
+    try:
+        args = parser.parse_args(raw)
+    except SystemExit as bad:  # argparse has already printed why
+        return int(bad.code or 0)
+
+    command, loop, log, write_state, selector = (
+        args.command,
+        args.loop,
+        args.log,
+        args.write_state,
+        args.selector,
+    )
+    if "--for" in raw and not selector.strip():
+        # argparse accepts "   " as a value; the selector module would raise.
+        print("--for needs a meeting or a person after it", file=sys.stderr)
+        return 2
     try:
         identities = Identities.from_file(Path(".env"))
         now = datetime.now().astimezone()
