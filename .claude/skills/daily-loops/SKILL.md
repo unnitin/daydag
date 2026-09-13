@@ -254,3 +254,32 @@ docstring. If it is a fact that will be stale in a month, it belongs in `referen
 Append one line to the run log in `DayDAG/State.md`: timestamp · loop · sources
 reached · sources skipped. There is no platform observability behind this, so that
 line is the only way a silent failure is diagnosable afterwards.
+
+## While the soak is running (M2-5, #13)
+
+The morning brief is inside its five-day gate. Two extra steps, both after the
+push is on screen, both against the SAME log the run used:
+
+```sh
+python -m daydag.soak shipped --log ~/.local/state/daydag/events.db
+python -m daydag.soak note "<his words, verbatim>" --log ~/.local/state/daydag/events.db
+```
+
+**Log every edit he asks for, in his wording, one `note` each.** That count is
+the §8 brief-fitness baseline and the thing the gate actually measures. Quote
+him rather than paraphrasing - the journal matches repeats on the text, and a
+tidied-up paraphrase reads as a different request and hides the repeat.
+
+An edit he asks on a second day is the signal that matters: SPEC §8 says
+*anything he asks twice gets folded into the skill*. `report` flags those with
+`⚠ asked twice`. When one has actually been folded in, record it, or the gate
+can never close:
+
+```sh
+python -m daydag.soak folded "<the edit>" --log ~/.local/state/daydag/events.db
+python -m daydag.soak report  --log ~/.local/state/daydag/events.db
+```
+
+Do not "fix it quickly" in the renderer and skip the `note`. An unlogged edit is
+a day of the gate spent for nothing, and the churn it represents is exactly what
+the five days exist to surface while it is still cheap.

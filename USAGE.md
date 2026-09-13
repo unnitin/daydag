@@ -99,6 +99,38 @@ encodings bite, and both fail quietly in the direction of saying *less*:
 `SKILL.md` carries the full shaping contract. Get it wrong and the loop
 degrades rather than lying, but it degrades silently.
 
+## The soak (running now)
+
+The morning brief is inside its five-day gate - BUILD's M2-5 - which was set
+before seven loops got built on top of it and never actually run. Five working
+days, every requested edit logged, passing when the count trends down and
+nothing is still being asked twice.
+
+Each morning, after reading the brief:
+
+```sh
+LOG=~/.local/state/daydag/events.db
+python -m daydag.soak shipped --log $LOG
+python -m daydag.soak note "put the clashes above the meeting list" --log $LOG
+python -m daydag.soak report  --log $LOG
+```
+
+```
+soak: 2/5 days - 3 more working day(s) to run
+  2026-09-14  1 edit
+  2026-09-15  1 edit
+  ⚠ asked twice, fold it into the skill: drop the emoji from the overnight lines
+```
+
+Say it the way you said it - the journal spots a repeat by matching the text,
+and a tidied paraphrase reads as a new request. A repeat is the useful signal,
+not the count: SPEC §8 folds anything asked twice into the skill. Once you have,
+`soak folded "<the edit>"`, or the gate stays shut.
+
+The journal lives in the same event log as everything else, marked private, so
+it never reaches the vault - an edit quotes the brief, and the brief carries
+meeting titles and names.
+
 ## What it will not do
 
 - **Drafts, not sends.** Autonomous output goes to one place: the principal's
