@@ -140,6 +140,16 @@ class Sources(Protocol):
     def calendar(self, window: recipes.DayWindow) -> Iterable[Mapping[str, Any]]:
         """Events in one local day."""
 
+    def vault_note(self, path: str) -> str:
+        """Any vault note by path. `eod_wrap` reads next week's plan and prep
+        through this, and it was never DECLARED here - so `run._Payloads`
+        implemented only `weekly_note`, both reads raised, and the Friday
+        "weekly-planning outcome" section silently never rendered on a real
+        run. Both test doubles implement it, which is why the suite was green:
+        the fake was more capable than the adapter it stood in for.
+        """
+        ...
+
     def weekly_note(self, path: str) -> str:
         """The note's text. ``FileNotFoundError`` means nobody wrote it."""
 
