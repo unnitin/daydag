@@ -414,6 +414,10 @@ class Ledger:
 
     # -- what the brief asks for -----------------------------------------
 
+    def keys(self) -> set[tuple[str, datetime]]:
+        """The (event_id, start) pairs already held - what a re-record would duplicate."""
+        return set(self._rows)
+
     def open_rows(self) -> list[Row]:
         """Rows with no note attached, oldest first."""
         return sorted(

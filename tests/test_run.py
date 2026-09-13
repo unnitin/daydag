@@ -945,3 +945,50 @@ def test_a_past_meeting_teaches_the_directory_and_a_future_one_does_not(identiti
     assert directory.resolve("wren@x.com") is not None, "a past meeting taught nothing"
     assert directory.resolve("bo@x.com") is None, "a meeting not yet held was recorded as met"
     assert directory.resolve("principal@x.com") is None, "he was added to his own directory"
+
+
+# --------------------------------------------------------------------------
+# the event log does not grow with every render (#114) or get read whole (#115)
+# --------------------------------------------------------------------------
+
+
+def test_rendering_the_same_day_twice_remembers_it_once(identities, tmp_path):
+    """Morning, then eod, then a re-run: three renders of one day appended the
+    day's meetings three times, and every later run replayed all of it."""
+    from daydag.state import EventLog
+
+    log = tmp_path / "events.db"
+    payloads = _payloads(calendar=[_meeting("Pod Steering", "a@x.com", "b@x.com", at="09:00")])
+    for _ in range(3):
+        run.render("morning", now=MONDAY_PT, identities=identities, payloads=payloads, log=log)
+
+    assert len(EventLog.open(log).recorded("meeting")) == 1
+
+
+def test_the_week_ahead_does_not_persist_next_week(identities, tmp_path):
+    """Next week's meetings, remembered now, are phantom notes gaps if any is
+    cancelled before it happens. The morning that seeds them is the writer."""
+    from daydag.state import EventLog
+
+    log = tmp_path / "events.db"
+    payloads = _payloads(
+        calendar=[_meeting("Pod Steering", "a@x.com", "b@x.com", day="2026-09-14")]
+    )
+    run.render("week-ahead", now=MONDAY_PT, identities=identities, payloads=payloads, log=log)
+
+    assert EventLog.open(log).recorded("meeting") == []
+
+
+def test_chase_items_ignores_the_run_log_by_kind(tmp_path):
+    """Behaviour-preserving: only the two vault-bound kinds come back, however
+    many run-log rows sit beside them."""
+    from daydag.state import EventLog
+
+    log = EventLog.open(tmp_path / "events.db")
+    for n in range(50):
+        log.record("run", loop="morning", n=n)
+    log.record("loop_opened", sensitivity="normal", owner="VP-Data", ask="the plan", key="k")
+
+    items = log.chase_items()
+
+    assert [i.get("ask") for i in items] == ["the plan"]

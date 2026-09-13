@@ -99,6 +99,10 @@ _NO_CALENDAR = frozenset({"ingest", "chase", "ship"})
 #: write `notes_gaps=[]` over the section the morning run had just recorded.
 _NEEDS_LEDGER = frozenset({"morning", "eod", "prep"})
 
+#: Loops whose calendar payload IS today, and so may be remembered for
+#: tomorrow's notes-gap report. `prep` and `week-ahead` fetch the future.
+_SEEDS_TODAY = frozenset({"morning", "eod"})
+
 
 class RunError(RuntimeError):
     """A loop was asked for something it cannot do, in the caller's terms."""
@@ -526,13 +530,28 @@ def _remembered(log: EventLog | None) -> Ledger:
     return ledger
 
 
-def _remember(log: EventLog | None, events: Iterable[Mapping[str, Any]]) -> None:
-    """Record today's meetings so the next run can ask what produced nothing."""
+def _remember(
+    log: EventLog | None,
+    events: Iterable[Mapping[str, Any]],
+    known: set[tuple[str, datetime]] | frozenset[tuple[str, datetime]] = frozenset(),
+) -> None:
+    """Record today's meetings so the next run can ask what produced nothing.
+
+    Skips what the log already holds. Every render appended the day's meetings
+    again - morning, eod, a prep - so the meeting table grew two to three times
+    the day's count every day, and `_remembered` replayed all of it (SELECT,
+    json.loads, `timed`, `seed_day`) on every later run, forever. `seed_day`
+    deduped in memory so nothing was WRONG, only unbounded (#114).
+    """
     if log is None:
         return
     for event in events:
-        if isinstance(event, Mapping) and event.get("id"):
-            log.record(MEETING, **{k: _jsonable(v) for k, v in event.items()})
+        if not isinstance(event, Mapping) or not event.get("id"):
+            continue
+        timed = _Payloads.timed(event)
+        if (str(event["id"]), timed.get("start")) in known:
+            continue
+        log.record(MEETING, **{k: _jsonable(v) for k, v in event.items()})
 
 
 def _jsonable(value: Any) -> Any:
@@ -779,6 +798,7 @@ def render(
     folder = state if state is not None else _vault(identities)
     events = log if log is None else EventLog.open(log)
     directory = People(events) if events is not None and loop in _NEEDS_LEDGER else None
+    known: set[tuple[str, datetime]] = set()
     if loop not in _NEEDS_LEDGER:
         # `chase`, `ingest`, `ship` and `week-ahead` never read this ledger
         # (week-ahead builds its own). Rehydrating every remembered meeting and
@@ -788,6 +808,7 @@ def render(
         ledger = Ledger()
     else:
         ledger = _remembered(events)
+        known = ledger.keys()  # before today's seeding: what is ALREADY on disk
         # SEED TODAY BEFORE OFFERING NOTES. `brief._seed_and_gaps` seeds during
         # assembly, which is too late: a note offered to a ledger that has no
         # rows yet attaches to nothing, and on a FIRST run there are no
@@ -838,13 +859,13 @@ def render(
             text = _assemble()
             active.observe([{"name": loop, "source": "daydag", "status": REACHED, "reason": ""}])
 
-    if loop != "prep":
-        # A prep is a QUESTION about the week ahead, not a day's seeding.
-        # Remembering its seven fetched days persisted every future meeting;
-        # one cancelled after the snapshot was re-seeded on every later run and
-        # reported as a permanent "meeting w/ no notes", and a rescheduled one
-        # became two rows - a phantom gap beside the real meeting.
-        _remember(events, _seeded(payloads))
+    if loop in _SEEDS_TODAY:
+        # Only the loops that seed TODAY remember. A prep fetches seven future
+        # days and the week-ahead fetches next week; persisting those made a
+        # meeting cancelled after the snapshot a permanent "meeting w/ no
+        # notes", and a rescheduled one two rows - a phantom gap beside the
+        # real meeting. Tomorrow's morning run seeds tomorrow.
+        _remember(events, _seeded(payloads), known)
     # `_project` writes the notes-gaps section FROM the ledger, so a loop that
     # was handed an empty one must not project - it would replace what the
     # morning run recorded with nothing, silently, under a flag main() accepts

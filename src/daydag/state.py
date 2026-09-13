@@ -690,7 +690,9 @@ class EventLog:
         )
         self._db.commit()
 
-    def _rows(self, kind: str | None = None) -> list[tuple[str, str, dict[str, Any]]]:
+    def _rows(
+        self, kind: str | Iterable[str] | None = None
+    ) -> list[tuple[str, str, dict[str, Any]]]:
         """Decoded events, skipping any row whose payload will not parse.
 
         Skipped rather than raised. This feeds `chase_items`, which feeds
@@ -703,9 +705,13 @@ class EventLog:
         """
         sql = "SELECT kind, sensitivity, payload FROM events"
         args: tuple[Any, ...] = ()
-        if kind is not None:
+        if isinstance(kind, str):
             sql += " WHERE kind = ?"
             args = (kind,)
+        elif kind is not None:
+            kinds = tuple(kind)
+            sql += " WHERE kind IN (" + ",".join("?" * len(kinds)) + ")"
+            args = kinds
         rows = []
         for k, s, p in self._db.execute(sql, args):
             try:
@@ -808,10 +814,12 @@ class EventLog:
         `ChaseItem.from_payload` is where that agreement now lives, and
         `write_state` is held to the same shape on its side of the seam.
         """
+        # Filtered in SQL, not in Python: `_rows()` with no kind decoded EVERY
+        # row - the run log's included, and its own docstring calls that "by
+        # far the highest-volume writer" - to keep two kinds (#115).
         return [
             ChaseItem.from_payload(payload, sensitivity=sensitivity)
-            for kind, sensitivity, payload in self._rows()
-            if kind in {"loop_opened", "carry_forward"}
+            for _, sensitivity, payload in self._rows(VAULT_BOUND)
         ]
 
     def median_days_to_answer(self) -> float:
