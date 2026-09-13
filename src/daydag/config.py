@@ -41,7 +41,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 _REFERENCE = re.compile(r"\$\{([A-Z0-9_]+)\}")
 
-#: A value that is *entirely* one reference, e.g. "${SLACK_USER_VP_DATA}".
+#: A value that is *entirely* one reference, e.g. "${SLACK_USER_PRINCIPAL}".
 _WHOLE_REFERENCE = re.compile(r"^\$\{([A-Z0-9_]+)\}$")
 
 #: The principal's timezone. Configuration, not a constant: every wall-clock

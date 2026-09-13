@@ -448,6 +448,48 @@ def _link(record: Mapping[str, Any]) -> str | None:
     return str(value) if value else None
 
 
+def overlap_clusters(events: Sequence[Mapping[str, Any]]) -> list[list[Mapping[str, Any]]]:
+    """Groups of meetings that pile up on each other, in time order.
+
+    The other rendering of the rule `_overlap_flags` applies pairwise: a single
+    day has a handful of collisions and every pair is worth a line, but across a
+    week four meetings stacked at 11:00 are six near-identical pairs for ONE
+    decision, so `week_ahead` wants the cluster. Same half-open comparison -
+    9:00-10:00 and 10:00-11:00 are back-to-back, not a clash - held once here
+    rather than spelt again in a second module.
+
+    Linear after the sort: starts are ascending, so a meeting either overlaps
+    the running end of the open cluster or opens a new one. Sorted on the two
+    INSTANTS only - the first version sorted `(start, end, event)` tuples, so two
+    invites at the same 11:00-12:00 fell through to comparing the event dicts
+    and raised TypeError. That is the stacked-at-11:00 case this exists for, and
+    it took the whole Sunday push down.
+
+    A meeting with a start but no end is read as ending when it starts, so it
+    can still fall INSIDE another's span - the same asymmetry `_overlap_flags`
+    has, where only the earlier of a pair needs an end. A meeting with no start
+    cannot be placed and is left out; both detectors agree on that too.
+    """
+    spans = sorted(
+        (
+            (start, _local(event.get("end")) or start, event)
+            for event in events
+            if (start := _local(event.get("start"))) is not None
+        ),
+        key=lambda span: (span[0], span[1]),
+    )
+    clusters: list[list[Mapping[str, Any]]] = []
+    reach: datetime | None = None
+    for start, end, event in spans:
+        if reach is not None and start < reach:
+            clusters[-1].append(event)
+            reach = max(reach, end)
+        else:
+            clusters.append([event])
+            reach = end
+    return clusters
+
+
 def first_meeting_line(events: Iterable[Mapping[str, Any]]) -> tuple[str, str] | None:
     """The day's earliest event, as a claim line plus its raw summary.
 
@@ -668,6 +710,12 @@ def _line_from_state(body: str) -> str:
     return claim(text, link)
 
 
+#: Public names for the two helpers `run` and `week_ahead` were re-spelling -
+#: one bullet-from-State.md rule and one quote budget, held here.
+line_from_state = _line_from_state
+short = _short
+
+
 def _seed_and_gaps(ledger: Ledger, events: Sequence[Mapping[str, Any]], now: datetime) -> list[str]:
     """Seed today's rows, then report yesterday's meetings that produced nothing.
 
@@ -698,10 +746,11 @@ def _seed_and_gaps(ledger: Ledger, events: Sequence[Mapping[str, Any]], now: dat
 _STAMP_FIELDS = ("ts", "internal_date", "internalDate")
 
 
-def _is_overnight(record: Mapping[str, Any], min_ts: float, max_ts: float = 0.0) -> bool:
+def _is_overnight(record: Mapping[str, Any], window: recipes.OvernightWindow) -> bool:
     """Whether a record landed inside the overnight window.
 
-    Bounded at BOTH ends when ``max_ts`` is given. The upper bound is not
+    Reads both bounds from the window they were computed with, so the filter
+    and the definition cannot drift apart. Bounded at BOTH ends: the upper is not
     pedantry: ``now`` is a parameter, so a backfilled or replayed run has a
     ``now`` in the past while Slack's day-granular ``after:`` happily returns
     everything since. A 06:40 brief rendered a real message sent at 18:06 that
@@ -722,9 +771,7 @@ def _is_overnight(record: Mapping[str, Any], min_ts: float, max_ts: float = 0.0)
         # Gmail's internalDate is milliseconds; Slack's ts is seconds. A value
         # three orders of magnitude past now is the former.
         seconds = stamp / 1000 if stamp > 1e11 else stamp
-        if seconds < min_ts:
-            return False
-        return not max_ts or seconds <= max_ts
+        return window.min_ts <= seconds <= window.max_ts
     return True
 
 
@@ -740,17 +787,19 @@ def _overnight_lines(now: datetime, principal: str, sources: Sources, read: Read
     window = recipes.slack_overnight(now, mentioning=principal)
     lines: list[str] = []
     for message in read("slack", lambda: list(sources.slack(window.query)), []):
-        if not _is_overnight(message, window.min_ts, window.max_ts):
+        if not _is_overnight(message, window):
             continue
         who = message.get("who") or message.get("from") or "someone"
-        lines.append(claim(str(who), _link(message), quote=str(message.get("text", ""))))
+        # `or ""`: a file-only Slack message carries `"text": null`, and str(None)
+        # is the word None, quoted as if he had said it.
+        lines.append(claim(str(who), _link(message), quote=str(message.get("text") or "")))
 
     # `after` is the evening the window opens, not today: a note that landed
     # at 7pm yesterday is overnight mail, and today-only would miss all of it.
     opened_on = datetime.fromtimestamp(window.min_ts, tz=recipes.PACIFIC).date()
     query = recipes.gmail_gemini_notes(after=opened_on)
     for mail in read("gmail", lambda: list(sources.gmail(query)), []):
-        if not _is_overnight(mail, window.min_ts, window.max_ts):
+        if not _is_overnight(mail, window):
             continue
         subject = str(mail.get("subject", ""))
         title = title_from_gemini_subject(subject)

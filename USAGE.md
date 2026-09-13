@@ -158,6 +158,34 @@ not the count: SPEC §8 folds anything asked twice into the skill. Once you have
 The journal lives in the same event log as everything else, marked private, so
 it never reaches the vault - an edit quotes the brief, and the brief carries
 meeting titles and names.
+## People: what it knows about who
+
+Two config values used to carry everything the system knew about people, and
+both were unset - so `has_external` and `has_leadership` always said no, and
+meetings with outside parties got no prep at all. Now there is a directory:
+
+```sh
+LOG=~/.local/state/daydag/events.db
+python -m daydag.people add vp-data --log $LOG --email a@b.com --slack-id U... \
+    --name "..." --title "VP Data Engineering" --dm D... --group C... --leadership
+python -m daydag.people show vp-data --log $LOG
+python -m daydag.people list         --log $LOG
+```
+
+It **learns from meetings that have happened**: the morning, wrap and prep loops
+add the people in each seeded meeting once it is over, count how often you meet
+them, and remember when. It never invents a title from a meeting. **What you
+state outranks what it infers** - correct an entry and no later run un-learns
+it, and a correction made after someone was already observed folds the observed
+entry into the role you named.
+
+Today `prep` reads leadership from here (unioned with `PREP_LEADERSHIP`); the
+morning brief and week-ahead still read the `.env` list until #119.
+
+The Slack roster and the per-person DM/group ids that used to be `.env` keys
+live here now. `.env` keeps only the principal's id, because that has to be
+known before any lookup can run. Everything in the directory stays in the event
+log - outside the vault, outside this public repo.
 
 ## What it will not do
 

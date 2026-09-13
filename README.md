@@ -52,6 +52,7 @@ artifact is the load-bearing rule; the rest is plumbing.
 | `week_ahead` | SPEC §3.6's Sunday week-ahead: a read of Friday's plan, assembled into one push |
 | `delivery` | The one autonomous send - the principal's DM - and the threaded prep reply |
 | `prep_selector` | Naming the meeting to prep for, and refusing to guess between two |
+| `people` | Who someone is - ids, title, DM, groups, how often met - with stated facts outranking inferred ones |
 | `run` | The two-phase contract that makes a loop runnable: plan the fetch, assemble the push |
 | `evalset` | The hand-labelled ingestion ground truth, and `score()` — so precision is measured, not asserted |
 | `soak` | The five-day gate's journal: every edit he asks for, and whether a repeat is still outstanding |

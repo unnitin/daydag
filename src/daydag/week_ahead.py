@@ -75,7 +75,7 @@ from datetime import date, datetime, timedelta
 from typing import Any
 
 from daydag import recipes
-from daydag.brief import UNSOURCED, Section, Sources, red_items
+from daydag.brief import UNSOURCED, Section, Sources, overlap_clusters, red_items
 from daydag.ledger import Ledger, part_of_the_week
 from daydag.prep import Audience, Reason, SourcePlan, prep_worthy
 from daydag.prep import sources as build_source_plan
@@ -115,6 +115,9 @@ _TRAVEL = re.compile(
 )
 
 _WEEKDAY = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+
+#: Titles named inline on a "the week" bullet before it collapses to a count.
+_WEEK_TITLES = 3
 
 
 @dataclass(frozen=True)
@@ -312,10 +315,6 @@ def _week_lines(
     return lines
 
 
-#: Titles named inline on a "the week" bullet before it collapses to a count.
-_WEEK_TITLES = 3
-
-
 def _clash_lines(
     by_day: Mapping[date, Sequence[Mapping[str, Any]]], days: Sequence[date]
 ) -> list[str]:
@@ -334,30 +333,11 @@ def _clash_lines(
     """
     lines: list[str] = []
     for day in days:
-        events = sorted(by_day.get(day, ()), key=_instant)
-        clusters: list[list[Mapping[str, Any]]] = []
-        for event in events:
-            start, end = _local(event.get("start")), _local(event.get("end"))
-            if start is None or end is None:
-                continue  # an unplaceable meeting cannot be shown to collide
-            for cluster in clusters:
-                if any(
-                    start < other_end and other_start < end
-                    for other in cluster
-                    if (other_start := _local(other.get("start"))) is not None
-                    and (other_end := _local(other.get("end"))) is not None
-                ):
-                    cluster.append(event)
-                    break
-            else:
-                clusters.append([event])
-
-        for cluster in clusters:
+        for cluster in overlap_clusters(by_day.get(day, ())):
             if len(cluster) < 2:
                 continue
             titles = ", ".join(str(e.get("summary", "untitled")) for e in cluster)
-            # `events` was sorted by `_instant`, and a cluster only ever grows
-            # by appending from it, so its first member is its earliest.
+            # Clusters come back in time order, so the first member is the earliest.
             lines.append(
                 _claim(
                     f"{WARN} {_WEEKDAY[day.weekday()]} {_clock(cluster[0].get('start'))}"
@@ -536,8 +516,8 @@ def assemble(
         monday_heading = f"monday ({_day_label(next_monday)})"
         sections.append(Section(monday_heading, tuple(_monday_lines(monday_events, travel))))
 
-    week_days = [next_monday + timedelta(days=offset) for offset in range(1, 5)]
-    week_lines = _week_lines(by_day, week_days, travel)
+    weekdays = [next_monday + timedelta(days=offset) for offset in range(5)]
+    week_lines = _week_lines(by_day, weekdays[1:], travel)
     if week_lines:
         sections.append(Section("the week", tuple(week_lines)))
 
@@ -547,7 +527,7 @@ def assemble(
     # week-ahead never called it. Measured on a real week - 15 overlapping
     # clusters, including four meetings stacked at Thursday 11:00 - every one
     # unflagged.
-    clash_lines = _clash_lines(by_day, [next_monday + timedelta(days=n) for n in range(5)])
+    clash_lines = _clash_lines(by_day, weekdays)
     if clash_lines:
         sections.append(Section(f"clashes ({len(clash_lines)})", tuple(clash_lines)))
 

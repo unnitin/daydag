@@ -54,6 +54,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from enum import Enum
+from typing import Any
 
 from daydag.config import resolve_reference
 from daydag.ledger import Row
@@ -178,10 +179,49 @@ class Audience:
         this rule". The alternative default - treating every attendee as an
         outside party when the org domain is unset - fires the interrupt on
         every meeting on the calendar, which mutes it inside a day.
+
+        Both were in fact unset, so `has_leadership` and `has_external` always
+        answered False and two of the four reasons could never fire. Prefer
+        `from_directory`, which takes leadership from the people store, where a
+        person's seniority sits next to the rest of what is known about them
+        and can be corrected without editing a CSV in `.env`.
         """
         return cls(
             leadership=_csv(identities, LEADERSHIP_KEY),
             internal_domains=_csv(identities, ORG_DOMAIN_KEY),
+        )
+
+    @classmethod
+    def from_directory(cls, directory: Any, identities: Mapping[str, str]) -> Audience:
+        """Leadership from the people store, domains still from `.env`.
+
+        Split on purpose. "Who is senior" is a fact ABOUT A PERSON and belongs
+        where the person is, learned and corrected over time. "Which domain is
+        ours" is one value that decides inside-vs-outside for everybody, has no
+        person attached, and is needed before any lookup can be trusted - so it
+        stays configuration.
+
+        UNIONED with the `PREP_LEADERSHIP` CSV, not either/or. The first version
+        used the CSV only while the store was empty, so the first name added to
+        the store silently dropped every configured leader - the CEO in .env
+        stopped qualifying the moment the CTO was entered. And `brief` /
+        `week_ahead` still read the CSV (#119), so it has to keep working.
+
+        Internal domains: `ORG_EMAIL_DOMAIN`, or - when that is unset - the
+        domain of `EMAIL_PRINCIPAL`. He works for the org; his address is its
+        domain. Without this the external-party rule stayed dead for anyone who
+        never set the org key, which was everyone.
+        """
+        from_store = frozenset(
+            address.casefold() for person in directory.leadership() for address in person.emails
+        )
+        domains = _csv(identities, ORG_DOMAIN_KEY)
+        if not domains:
+            principal = str(identities.get("EMAIL_PRINCIPAL", "") or "")
+            _, _, domain = principal.casefold().partition("@")
+            domains = frozenset({domain}) if domain else frozenset()
+        return cls(
+            leadership=from_store | _csv(identities, LEADERSHIP_KEY), internal_domains=domains
         )
 
     def has_leadership(self, attendees: Iterable[str]) -> bool:

@@ -184,13 +184,17 @@ def attendee_parts(attendee: Any) -> tuple[str, str]:
     return addr.strip(), name.strip()
 
 
-def _is_resource(attendee: Any) -> bool:
+def is_resource(attendee: Any) -> bool:
     """Whether an attendee is a room or other bookable thing, not a person."""
     if isinstance(attendee, Mapping):
         if attendee.get("resource"):
             return True
         attendee = attendee.get("email", "")
     return _RESOURCE_DOMAIN in str(attendee).casefold()
+
+
+#: Internal callers predate the public name.
+_is_resource = is_resource
 
 
 #: Google attaches the Gemini notes doc to the calendar event. Measured as
@@ -248,10 +252,7 @@ def qualifies(event: Mapping[str, Any]) -> bool:
     Deliberately inclusive. A false positive costs one line in a brief that
     says "no notes"; a false negative is a meeting the system cannot see at all.
     """
-    response = event.get("response_status", "needsAction")
-    if response in DISQUALIFYING_RESPONSES:
-        return False
-    if event.get("kind", "meeting") in NON_MEETING_KINDS:
+    if _positively_not_his_meeting(event):
         return False
 
     people = [a for a in (event.get("attendees") or []) if not _is_resource(a)]
@@ -290,7 +291,12 @@ class Ledger:
                 continue
             # The one place an attendee is parsed. Everything downstream reads
             # `attendees` as bare addresses and `attendee_names` beside them.
-            parts = [attendee_parts(a) for a in (event.get("attendees") or [])]
+            # Rooms filtered HERE, not only in the qualifying count: stored, a
+            # room's resource.calendar.google.com domain read as an outside
+            # party to has_external and as the second person of a "1:1".
+            parts = [
+                attendee_parts(a) for a in (event.get("attendees") or []) if not _is_resource(a)
+            ]
             parts = [(addr, name) for addr, name in parts if addr]
             row = Row(
                 event_id=event["id"],
@@ -457,10 +463,16 @@ def part_of_the_week(event: Mapping[str, Any]) -> bool:
       * a solo entry he organised himself, which means `attendees` is PRESENT
         and holds fewer than two people. Present-and-empty is a personal
         errand; ABSENT is a record we cannot judge, and that one is kept.
+
+    Two things `qualifies` decides that this does NOT, both on purpose: an
+    unreadable record (above), and the organizer fallback - a solo entry with
+    attendees present and no `organizer_is_self` is dropped by the ledger
+    unless someone else organised it, and kept here, because "not enough
+    information to track for notes" is not "not his week". Say both, because
+    the first version of this docstring said "differs in one case" and the
+    code differed in two.
     """
-    if event.get("response_status", "needsAction") in DISQUALIFYING_RESPONSES:
-        return False
-    if event.get("kind", "meeting") in NON_MEETING_KINDS:
+    if _positively_not_his_meeting(event):
         return False
     attendees = event.get("attendees")
     if attendees is not None and event.get("organizer_is_self"):
@@ -470,6 +482,15 @@ def part_of_the_week(event: Mapping[str, Any]) -> bool:
     return True
 
 
-#: The old private name. `tests/test_ledger.py` and any caller written before
-#: the week-ahead needed this too still import it.
-_qualifies = qualifies
+def _positively_not_his_meeting(event: Mapping[str, Any]) -> bool:
+    """The two rules `qualifies` and `part_of_the_week` share, held once.
+
+    Both predicates opened with these same two checks, default literals
+    included. Two copies of a default is how "two qualification paths
+    disagreeing silently" - the failure `qualifies` exists to close - would
+    have come back through the front door.
+    """
+    return (
+        event.get("response_status", "needsAction") in DISQUALIFYING_RESPONSES
+        or event.get("kind", "meeting") in NON_MEETING_KINDS
+    )
