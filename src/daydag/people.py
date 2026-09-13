@@ -51,10 +51,10 @@ KNOWN LIMIT
     answered from the org domain - `ORG_EMAIL_DOMAIN`, or the principal's own
     address domain when that is unset.
 
-    WIRING. `run._prep` reads leadership from here and the loops that seed a
-    ledger observe the meetings that have already happened. `brief` and
-    `week_ahead` still build their Audience from `PREP_LEADERSHIP` in `.env`
-    until #119 lands, so that key is unioned in, not replaced.
+    WIRING. `run.render` builds one `Audience` from here for every loop that
+    asks who is in the room - prep and the week-ahead's Monday queue - and the
+    loops that seed a ledger observe the meetings that have already happened.
+    `PREP_LEADERSHIP` in `.env` is optional and unioned in when present.
 """
 
 from __future__ import annotations

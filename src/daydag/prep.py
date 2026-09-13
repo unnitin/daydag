@@ -350,8 +350,12 @@ def sources(
     identities: Mapping[str, str],
     channels: Sequence[str] = (),
     terms: Sequence[str] = (),
+    audience: Audience | None = None,
 ) -> SourcePlan:
     """The last ~4 weeks of this meeting, as literal queries.
+
+    ``audience`` is the caller's when it has one built from the people
+    directory; built from `.env` only when it does not (#119).
 
     Every query comes from :mod:`daydag.recipes` rather than being written here
     - that module exists because loops that write their own queries drift, and
@@ -359,7 +363,7 @@ def sources(
     """
     if now.tzinfo is None:
         raise PrepError("now must be timezone-aware; the lookback is bounded by local days")
-    audience = Audience.from_identities(identities)
+    audience = audience or Audience.from_identities(identities)
     if prep_worthy(row, audience) is None:
         raise PrepError(f"{row.summary!r} does not qualify for a prep ping; nothing to source")
 

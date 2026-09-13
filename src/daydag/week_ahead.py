@@ -354,7 +354,10 @@ def _clash_lines(
 
 
 def _monday_preps(
-    events: Sequence[Mapping[str, Any]], now: datetime, identities: Mapping[str, str]
+    events: Sequence[Mapping[str, Any]],
+    now: datetime,
+    identities: Mapping[str, str],
+    audience: Audience | None = None,
 ) -> list[MondayPrep]:
     """Qualifying Monday meetings, reusing the ledger and `prep` verbatim.
 
@@ -373,13 +376,16 @@ def _monday_preps(
             )
     ledger = Ledger()
     ledger.seed_day(events)
-    audience = Audience.from_identities(identities)
+    # The caller's audience when it has one from the people directory - so
+    # "leadership in the room" is what he has said about people, not a CSV he
+    # was told to stop maintaining (#119). `.env` only when nothing better.
+    audience = audience or Audience.from_identities(identities)
     preps: list[MondayPrep] = []
     for row in ledger.open_rows():
         reason = prep_worthy(row, audience)
         if reason is None:
             continue
-        plan = build_source_plan(row, now, identities=identities)
+        plan = build_source_plan(row, now, identities=identities, audience=audience)
         preps.append(MondayPrep(meeting=row.summary, starts=row.start, reason=reason, plan=plan))
     return preps
 
@@ -396,6 +402,7 @@ def assemble(
     identities: Mapping[str, str],
     state: StateFolder | None = None,
     pulse: Pulse | None = None,
+    audience: Audience | None = None,
 ) -> WeekAhead:
     """Build the Sunday week-ahead push for ``now``'s local week.
 
@@ -541,7 +548,7 @@ def assemble(
 
     # -- Monday prep, pre-built and never pre-sent (contract 4) --------------
     def _preps():
-        return _monday_preps(monday_events, now, identities)
+        return _monday_preps(monday_events, now, identities, audience)
 
     monday_preps = tuple(read("monday prep", _preps, []))
 

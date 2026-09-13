@@ -179,8 +179,9 @@ state outranks what it infers** - correct an entry and no later run un-learns
 it, and a correction made after someone was already observed folds the observed
 entry into the role you named.
 
-Today `prep` reads leadership from here (unioned with `PREP_LEADERSHIP`); the
-morning brief and week-ahead still read the `.env` list until #119.
+Every loop that asks "who is senior" - prep, the week-ahead's Monday queue -
+reads it from here. `PREP_LEADERSHIP` in `.env` is optional now and unioned in
+if you kept it.
 
 The Slack roster and the per-person DM/group ids that used to be `.env` keys
 live here now. `.env` keeps only the principal's id, because that has to be

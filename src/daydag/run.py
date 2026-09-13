@@ -100,6 +100,11 @@ _NO_CALENDAR = frozenset({"ingest", "chase", "ship"})
 #: write `notes_gaps=[]` over the section the morning run had just recorded.
 _NEEDS_LEDGER = frozenset({"morning", "eod", "prep"})
 
+#: Loops that read the people directory for "who is senior". The three that
+#: rehydrate a ledger, plus the week-ahead, which builds its own ledger but
+#: still asks who is in the room.
+_READS_DIRECTORY = _NEEDS_LEDGER | {"week-ahead"}
+
 
 class RunError(RuntimeError):
     """A loop was asked for something it cannot do, in the caller's terms."""
@@ -701,8 +706,6 @@ def _prep(
     meeting is worse than none: he reads it, trusts it, and walks into the other
     one cold.
     """
-    # The directory when a log exists, so leadership is what he has said about
-    # people rather than a CSV; the CSV is unioned in either way (#119).
     audience = (
         Audience.from_directory(directory, identities)
         if directory is not None
@@ -808,7 +811,14 @@ def render(
     sources = _Payloads(payloads)
     folder = state if state is not None else _vault(identities)
     events = log if log is None else EventLog.open(log)
-    directory = People(events) if events is not None and loop in _NEEDS_LEDGER else None
+    directory = People(events) if events is not None and loop in _READS_DIRECTORY else None
+    # One Audience for the run. From the directory when a log exists - what he
+    # has said about people, unioned with `.env` - else from `.env` alone.
+    audience = (
+        Audience.from_directory(directory, identities)
+        if directory is not None
+        else Audience.from_identities(identities)
+    )
     fresh: set[tuple[Any, Any]] = set()
     if loop not in _NEEDS_LEDGER:
         # `chase`, `ingest`, `ship` and `week-ahead` never read this ledger
@@ -860,7 +870,12 @@ def render(
         if loop == "eod":
             return eod_wrap.assemble(now=now, sources=sources, ledger=ledger, pulse=pulse).render()
         return week_ahead.assemble(
-            now=now, sources=sources, identities=identities, state=folder, pulse=pulse
+            now=now,
+            sources=sources,
+            identities=identities,
+            state=folder,
+            pulse=pulse,
+            audience=audience,
         ).render()
 
     if runner is None:

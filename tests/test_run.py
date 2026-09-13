@@ -1066,3 +1066,64 @@ def test_a_prep_that_sees_today_remembers_today(identities, tmp_path):
     )
 
     assert [m["summary"] for m in _recorded_meetings(log)] == ["Pod Steering"]
+
+
+# --------------------------------------------------------------------------
+# the directory decides "leadership in the room" for the week-ahead too (#119)
+# --------------------------------------------------------------------------
+
+
+def test_the_monday_prep_queue_reads_leadership_from_the_directory(identities, tmp_path):
+    """A meeting with no 1:1 pattern and no steering keyword qualifies only
+    because someone senior is in it. The week-ahead built its Audience from
+    .env, so a leader who existed only in the directory never qualified it."""
+    from datetime import timedelta
+
+    from daydag import week_ahead
+    from daydag.people import STATED, People
+    from daydag.prep import Audience
+    from daydag.state import EventLog
+
+    log = tmp_path / "events.db"
+    People(EventLog.open(log)).remember("ceo", email="jo@x.com", leadership=True, source=STATED)
+    sunday = MONDAY_PT - timedelta(days=1)  # Sun Sep 6 -> the week ahead is Mon Sep 7 - Sun Sep 13
+    review = _meeting(
+        "Roadmap review", "principal@x.com", "jo@x.com", "wren@x.com", day="2026-09-07"
+    )
+    payloads = _payloads(calendar=[review])
+
+    with_directory = week_ahead.assemble(
+        now=sunday,
+        sources=run._Payloads(payloads),
+        identities=identities,
+        audience=Audience.from_directory(People(EventLog.open(log)), identities),
+    )
+    without = week_ahead.assemble(
+        now=sunday, sources=run._Payloads(payloads), identities=identities
+    )
+
+    assert [p.meeting for p in with_directory.monday_preps] == ["Roadmap review"]
+    assert without.monday_preps == ()
+
+
+def test_render_hands_the_week_ahead_the_directory_audience(identities, tmp_path):
+    from datetime import timedelta
+
+    from daydag.people import STATED, People
+    from daydag.state import EventLog
+
+    log = tmp_path / "events.db"
+    People(EventLog.open(log)).remember("ceo", email="jo@x.com", leadership=True, source=STATED)
+    review = _meeting(
+        "Roadmap review", "principal@x.com", "jo@x.com", "wren@x.com", day="2026-09-07"
+    )
+
+    text = run.render(
+        "week-ahead",
+        now=MONDAY_PT - timedelta(days=1),
+        identities=identities,
+        payloads=_payloads(calendar=[review]),
+        log=log,
+    )
+
+    assert "Roadmap review" in text
