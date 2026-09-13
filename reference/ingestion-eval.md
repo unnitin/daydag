@@ -208,7 +208,7 @@ Two consequences worth stating before the classifier exists:
   before trusting a number that close to 1.
 - **An abstain path is legitimate; a guess is not.** An item the classifier
   cannot place should go into the digest as an unplaced item for him to settle,
-  the way `ledger.offer_note()` surfaces an ambiguous note instead of attaching
+  the way `Ledger.offer_note()` surfaces an ambiguous note instead of attaching
   it to the better-scoring row.
 
 ## Refreshing it

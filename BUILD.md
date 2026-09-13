@@ -13,6 +13,23 @@ Not a linear march through §3. The order below front-loads the two things that 
 
 Everything else is assembly.
 
+## Where this has got to
+
+Plan, not changelog - the tickets below are as written. This table is what a
+reader needs to know before trusting any of them, and the distinction it draws
+is the one that matters:
+
+| | |
+|---|---|
+| **Built and checked against real data** | the morning brief (M2-1) and the Sunday week-ahead (M4-3), both run end to end against live connectors on days verified by hand |
+| **Built and runs, not yet verified live** | EOD wrap (M4-1), meeting prep (M4-2), the ingestion classifier (M3-2), the engineering pulse (M2-3), the chase loop's read half (part of M3-5) |
+| **Not built** | the chaser's clocks and nudge drafts (rest of M3-5), write-back (M3-3), the digest and correction handling (M3-4), most on-demand commands (M4-4), the board half of the pulse (M2-4), everything in M5 |
+| **Gate not yet passed** | the five-day soak under M2. It has not run |
+
+"Runs" is not "verified", and the gap between them is where every defect found
+so far has lived. `USAGE.md` carries the same split per loop for someone who
+wants to use it rather than build it.
+
 ## Milestones
 
 ### M0 — Prereqs (blocking, ~half a day, mostly not code)
@@ -34,7 +51,14 @@ Everything else is assembly.
 | M1-5 | Voice + format fixtures: brief templates, 3 golden examples reviewed by Nitin | — |
 | M1-6 | **Decision: execution context (local vs remote) + scheduling substrate** | Moved up from M5. Gates M3-3 |
 
-`M1-4` is the boring one that saves the most time: calendar day-by-day, Slack `from:<@USER_ID>`, Gmail sender+body (not subject), vault paths with the `Create Music Group/` prefix, the saved JQL. These are all documented in §4 as prose and need to become literal queries.
+`M1-4` is the boring one that saves the most time: calendar day-by-day, Slack `from:<@USER_ID>`, Gmail **sender + label, parsing the subject**, vault paths with the `Create Music Group/` prefix, the saved JQL. These are all documented in §4 as prose and need to become literal queries.
+
+> The Gmail line used to read "sender+body (not subject)". That was measured and
+> found wrong: all 201 notes in a 30-day window carry the exact shape
+> `Notes: "<title>" <date>` and the label `meeting notes`, so parsing the subject
+> gives an exact title and resolves the back-to-back-1:1 ambiguity that fuzzy body
+> matching gets wrong. See `reference/connector-audit.md`; `recipes.gmail_gemini_notes`
+> is the query.
 
 ### M2 — Walking skeleton: one working morning brief
 

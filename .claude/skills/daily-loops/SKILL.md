@@ -161,6 +161,31 @@ of them:
   title is not proof the thing he asked for landed. Mark it moved, show the diff or
   the ticket, let him close it.
 
+## On-demand commands, and which of them the runner can run
+
+The description advertises ten. **Two of them are loops the runner executes; the
+other eight are things you do, following SPEC §3.8.** Asking `daydag.run` for one
+of the eight gets a refusal naming the loops, which is correct and not a bug -
+but knowing which is which before you start saves a wasted round-trip.
+
+| Command | How |
+|---|---|
+| `prep <meeting>` | `python -m daydag.run plan prep` - but note it preps the NEXT qualifying meeting; a NAMED one has no selector yet, so do that one by hand off SPEC §3.2 |
+| `ship <repo>` | `render ship`, with a `Pulse` built from the mirrors. Without one it degrades to a line |
+| `sweep` | you, following SPEC §3.8 - a pending-items pass across Slack/Gmail/Notion/Obsidian, triaged, every item with a permalink |
+| `find <question>` | you - person-scoped Slack (`from:<@ID>`, `sort:timestamp asc`), then Gmail, then read the thread. Answer with quote + link, never from memory |
+| `draft <what>` | you, in the voice above. A draft, never a send |
+| `status <workstream>` | you - read the Workstreams block, then the freshest evidence, report the delta |
+| `sprint [project]` | you - bounded JQL against `CDI`. Read-only by construction |
+| `done` / `add` / `snooze` | you, editing `DayDAG/State.md` |
+
+**`done`, `add` and `snooze` write to the vault**, so they carry the write rules
+rather than being conveniences: inside `DayDAG/` only, additive or a proposed
+diff, never a wholesale rewrite. `State.md` is the file he corrects by hand and
+those corrections WIN - so append his instruction, do not re-derive the list
+around it. Personnel, comp and M&A never land there at all (guardrail 3); those
+belong in the event log.
+
 ## The output contract
 
 Every loop returns the same shape, which is what lets its items land in the decision
