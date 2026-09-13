@@ -7,6 +7,7 @@ USING IT
         identities=identities,
         state=state_folder,     # optional: chase + watch, read like `brief` reads them
         pulse=pulse,             # optional: the shipping block
+        audience=audience,       # who is senior / outside; None means .env alone
     )
     pushed.render()              # the one Slack DM
     pushed.monday_preps          # Monday meetings due prep, and how to source them
@@ -354,7 +355,10 @@ def _clash_lines(
 
 
 def _monday_preps(
-    events: Sequence[Mapping[str, Any]], now: datetime, identities: Mapping[str, str]
+    events: Sequence[Mapping[str, Any]],
+    now: datetime,
+    identities: Mapping[str, str],
+    audience: Audience,
 ) -> list[MondayPrep]:
     """Qualifying Monday meetings, reusing the ledger and `prep` verbatim.
 
@@ -373,13 +377,12 @@ def _monday_preps(
             )
     ledger = Ledger()
     ledger.seed_day(events)
-    audience = Audience.from_identities(identities)
     preps: list[MondayPrep] = []
     for row in ledger.open_rows():
         reason = prep_worthy(row, audience)
         if reason is None:
             continue
-        plan = build_source_plan(row, now, identities=identities)
+        plan = build_source_plan(row, now, identities=identities, audience=audience)
         preps.append(MondayPrep(meeting=row.summary, starts=row.start, reason=reason, plan=plan))
     return preps
 
@@ -396,13 +399,21 @@ def assemble(
     identities: Mapping[str, str],
     state: StateFolder | None = None,
     pulse: Pulse | None = None,
+    audience: Audience | None = None,
 ) -> WeekAhead:
     """Build the Sunday week-ahead push for ``now``'s local week.
 
     ``state`` and ``pulse`` are optional the same way they are in
     :func:`daydag.brief.assemble`: state the caller owns, not a source, and a
     run without either is silence rather than a failure.
+
+    ``audience`` decides which Monday meetings are worth a prep. None means
+    `.env` alone; the runner passes one built from the people directory, so a
+    leader who exists only there qualifies a meeting (#119). Resolved ONCE
+    here and handed down, so no helper can fall back to a different one.
     """
+    if audience is None:
+        audience = Audience.from_identities(identities)
     if now.tzinfo is None or now.utcoffset() is None:
         raise WeekAheadError(
             "now must be timezone-aware: the week-ahead is a Sunday-evening "
@@ -541,7 +552,7 @@ def assemble(
 
     # -- Monday prep, pre-built and never pre-sent (contract 4) --------------
     def _preps():
-        return _monday_preps(monday_events, now, identities)
+        return _monday_preps(monday_events, now, identities, audience)
 
     monday_preps = tuple(read("monday prep", _preps, []))
 

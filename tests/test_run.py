@@ -1066,3 +1066,100 @@ def test_a_prep_that_sees_today_remembers_today(identities, tmp_path):
     )
 
     assert [m["summary"] for m in _recorded_meetings(log)] == ["Pod Steering"]
+
+
+# --------------------------------------------------------------------------
+# the directory decides "leadership in the room" for the week-ahead too (#119)
+# --------------------------------------------------------------------------
+
+
+def test_the_monday_prep_queue_reads_leadership_from_the_directory(identities, tmp_path):
+    """A meeting with no 1:1 pattern and no steering keyword qualifies only
+    because someone senior is in it. The week-ahead built its Audience from
+    .env, so a leader who existed only in the directory never qualified it."""
+    from datetime import timedelta
+
+    from daydag import week_ahead
+    from daydag.people import STATED, People
+    from daydag.prep import Audience
+    from daydag.state import EventLog
+
+    log = tmp_path / "events.db"
+    People(EventLog.open(log)).remember("ceo", email="jo@x.com", leadership=True, source=STATED)
+    sunday = MONDAY_PT - timedelta(days=1)  # Sun Sep 6 -> the week ahead is Mon Sep 7 - Sun Sep 13
+    review = _meeting(
+        "Roadmap review", "principal@x.com", "jo@x.com", "wren@x.com", day="2026-09-07"
+    )
+    payloads = _payloads(calendar=[review])
+
+    with_directory = week_ahead.assemble(
+        now=sunday,
+        sources=run._Payloads(payloads),
+        identities=identities,
+        audience=Audience.from_directory(People(EventLog.open(log)), identities),
+    )
+    without = week_ahead.assemble(
+        now=sunday, sources=run._Payloads(payloads), identities=identities
+    )
+
+    assert [p.meeting for p in with_directory.monday_preps] == ["Roadmap review"]
+    assert without.monday_preps == ()
+
+
+def test_render_hands_the_week_ahead_the_directory_audience(identities, tmp_path, monkeypatch):
+    """The wire itself. `WeekAhead.render` never prints `monday_preps`
+    (pre-built, not pre-sent), so no assertion on the text can see the
+    audience - the first version of this test passed with the kwarg deleted."""
+    from datetime import timedelta
+
+    from daydag import week_ahead
+    from daydag.people import STATED, People
+    from daydag.state import EventLog
+
+    log = tmp_path / "events.db"
+    People(EventLog.open(log)).remember("ceo", email="jo@x.com", leadership=True, source=STATED)
+    handed = {}
+    real = week_ahead.assemble
+
+    def spy(**kwargs):
+        handed["audience"] = kwargs["audience"]
+        return real(**kwargs)
+
+    monkeypatch.setattr(run.week_ahead, "assemble", spy)
+
+    run.render(
+        "week-ahead",
+        now=MONDAY_PT - timedelta(days=1),
+        identities=identities,
+        payloads=_payloads(calendar=[]),
+        log=log,
+    )
+
+    assert "jo@x.com" in handed["audience"].leadership
+
+
+def test_whether_a_meeting_is_external_does_not_depend_on_passing_a_log(identities):
+    """The principal's-domain fallback lived on the directory path only, so
+    the same calendar queued a vendor sync as EXTERNAL with `--log` and
+    nothing without it."""
+    from daydag.prep import Audience
+
+    ids = {**identities, "EMAIL_PRINCIPAL": "principal@x.com"}
+    ids.pop("ORG_EMAIL_DOMAIN", None)
+
+    with_env_only = Audience.from_identities(ids)
+    with_directory = Audience.from_directory(None, ids)
+
+    assert with_env_only.internal_domains == with_directory.internal_domains == {"x.com"}
+    assert with_env_only.has_external(["principal@x.com", "sales@vendor.example"])
+
+
+def test_a_leader_added_without_an_address_is_warned_about(tmp_path, capsys):
+    from daydag import people
+
+    code = people.main(
+        ["add", "cto", "--log", str(tmp_path / "e.db"), "--slack-id", "UXCTO", "--leadership"]
+    )
+
+    assert code == 0
+    assert "no email" in capsys.readouterr().out
