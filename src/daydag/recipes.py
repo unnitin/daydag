@@ -306,7 +306,7 @@ class OvernightWindow:
     #: so a BACKFILLED run has a `now` in the past and the query happily returns
     #: everything since. A 06:40 brief reported a message sent at 18:06 that
     #: evening as "overnight" - twelve hours of its own future.
-    max_ts: float = 0.0
+    max_ts: float
 
 
 #: Section 3.1's overnight window opens at 6pm the previous evening.

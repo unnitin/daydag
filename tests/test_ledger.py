@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from daydag.ledger import Ledger, Match, _qualifies, title_from_gemini_subject
+from daydag.ledger import Ledger, Match, qualifies, title_from_gemini_subject
 
 _PT = timezone(timedelta(hours=-7))
 
@@ -315,15 +315,15 @@ def test_an_interview_qualifies_even_though_only_the_principal_is_invited():
         organizer="recruiting@example.com",
     )
 
-    assert _qualifies(interview)
+    assert qualifies(interview)
 
 
 def test_a_solo_block_he_made_himself_is_still_not_a_meeting():
     """The other side of that rule - it must not sweep in his own holds."""
     own_hold = _event(summary="Focus time", attendees=["principal@example.com"])
 
-    assert not _qualifies(own_hold)
-    assert not _qualifies(_event(summary="Veda pick up", attendees=[]))
+    assert not qualifies(own_hold)
+    assert not qualifies(_event(summary="Veda pick up", attendees=[]))
 
 
 def test_a_booked_room_is_not_a_participant():
@@ -336,14 +336,14 @@ def test_a_booked_room_is_not_a_participant():
         summary="Focus block, room booked", attendees=["principal@example.com", room]
     )
 
-    assert not _qualifies(solo_in_a_room)
+    assert not qualifies(solo_in_a_room)
 
 
 def test_a_real_meeting_in_a_room_still_qualifies():
     room = "c_1887ml11ltcrgh14m2e0ahj80ojns@resource.calendar.google.com"
     real = _event(attendees=["a@example.com", "b@example.com", room])
 
-    assert _qualifies(real)
+    assert qualifies(real)
 
 
 def test_a_hold_he_organised_himself_is_not_a_meeting_even_with_an_organizer():
@@ -357,7 +357,7 @@ def test_a_hold_he_organised_himself_is_not_a_meeting_even_with_an_organizer():
         organizer_is_self=True,
     )
 
-    assert not _qualifies(own)
+    assert not qualifies(own)
 
 
 def test_an_organizer_with_no_self_marker_and_no_principal_is_not_assumed():
@@ -365,7 +365,7 @@ def test_an_organizer_with_no_self_marker_and_no_principal_is_not_assumed():
     attendee count is the only evidence left, and it says no."""
     unknown = _event(attendees=["principal@example.com"], organizer="someone@example.com")
 
-    assert _qualifies(unknown), "an organizer we cannot match to him reads as somebody else"
+    assert qualifies(unknown), "an organizer we cannot match to him reads as somebody else"
 
 
 def test_a_note_generated_hours_late_still_attaches():

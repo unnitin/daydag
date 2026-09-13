@@ -248,10 +248,7 @@ def qualifies(event: Mapping[str, Any]) -> bool:
     Deliberately inclusive. A false positive costs one line in a brief that
     says "no notes"; a false negative is a meeting the system cannot see at all.
     """
-    response = event.get("response_status", "needsAction")
-    if response in DISQUALIFYING_RESPONSES:
-        return False
-    if event.get("kind", "meeting") in NON_MEETING_KINDS:
+    if _positively_not_his_meeting(event):
         return False
 
     people = [a for a in (event.get("attendees") or []) if not _is_resource(a)]
@@ -457,10 +454,16 @@ def part_of_the_week(event: Mapping[str, Any]) -> bool:
       * a solo entry he organised himself, which means `attendees` is PRESENT
         and holds fewer than two people. Present-and-empty is a personal
         errand; ABSENT is a record we cannot judge, and that one is kept.
+
+    Two things `qualifies` decides that this does NOT, both on purpose: an
+    unreadable record (above), and the organizer fallback - a solo entry with
+    attendees present and no `organizer_is_self` is dropped by the ledger
+    unless someone else organised it, and kept here, because "not enough
+    information to track for notes" is not "not his week". Say both, because
+    the first version of this docstring said "differs in one case" and the
+    code differed in two.
     """
-    if event.get("response_status", "needsAction") in DISQUALIFYING_RESPONSES:
-        return False
-    if event.get("kind", "meeting") in NON_MEETING_KINDS:
+    if _positively_not_his_meeting(event):
         return False
     attendees = event.get("attendees")
     if attendees is not None and event.get("organizer_is_self"):
@@ -470,6 +473,15 @@ def part_of_the_week(event: Mapping[str, Any]) -> bool:
     return True
 
 
-#: The old private name. `tests/test_ledger.py` and any caller written before
-#: the week-ahead needed this too still import it.
-_qualifies = qualifies
+def _positively_not_his_meeting(event: Mapping[str, Any]) -> bool:
+    """The two rules `qualifies` and `part_of_the_week` share, held once.
+
+    Both predicates opened with these same two checks, default literals
+    included. Two copies of a default is how "two qualification paths
+    disagreeing silently" - the failure `qualifies` exists to close - would
+    have come back through the front door.
+    """
+    return (
+        event.get("response_status", "needsAction") in DISQUALIFYING_RESPONSES
+        or event.get("kind", "meeting") in NON_MEETING_KINDS
+    )

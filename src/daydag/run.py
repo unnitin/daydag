@@ -8,7 +8,9 @@ USING IT
     render("morning", now=now, identities=ids, payloads=payloads)   # -> str
 
     A payloads file is `{source: whatever the connector returned}`:
-        {"calendar": [...], "slack": [...], "gmail": [...], "vault": "..."}
+        {"calendar": [...], "slack": [...], "gmail": [...],
+         "vault": "..." | null,                 # null: the note does not exist
+         "vault_notes": {"<path>": "..." | null}}   # eod's Friday reads, by path
 
 CONTRACTS - break one and the guarantee is gone
     1. This module FETCHES NOTHING. Python cannot call an MCP connector; the
@@ -42,9 +44,12 @@ WHY IT EXISTS
     goes exactly where the capability boundary already is.
 
 KNOWN LIMIT
-    Three loops are wired: morning, eod, week-ahead. Prep pings are not - they
-    are the one interrupt and fire off a meeting's start time rather than a
-    fetch plan, so they belong to a scheduler (#25), not here.
+    All seven loops in `LOOPS` render. `prep` renders the NEXT meeting worth
+    prepping, not a named one - there is no selector - and its points come
+    from the overnight Slack payload rather than the row-specific searches
+    `prep.sources` would build, because the two-phase plan cannot know the row
+    before the fetch. FIRING a prep ping at a meeting's start time is
+    scheduling, and belongs to #25, not here.
 
     The plan is advisory. Nothing verifies the agent actually ran the query it
     was given rather than one of its own, which is why every check that
@@ -55,6 +60,7 @@ from __future__ import annotations
 
 import json
 import sys
+from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta
@@ -63,13 +69,14 @@ from typing import Any
 
 from daydag import brief, eod_wrap, recipes, week_ahead
 from daydag.config import ConfigError, resolve_reference, timezone_for
-from daydag.ingestion import classify_items
+from daydag.ingestion import classify_items, unplaced
 from daydag.ledger import Ledger, Match, title_from_gemini_subject
 from daydag.prep import Audience, Reason, build, point, prep_worthy
 from daydag.prep_selector import HORIZON_DAYS, select
 from daydag.runlog import RunLog
 from daydag.smoke import REACHED
-from daydag.state import EventLog, NotesGap, StateFolder, read_section
+from daydag.state import EventLog, NotesGap, StateFolder, read_section, split_link
+from daydag.voice import clipped
 
 __all__ = ["LOOPS", "Plan", "RunError", "Step", "main", "plan", "render"]
 
@@ -180,7 +187,9 @@ def plan(loop: str, *, now: datetime, identities: Mapping[str, str], selector: s
     ] + [
         Step(
             "slack",
-            "search with this query verbatim; the id is already resolved",
+            "search with this query verbatim (the id is already resolved), newest first;"
+            " page until a result's ts falls below min_ts, or the older edge of the"
+            " window is silently missing on a busy night",
             {"query": overnight.query, "min_ts": overnight.min_ts},
         ),
         Step(
@@ -286,7 +295,7 @@ def _calendar_windows(
         # Seven requests, never one wide one - a five-day pull measured 156,681
         # characters and exceeded the connector's output limit (#2 audit).
         return recipes.calendar_days(next_monday, next_monday + timedelta(days=6))
-    return recipes.calendar_days(day, day)
+    return [recipes.calendar_day(day)]
 
 
 def _overnight_opened(window: recipes.OvernightWindow) -> Any:
@@ -360,23 +369,25 @@ class _Payloads:
 
     @staticmethod
     def _day_of(record: Mapping[str, Any]) -> date | None:
-        """The local date a record starts on, or None if it cannot be placed."""
+        """The local date a `timed()` record starts on, or None if unplaceable.
+
+        Reads only what `timed` leaves behind: a `datetime` for anything it
+        could parse, google's all-day `{"date": ...}` untouched, or a value
+        neither of them understood. It used to re-run the string parse `_instant`
+        had just done one line earlier - two parsers of one field in one class,
+        which an alias added to one would silently not reach in the other.
+        """
         start = record.get("start")
-        if isinstance(start, Mapping):
-            start = start.get("dateTime") or start.get("date_time") or start.get("date")
-        if isinstance(start, str):
-            try:
-                start = datetime.fromisoformat(start)
-            except ValueError:
-                try:
-                    return date.fromisoformat(start)
-                except ValueError:
-                    return None
         if isinstance(start, datetime):
-            local = start.astimezone(recipes.PACIFIC) if start.tzinfo else start
-            return local.date()
+            # Naive means already his wall-clock, same contract as `brief._local`.
+            return (start.astimezone(recipes.PACIFIC) if start.tzinfo else start).date()
         if isinstance(start, date):
             return start
+        if isinstance(start, Mapping):  # all-day: {"date": "YYYY-MM-DD"}
+            try:
+                return date.fromisoformat(str(start.get("date", "")))
+            except ValueError:
+                return None
         return None
 
     def calendar(self, window: recipes.DayWindow) -> Sequence[Mapping[str, Any]]:
@@ -521,7 +532,7 @@ def _jsonable(value: Any) -> Any:
     return value.isoformat() if isinstance(value, datetime) else value
 
 
-def _chase(now: datetime, folder: StateFolder | None, log: EventLog | None) -> str:
+def _chase(folder: StateFolder | None, log: EventLog | None) -> str:
     """What is owed to him, oldest first, with the ones past the clock marked.
 
     Reads `State.md` rather than deriving the list: it is the file he CORRECTS
@@ -543,8 +554,12 @@ def _chase(now: datetime, folder: StateFolder | None, log: EventLog | None) -> s
     if not lines:
         return "owed to you: nothing open"
 
-    out = [f"owed to you ({len(lines)})"]
-    out += [f"- {line}" for line in lines]
+    # The same shape the morning brief gives the same file: each bullet through
+    # `split_link` -> `claim`, so a trailing permalink renders as `(link)` and an
+    # item without one is admitted as unsourced - which is what lets the shared
+    # `brief.unsourced_claims` check see this loop's output at all. Hand-rolled
+    # `f"- {line}"` bullets were a second format for one list.
+    sections = [brief.Section("chase list", tuple(brief.claim(*split_link(b)) for b in lines))]
 
     # Items the log is carrying that the file has not got to yet. `_visible`
     # is the ONE gate on sensitivity and it lives in `state`; this reads what
@@ -557,10 +572,15 @@ def _chase(now: datetime, folder: StateFolder | None, log: EventLog | None) -> s
         except Exception:
             carried = []
         if carried:
-            out.append("")
-            out.append(f"not yet in State.md ({len(carried)})")
-            out += [f"- {item.get('owner', 'someone')}: {item.get('ask', '')}" for item in carried]
-    return "\n".join(out)
+            sections.append(
+                brief.Section(
+                    f"not yet in State.md ({len(carried)})",
+                    tuple(
+                        f"{item.get('owner', 'someone')}: {item.get('ask', '')}" for item in carried
+                    ),
+                )
+            )
+    return brief.render_push(f"owed to you ({len(lines)})", sections, ())
 
 
 def _ingest(sources: _Payloads) -> str:
@@ -589,17 +609,21 @@ def _ingest(sources: _Payloads) -> str:
         if isinstance(m, Mapping)
     ]
     placed = classify_items(items)
-    counts: dict[str, int] = {}
-    for record in placed:
-        counts[record.label or "unplaced"] = counts.get(record.label or "unplaced", 0) + 1
-
-    out = [f"ingest: {len(items)} item{'' if len(items) == 1 else 's'}"]
-    out += [f"- {label}: {n}" for label, n in sorted(counts.items()) if label != "unplaced"]
-    unplaced = [c.item_id for c in placed if c.label is None]
-    if unplaced:
-        out.append(f"- unplaced ({len(unplaced)}) - these need you, not a guess:")
-        out += [f"    {item_id}" for item_id in unplaced]
-    return "\n".join(out)
+    counts = Counter(record.label for record in placed if record.label)
+    sections = [
+        brief.Section("placed", tuple(f"{label}: {n}" for label, n in sorted(counts.items())))
+    ]
+    # `ingestion.unplaced` is the one definition of "could not be placed"; a
+    # second predicate here stopped following it the moment the first changed.
+    if missing := unplaced(placed):
+        sections.append(
+            brief.Section(
+                f"unplaced ({len(missing)}) - these need you, not a guess", tuple(missing)
+            )
+        )
+    return brief.render_push(
+        f"ingest: {len(items)} item{'' if len(items) == 1 else 's'}", sections, ()
+    )
 
 
 def _prep(
@@ -676,11 +700,15 @@ def _points(payloads: Mapping[str, Any]) -> list[Any]:
     that a claim carries its link, and a prep point he cannot click through to
     is one he has to take on trust in a meeting.
     """
+    # `clipped`, not a raw slice: it collapses a multi-line message onto the one
+    # line `Point.render` has, and marks a mid-word cut with an ellipsis rather
+    # than presenting it as verbatim - house rule 1. QUOTE_CAP, not a literal,
+    # so the quote budget is spelt in one place.
     return [
         point(
-            str(message.get("text", ""))[:160],
+            clipped(message.get("text", ""), brief.QUOTE_CAP, ellipsis="..."),
             "raised since you last met",
-            quote=str(message.get("text", ""))[:160],
+            quote=clipped(message.get("text", ""), brief.QUOTE_CAP, ellipsis="..."),
             permalink=message.get("permalink"),
             source="slack",
         )
@@ -713,15 +741,22 @@ def render(
     sources = _Payloads(payloads)
     folder = state if state is not None else _vault(identities)
     events = log if log is None else EventLog.open(log)
-    ledger = _remembered(events)
-    # SEED TODAY BEFORE OFFERING NOTES. `brief._seed_and_gaps` seeds during
-    # assembly, which is too late: a note offered to a ledger that has no rows
-    # yet attaches to nothing, and on a FIRST run there are no rehydrated rows
-    # either - so every meeting became a gap while its note was listed by name
-    # in the section directly above. `seed_day` is idempotent per instance, so
-    # brief's own seeding stays a no-op for these.
-    ledger.seed_day(_seedable(payloads))
-    _attach_notes(ledger, payloads, now)
+    if loop in _NO_CALENDAR:
+        # `chase`, `ingest` and `ship` never read the ledger. Rehydrating every
+        # remembered meeting and offering every note to it is a full replay of
+        # the meeting table for a loop that then ignores the result - and the
+        # table grows with every run, so the waste grows with the log.
+        ledger = Ledger()
+    else:
+        ledger = _remembered(events)
+        # SEED TODAY BEFORE OFFERING NOTES. `brief._seed_and_gaps` seeds during
+        # assembly, which is too late: a note offered to a ledger that has no
+        # rows yet attaches to nothing, and on a FIRST run there are no
+        # rehydrated rows either - so every meeting became a gap while its note
+        # was listed by name in the section directly above. `seed_day` is
+        # idempotent per instance, so brief's own seeding stays a no-op.
+        ledger.seed_day(_seedable(payloads))
+        _attach_notes(ledger, payloads, now)
     runner = RunLog(events, clock=lambda: now) if events is not None else None
 
     def _assemble() -> str:
@@ -733,7 +768,7 @@ def render(
                 return "shipped: couldn't check - no pulse was built"
             return pulse.render()
         if loop == "chase":
-            return _chase(now, folder, events)
+            return _chase(folder, events)
         if loop == "ingest":
             return _ingest(sources)
         if loop == "prep":
@@ -861,8 +896,6 @@ def main(argv: list[str] | None = None) -> int:
             + '} [--log PATH] [--write-state] [--for "<meeting or person>"]'
         )
         return 2
-
-    from pathlib import Path
 
     from daydag.config import Identities
 
