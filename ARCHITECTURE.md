@@ -126,7 +126,7 @@ The gap: Gemini notes arrive by email with **the meeting title in the body, not 
 So the link is a ledger, and calendar is the driver.
 
 1. **Every qualifying event gets a row** at the start of the day — from the day-by-day calendar pull, keyed on `(event id, instance start)` so recurring 1:1s are distinct rows. Qualifying means **not declined**, ≥2 attendees, not OOO/focus/hold. Requiring *accepted* dropped 61% of real meetings when measured against five days of live calendar (#2) - most invites are never answered.
-2. **Ingestion attaches, it doesn't discover.** Each sweep (12:00, 17:00) tries to match unattached rows against Gemini mail from `gemini-notes@google.com`, the Notion DB, and Granola. Match score = arrival inside `[event end, +6h]` · fuzzy title against the event summary · attendee overlap. High score attaches; **ambiguous surfaces rather than guesses** (invariant 5) — two 1:1s back to back with near-identical titles is the case that breaks naive matching.
+2. **Ingestion attaches, it doesn't discover.** Each sweep (12:00, 17:00) tries to match unattached rows against Gemini mail from `gemini-notes@google.com`, the Notion DB, and Granola. Matching is title-first: Gemini's subject is structured (`Notes: "<title>" <date>`), so an exact title match settles it outright. Only when the title matches zero or several rows does it fall back to scoring - arrival inside `[event end - 45 min, event end + the source's window]` · fuzzy title · attendee overlap. The lower bound is negative because meetings finish early and Gemini writes up when they actually end; the upper bound is per-source and wide - 18h for Gemini - because the lag is generation, not delivery (`ledger.ARRIVAL_WINDOW`). High score attaches; **ambiguous surfaces rather than guesses** (invariant 5) — two 1:1s back to back with near-identical titles is the case that breaks naive matching.
 3. **A row stays open across sweeps.** Notion lands ~a week late, so an unmatched row is re-checked, not closed. Late arrival backfills and re-runs ingestion for that meeting, which is why the ledger lives in the event log rather than being derived fresh each run.
 4. **Unmatched by the next morning becomes a brief line** — "tue: 3 meetings w/ no notes — X, Y, Z. recorded anywhere?" That is the actual guarantee. Not that every meeting has notes; that a missing one is *visible* the next morning instead of discovered a month later.
 5. **The ledger is also the prep trigger** (§3.2) and the OOO detector — same rows, already pulled.
@@ -199,6 +199,12 @@ One decision (#24) propagates through everything above:
 The trap: the home-lab box does not have this iCloud vault either, so the axis is **local vs remote**, not cron vs native. A split — local for write-heavy loops, remote for read-and-send — is coherent but adds a moving part.
 
 ## Scheduling
+
+**None of this runs yet.** The table is the Phase 2 design, not a description of
+a running system - today every loop is one someone asked for, in a session. The
+constraint that shapes it: Python cannot call an MCP connector, so a bare cron
+entry cannot run a loop at all. Whatever fires these has to start an agent
+session, which is what makes scheduling a design question rather than a crontab.
 
 | Time | What | Owner |
 |---|---|---|

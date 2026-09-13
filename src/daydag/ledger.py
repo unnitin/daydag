@@ -322,8 +322,16 @@ class Ledger:
         the section directly above.
 
         Bounded rather than open: a note arriving long before a meeting ends
-        belongs to something else, and half an hour is the largest early
-        finish that is still plausibly the same meeting.
+        belongs to something else. `ENDS_EARLY` is 45 minutes, measured rather
+        than chosen - a real note landed 37 minutes before its meeting's
+        scheduled end, so half an hour was not enough.
+
+        The upper bound is per-source and much wider, because the lag is not
+        delivery. Measured across ~100 real notes: generation-to-inbox runs 2
+        to 94 minutes, while meeting-end-to-generation has a long tail - one
+        Sep 10 meeting was written up at 00:52 the next morning, 12.9 hours
+        after it ended, and delivered four minutes later. See `ARRIVAL_WINDOW`,
+        which also carries why the window stays under 24 hours.
         """
         window = ARRIVAL_WINDOW.get(note.source, DEFAULT_ARRIVAL_WINDOW)
         return row.end - ENDS_EARLY <= note.arrived <= row.end + window

@@ -36,17 +36,25 @@ wrong or the guardrail needs an explicit decision - not a quieter test.
 
 ## Branches
 
-Work happens on parallel paths cut from `main`, one per independent surface:
+One branch per concern, cut from `main` or stacked on the branch it depends on.
+Name it for what it does: `fix/*`, `chore/*`, `path/*` for a long-lived surface.
 
-| Branch | Owns | Issues |
-|---|---|---|
-| `path/state-store` | the `DayDAG/` vault folder, event log, decision queue | #5, #26, #36 |
-| `path/engineering-pulse` | git mirrors, PR/CI state, board join | #11, #12, #32 |
-| `path/meeting-ledger` | calendar-driven note reconciliation | #35 |
-| `path/skill-registry` | skill manifests, the one-writer check, evidence bus | #33, #34 |
+**The prefix is load-bearing, not cosmetic.** `.github/workflows/ci.yml` triggers
+on an allowlist of BASE branches:
 
-They are parallel because they own separate modules and share only `daydag.config`. Keep
-it that way - if two paths need the same new helper, it belongs on `main` first.
+```yaml
+branches: [main, 'path/**', 'chore/**', 'fix/**', 'canary/**']
+```
+
+`pull_request` filters on the branch a PR TARGETS. So a branch named `docs/x` or
+`feat/x` gets full CI on its own PR into `main`, and silently gives **zero checks**
+to anything stacked on top of it. That is not hypothetical: a narrow trigger let
+eight PRs merge unchecked before anyone noticed. Until the allowlist is replaced
+with something that cannot fail this way, stay inside those prefixes.
+
+The paths stay independent by owning separate modules and sharing only
+`daydag.config`. Keep it that way - if two branches need the same new helper, it
+belongs on `main` first.
 
 ## Docstrings are read by agents
 
@@ -180,3 +188,32 @@ input reaching a subprocess - and needs no credential at all.
 `main` takes no direct pushes except from repo admins. Everything else goes through a PR
 that must have: CI green (secret scan, lint, tests on 3.11 and 3.12, guardrails), an
 approval, and **every review thread resolved**.
+
+### A merged stacked PR has not reached `main`
+
+Merging a stack bottom-up moves almost nothing to the trunk, and every PR reads
+MERGED afterwards. A six-PR stack was merged in order and `main` received **2 of
+its 11 commits** - the other five PRs merged into their own parent branch, which
+is what GitHub is asked to do when a PR's base is another feature branch.
+
+Nothing catches this. Every PR shows MERGED, every CI run is green, and the
+issues each one closes are closed. The signal is real and measures something
+other than what you want to know.
+
+So after merging a stack, **verify, do not assume**:
+
+```sh
+git fetch origin
+for sha in $(git log --format=%H origin/main..<top-of-stack>); do
+    git merge-base --is-ancestor $sha origin/main || echo "MISSING $sha"
+done
+```
+
+Anything missing: branch an integration branch from `origin/main`, merge the one
+branch carrying the whole stack (usually whichever received the last merge), run
+the suite **on the merge result** rather than on the branches it came from, and
+open a single PR into `main`.
+
+The alternative - retargeting each PR to `main` as its parent merges - works too,
+and has to be done in order, before each merge, every time. The integration
+branch is one step at the end instead of five in the middle.

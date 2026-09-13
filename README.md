@@ -9,10 +9,12 @@ them. And it owns almost nothing: five weekly routines already produce the
 plan, the progress report and the pod update, so DayDAG reads their output
 instead of re-deriving it.
 
-**Status: in development.** The morning brief runs against real data. The EOD
-wrap and week-ahead are wired but unproven live; four of the seven loops in the
-skill have no runner entry point yet. Nothing runs on a schedule. See
-[USAGE.md](USAGE.md) for what works today and how to run it.
+**Status: in development.** All seven loops the skill advertises now run. Two of
+them - the morning brief and the Sunday week-ahead - have been checked end to
+end against live connectors on days verified by hand; the other five run but
+have not, and that gap is where every defect found so far has lived. Nothing
+runs on a schedule. See [USAGE.md](USAGE.md) for the per-loop split and how to
+run one.
 
 ## Where to start
 
