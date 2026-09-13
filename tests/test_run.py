@@ -876,6 +876,7 @@ def test_a_carried_chase_item_keeps_its_quote_and_permalink(identities, tmp_path
     log = tmp_path / "events.db"
     EventLog.open(log).record(
         "carry_forward",
+        sensitivity="normal",
         owner="VP-AI",
         ask="confirm the cutover",
         quote="we cut over friday iirc",

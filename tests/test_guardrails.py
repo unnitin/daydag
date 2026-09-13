@@ -676,7 +676,9 @@ def test_no_private_item_reaches_any_file_in_the_vault(folder: StateFolder):
     marker = "growth-area-carry-forward"
     log = EventLog.open(":memory:")
     log.record("carry_forward", subject="a report", body=marker, sensitivity="private")
-    log.record("loop_opened", key="DATA-812", ask="compute consolidation", day=0)
+    log.record(
+        "loop_opened", sensitivity="normal", key="DATA-812", ask="compute consolidation", day=0
+    )
 
     folder.write_state(
         chase=log.chase_items(),
