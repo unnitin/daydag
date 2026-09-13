@@ -71,6 +71,7 @@ from daydag import brief, eod_wrap, recipes, week_ahead
 from daydag.config import ConfigError, resolve_reference, timezone_for
 from daydag.ingestion import classify_items, unplaced
 from daydag.ledger import Ledger, Match, title_from_gemini_subject
+from daydag.people import People
 from daydag.prep import Audience, Reason, build, point, prep_worthy
 from daydag.prep_selector import HORIZON_DAYS, select
 from daydag.runlog import RunLog
@@ -652,6 +653,7 @@ def _prep(
     payloads: Mapping[str, Any],
     ledger: Ledger,
     selector: str = "",
+    directory: People | None = None,
 ) -> str:
     """The meeting to prep for, and what to raise in it.
 
@@ -669,7 +671,13 @@ def _prep(
     meeting is worse than none: he reads it, trusts it, and walks into the other
     one cold.
     """
-    audience = Audience.from_identities(identities)
+    # The directory when a log exists, so leadership is what he has said about
+    # people rather than a CSV; the CSV is unioned in either way (#119).
+    audience = (
+        Audience.from_directory(directory, identities)
+        if directory is not None
+        else Audience.from_identities(identities)
+    )
 
     if selector:
         tz = timezone_for(identities)
@@ -770,6 +778,7 @@ def render(
     sources = _Payloads(payloads)
     folder = state if state is not None else _vault(identities)
     events = log if log is None else EventLog.open(log)
+    directory = People(events) if events is not None and loop in _NEEDS_LEDGER else None
     if loop not in _NEEDS_LEDGER:
         # `chase`, `ingest`, `ship` and `week-ahead` never read this ledger
         # (week-ahead builds its own). Rehydrating every remembered meeting and
@@ -787,6 +796,8 @@ def render(
         # idempotent per instance, so brief's own seeding stays a no-op.
         ledger.seed_day(_seedable(payloads))
         _attach_notes(ledger, payloads, now)
+        if directory is not None:
+            _observe_past(directory, ledger, identities, now)
     runner = RunLog(events, clock=lambda: now) if events is not None else None
 
     def _assemble() -> str:
@@ -802,7 +813,7 @@ def render(
         if loop == "ingest":
             return _ingest(sources)
         if loop == "prep":
-            return _prep(now, identities, payloads, ledger, selector)
+            return _prep(now, identities, payloads, ledger, selector, directory)
         if loop == "morning":
             return brief.assemble(
                 now=now,
@@ -841,6 +852,24 @@ def render(
     if write_state and loop in _NEEDS_LEDGER and folder is not None and events is not None:
         _project(folder, events, ledger, now)
     return text
+
+
+def _observe_past(
+    directory: People, ledger: Ledger, identities: Mapping[str, str], now: datetime
+) -> None:
+    """Teach the directory who was in the meetings that have already HAPPENED.
+
+    Past only. A named prep seeds seven future days, and observing those would
+    record him as having met people at meetings not yet held. Skipped entirely
+    when EMAIL_PRINCIPAL is unset: without it he would be added to his own
+    directory on every row.
+    """
+    principal = str(identities.get("EMAIL_PRINCIPAL", "") or "")
+    if not principal:
+        return
+    for row in ledger.open_rows():
+        if row.end <= now:
+            directory.observe(row, principal=principal)
 
 
 def _attach_notes(ledger: Ledger, payloads: Mapping[str, Any], now: datetime) -> None:
