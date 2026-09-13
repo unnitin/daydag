@@ -58,6 +58,7 @@ KNOWN LIMIT
 
 from __future__ import annotations
 
+import argparse
 import json
 import sys
 from collections import Counter
@@ -999,67 +1000,71 @@ def _project(folder: StateFolder, log: EventLog, ledger: Ledger, now: datetime) 
     )
 
 
+def _nonblank(value: str) -> str:
+    """A `--for` value with something in it.
+
+    argparse accepts ``--for "   "`` and ``--for=`` as values; the selector
+    module would raise on either. Refusing here keeps every spelling of the
+    mistake - trailing flag, equals form, abbreviation - on the one exit-2
+    path with the one message.
+    """
+    if not value.strip():
+        raise argparse.ArgumentTypeError("needs a meeting or a person after it")
+    return value
+
+
 def main(argv: list[str] | None = None) -> int:
     """`plan` writes JSON to stdout; `render` reads payloads from stdin."""
-    import argparse
-
     from daydag.config import Identities
 
-    raw = list(sys.argv[1:] if argv is None else argv)
     parser = argparse.ArgumentParser(
         prog="python -m daydag.run",
         description="Run one DayDAG loop in two halves: plan the fetch, render the push.",
+        allow_abbrev=False,  # `--fo` must not be a spelling of `--for`
     )
-    parser.add_argument("command", choices=("plan", "render"))
-    parser.add_argument("loop", choices=LOOPS)
+    parser.add_argument(
+        "command", choices=("plan", "render"), help="plan the fetch, or render the push"
+    )
+    parser.add_argument("loop", choices=LOOPS, help="which loop")
     # `--log <path>` is what makes a run remember: without it the ledger starts
     # empty every morning and a meeting seeded today cannot be a gap tomorrow.
     parser.add_argument("--log", metavar="PATH", help="the event log; without it the run forgets")
     # `--write-state` projects what the run learned back into `State.md`.
     parser.add_argument("--write-state", action="store_true", help="project into DayDAG/State.md")
     # `--for` names the meeting to prep. Without it `prep` takes the next
-    # qualifying one, which is the scheduled ping's behaviour. argparse refuses
-    # a bare `--for` for us - the hand-rolled parser silently dropped it and
-    # prepped a meeting he did not ask about.
+    # qualifying one, which is the scheduled ping's behaviour. The hand-rolled
+    # parser silently dropped a bare `--for` and prepped a meeting he did not
+    # ask about; argparse refuses the bare flag and `_nonblank` the blank value.
     parser.add_argument(
         "--for",
         dest="selector",
         metavar="MEETING",
-        default="",
+        type=_nonblank,
+        default=None,
         help="prep a named meeting or person",
     )
     try:
-        args = parser.parse_args(raw)
-    except SystemExit as bad:  # argparse has already printed why
-        return int(bad.code or 0)
+        args = parser.parse_args(argv)
+    except SystemExit as bad:  # argparse has already printed why; 0 for -h, 2 otherwise
+        return bad.code
 
-    command, loop, log, write_state, selector = (
-        args.command,
-        args.loop,
-        args.log,
-        args.write_state,
-        args.selector,
-    )
-    if "--for" in raw and not selector.strip():
-        # argparse accepts "   " as a value; the selector module would raise.
-        print("--for needs a meeting or a person after it", file=sys.stderr)
-        return 2
+    selector = args.selector or ""
     try:
         identities = Identities.from_file(Path(".env"))
         now = datetime.now().astimezone()
-        if command == "plan":
-            built = plan(loop, now=now, identities=identities, selector=selector)
+        if args.command == "plan":
+            built = plan(args.loop, now=now, identities=identities, selector=selector)
             print(json.dumps(built.to_dict(), indent=2))
         else:
             payloads = json.load(sys.stdin)
             print(
                 render(
-                    loop,
+                    args.loop,
                     now=now,
                     identities=identities,
                     payloads=payloads,
-                    log=log,
-                    write_state=write_state,
+                    log=args.log,
+                    write_state=args.write_state,
                     selector=selector,
                 )
             )

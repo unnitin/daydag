@@ -772,7 +772,31 @@ def test_a_trailing_for_is_refused_not_silently_dropped(tmp_path, monkeypatch, c
 
     assert run.main(["render", "prep", "--for"]) == 2
     assert "--for" in capsys.readouterr().err
-    assert run.main(["render", "prep", "--for", "   "]) == 2
+    # Every spelling of the same mistake lands on the same exit and message:
+    # the first argparse version checked for the literal token "--for" in
+    # argv, so `--for=` and the abbreviation `--fo ""` fell through to the
+    # next-qualifying meeting, exit 0, silently - the failure the check exists
+    # to remove.
+    for argv in (
+        ["render", "prep", "--for", "   "],
+        ["render", "prep", "--for="],
+        ["plan", "prep", "--for=   "],
+        ["render", "prep", "--fo", "finance"],
+    ):
+        assert run.main(argv) == 2, argv
+        err = capsys.readouterr().err
+        # usage (wrapped) plus one error line - never a traceback
+        assert err.count("\n") <= 4 and "traceback" not in err.casefold(), err
+
+
+def test_help_exits_zero_and_names_the_loops(capsys):
+    """`-h` is the one SystemExit argparse raises with 0; the wrapper must
+    pass it through, not turn it into a refusal."""
+    assert run.main(["-h"]) == 0
+    out = capsys.readouterr().out
+    assert "usage:" in out
+    for loop in run.LOOPS:
+        assert loop in out
 
 
 def test_a_blank_selector_is_one_line_on_stderr_not_a_traceback(identities):
