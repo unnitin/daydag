@@ -76,7 +76,7 @@ from daydag.prep import Audience, Reason, build, point, prep_worthy
 from daydag.prep_selector import HORIZON_DAYS, select
 from daydag.runlog import RunLog
 from daydag.smoke import REACHED
-from daydag.state import EventLog, NotesGap, StateFolder, read_section
+from daydag.state import EventLog, NotesGap, StateFolder, classify_sensitivity, read_section
 
 __all__ = ["LOOPS", "Plan", "RunError", "Step", "main", "plan", "render"]
 
@@ -942,10 +942,19 @@ def _project(folder: StateFolder, log: EventLog, ledger: Ledger, now: datetime) 
     the runner is not a second writer with its own idea of the rules, and the
     filter that a private carry-forward once slipped past is the one that has
     to hold.
+
+    A notes gap is a meeting TITLE, and a title can be the sensitive fact - an
+    exit interview, a comp conversation. Meeting rows are not a vault-bound
+    kind (they reach the file through the ledger, not through `chase_items`),
+    so the mark the gate reads is decided here, per title, by the same
+    classifier every recorded item goes through. Unmarked would mean visible.
     """
     folder.write_state(
         chase=log.chase_items(),
-        notes_gaps=[NotesGap(title=gap) for gap in ledger.notes_gaps(now)],
+        notes_gaps=[
+            NotesGap(title=gap, sensitivity=classify_sensitivity(gap))
+            for gap in ledger.notes_gaps(now)
+        ],
     )
 
 

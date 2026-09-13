@@ -412,3 +412,91 @@ def test_an_item_classified_from_a_comp_quote_never_reaches_the_vault(tmp_path):
     folder.write_state(chase=log.chase_items())
 
     assert "relocation" not in folder.state_path.read_text()
+
+
+def test_a_misspelt_or_non_string_sensitivity_is_refused_too(tmp_path):
+    """`_is_private` compares for equality, so "Private", "privat" and True
+    would pass a None check and then render as visible - the same road #105's
+    unmarked item took, one letter longer."""
+    from daydag.state import EventLog, SensitivityRequired
+
+    log = EventLog.open(tmp_path / "events.db")
+
+    for bad in ("Private", "privat", True, "", "secret"):
+        with pytest.raises(SensitivityRequired):
+            log.record("carry_forward", sensitivity=bad, owner="x", ask="y", key="k")
+    assert log.chase_items() == []
+
+
+def test_the_refusal_is_not_a_value_error():
+    """The house pattern wraps decoding in `except ValueError`; a refusal that
+    handler could swallow is not a refusal."""
+    from daydag.state import SensitivityRequired
+
+    assert not issubclass(SensitivityRequired, ValueError)
+
+
+def test_classify_does_not_trip_on_a_teams_everyday_vocabulary():
+    """Tokens dropped from the floor after false positives on real text: a
+    team that writes code says `pip`, `raise` and `200k rows` every day."""
+    from daydag.state import classify_sensitivity
+
+    for text in (
+        "pip install failed on the runner",
+        "raise the timeout to 30s",
+        "backfill of 200k rows finished",
+        "stock photos for the deck",
+        "the compute consolidation plan",
+    ):
+        assert classify_sensitivity(text) == "normal", text
+
+
+def test_classify_catches_inflections_and_the_escaped_ampersand():
+    from daydag.state import classify_sensitivity
+
+    for text in (
+        "two promotions to announce",
+        "M&amp;A update from the bankers",
+        "laid off the contractors",
+        "stock options refresh",
+        "exit interview notes",
+    ):
+        assert classify_sensitivity(text) == "private", text
+
+
+def test_a_sensitive_meeting_title_never_reaches_state_md_as_a_notes_gap(tmp_path):
+    """Meeting rows are not a vault-bound kind - their titles reach the file
+    through `notes_gaps` - so the runner classifies each title on the way out."""
+    from datetime import UTC, datetime, timedelta
+
+    from daydag import run
+    from daydag.ledger import Ledger
+    from daydag.state import EventLog, StateFolder
+
+    now = datetime(2026, 9, 9, 6, 40, tzinfo=UTC)
+    ledger = Ledger()
+    ledger.seed_day(
+        [
+            {
+                "id": "m1",
+                "summary": "Exit interview - contractor",
+                "start": now - timedelta(days=1, hours=2),
+                "end": now - timedelta(days=1, hours=1),
+                "attendees": ["a@x.com", "b@x.com"],
+            },
+            {
+                "id": "m2",
+                "summary": "Pod steering",
+                "start": now - timedelta(days=1, hours=4),
+                "end": now - timedelta(days=1, hours=3),
+                "attendees": ["a@x.com", "b@x.com"],
+            },
+        ]
+    )
+    folder = StateFolder.create(tmp_path / "vault" / "DayDAG")
+
+    run._project(folder, EventLog.open(tmp_path / "events.db"), ledger, now)
+
+    text = folder.state_path.read_text()
+    assert "Pod steering" in text
+    assert "Exit interview" not in text
