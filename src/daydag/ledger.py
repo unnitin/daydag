@@ -19,6 +19,11 @@ CONTRACTS
        answered, and requiring it dropped 61% of real meetings silently.
     3. An ambiguous match is SURFACED, never guessed. Back-to-back 1:1s with
        the same person are the case that produces one.
+    4. A calendar event may DECLARE its note (`notes_attached`), and that beats
+       every heuristic here: it is the source stating the fact rather than this
+       module inferring it from a title and a time window. Matching still runs,
+       because the gap list is not the only consumer - ingestion wants the note
+       itself - but a declared row is never reported as missing.
 
 WHY IT EXISTS
     The gap this closes is an absence, not a presence. Gemini mail puts the
@@ -39,15 +44,17 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
-#: How long after a meeting ends a note may still plausibly belong to it.
-#: Source-dependent by necessity: Gemini mails within hours of the call, while
-#: the Notion database lags about a week. One constant would either reject every
-#: real Notion note or accept a Gemini note from two meetings later.
 #: How long after a meeting ends its notes may still arrive, by the system that
-#: WROTE them. Measured across ~100 real Gemini notes: delivery is tight (2-94
-#: minutes from generation to inbox) but GENERATION runs late, and a Sep 10
+#: WROTE them. Source-dependent by necessity: one constant would either reject
+#: every real Notion note or accept a Gemini note from two meetings later.
+#:
+#: Measured across 49 real Gemini notes: delivery is tight (median 5 min, p90
+#: 19, max 94 from generation to inbox) but GENERATION runs late, and a Sep 10
 #: 11:00-12:00 meeting was generated at 00:52 the next morning - 12.9 hours out.
 #: Six hours dropped it and the meeting was a gap forever.
+#:
+#: This is now the FALLBACK path. When the calendar declares the note outright
+#: (`notes_attached`, see `Row.notes_declared`) no window is consulted at all.
 #:
 #: Bounded BELOW 24 hours on purpose, and that is the real constraint rather
 #: than a guess: a daily standup has rows 24 hours apart, so a wider window
@@ -129,6 +136,11 @@ class Row:
     attendees: list[str]
     note: Match | None = None
     day_closed: bool = False
+    #: The CALENDAR said a note artifact exists for this instance - Google
+    #: attaches the "Notes by Gemini" doc to the event itself. Independent of
+    #: `note`, which is set only when a note has actually been ingested: a
+    #: declared note may not have been mailed yet, or ever.
+    notes_declared: bool = False
 
     @property
     def key(self) -> tuple[str, datetime]:
@@ -152,8 +164,57 @@ def _is_resource(attendee: Any) -> bool:
     return _RESOURCE_DOMAIN in str(attendee).casefold()
 
 
-def _qualifies(event: dict[str, Any]) -> bool:
-    """Whether a calendar entry is a meeting the ledger should track.
+#: Google attaches the Gemini notes doc to the calendar event. Measured as
+#: per-INSTANCE: the "1:1 | 2x weekly" series carries one on the Sep 1
+#: instance, which produced a note, and none on the Sep 10 one, which did not.
+#:
+#: Identified by this URL marker, which Meet's notetaker puts on the docs it
+#: creates, rather than by the attachment's TITLE. Two reasons, both measured:
+#:
+#: * The title is LOCALIZED. A real event carries both "Notes by Gemini" and
+#:   "Anotacoes do Gemini" - and a meeting run in a pt-BR locale would carry
+#:   only the second. Matching English would report it as a gap forever, and
+#:   this org has a large Brazilian contingent on exactly these invites.
+#: * "Has an attachment" is too loose in the other direction: a Drive RECORDING
+#:   is attached to the series master and shows on every instance, so
+#:   "Data Health Check" carries a 2024 recording on every 2026 occurrence.
+#:
+#: A recording's url carries `usp=drive_web` instead, so the marker separates
+#: the two without reading a word of any language.
+_NOTES_DOC_MARKER = "usp=meet_tnfm_calendar"
+
+#: The English title, kept only as a fallback for a payload that carried the
+#: attachment titles but dropped the urls. Never the primary test - see above.
+_NOTES_ATTACHMENT_TITLE = "notes by gemini"
+
+
+def _declares_note(event: Mapping[str, Any]) -> bool:
+    """Whether the calendar entry itself says a note artifact exists.
+
+    Takes the shaped boolean when the caller supplied one, and otherwise reads
+    Google's raw `attachments` - because the realistic failure here is an agent
+    passing the connector payload through unshaped, and silently losing the
+    signal is exactly the docs-ahead-of-code gap this repo keeps finding.
+    """
+    if "notes_attached" in event:
+        return bool(event["notes_attached"])
+    return any(
+        _NOTES_DOC_MARKER in str(item.get("fileUrl", ""))
+        or _NOTES_ATTACHMENT_TITLE in str(item.get("title", "")).casefold()
+        for item in (event.get("attachments") or [])
+        if isinstance(item, Mapping)
+    )
+
+
+def qualifies(event: Mapping[str, Any]) -> bool:
+    """Whether a calendar entry is a meeting worth tracking or reporting.
+
+    PUBLIC because more than one loop has to agree on it. The week-ahead built
+    its own idea of "a meeting" - one check, `kind not in NON_MEETING_KINDS` -
+    against the four here, and so rendered a meeting he had DECLINED and a
+    personal errand with no attendees as part of his week, while
+    `monday_prep_queue`, reading the same events through the ledger, dropped
+    both. Two qualification paths in one module, disagreeing silently.
 
     Deliberately inclusive. A false positive costs one line in a brief that
     says "no notes"; a false negative is a meeting the system cannot see at all.
@@ -196,7 +257,7 @@ class Ledger:
     def seed_day(self, events: Iterable[dict[str, Any]]) -> None:
         """Create a row per qualifying event. Idempotent per instance."""
         for event in events:
-            if not _qualifies(event):
+            if not qualifies(event):
                 continue
             row = Row(
                 event_id=event["id"],
@@ -204,6 +265,7 @@ class Ledger:
                 end=event["end"],
                 summary=event["summary"],
                 attendees=list(event.get("attendees") or []),
+                notes_declared=_declares_note(event),
             )
             self._rows.setdefault(row.key, row)
 
@@ -324,5 +386,48 @@ class Ledger:
 
         This is the actual deliverable: the next morning's "3 meetings w/ no
         notes" line, which is how a missing note becomes visible at all.
+
+        A row whose calendar entry DECLARES a note is never a gap, even with
+        nothing ingested yet. Google attaches the notes doc to the event, so
+        the source states the fact the arrival window was reconstructing by
+        guesswork - and states it as soon as the meeting ends rather than
+        whenever the mail happens to land.
         """
-        return [row.summary for row in self.open_rows() if row.end < as_of]
+        return [
+            row.summary for row in self.open_rows() if row.end < as_of and not row.notes_declared
+        ]
+
+
+def part_of_the_week(event: Mapping[str, Any]) -> bool:
+    """Whether an entry belongs on the page describing his week.
+
+    Close to `qualifies`, and deliberately NOT the same question. `qualifies`
+    asks "should the ledger track this for notes", and answers no for a record
+    missing the fields it reads. Here the question is "is this his week", where
+    dropping an unreadable record loses a real meeting from the page - the
+    under-reporting failure he has no way to notice, as against a stray line he
+    skims past.
+
+    So this drops only what it can POSITIVELY read as not his week:
+
+      * a response he declined
+      * a non-meeting kind - OOO, a focus block, a hold
+      * a solo entry he organised himself, which means `attendees` is PRESENT
+        and holds fewer than two people. Present-and-empty is a personal
+        errand; ABSENT is a record we cannot judge, and that one is kept.
+    """
+    if event.get("response_status", "needsAction") in DISQUALIFYING_RESPONSES:
+        return False
+    if event.get("kind", "meeting") in NON_MEETING_KINDS:
+        return False
+    attendees = event.get("attendees")
+    if attendees is not None and event.get("organizer_is_self"):
+        people = [a for a in attendees if not _is_resource(a)]
+        if len(people) < 2:
+            return False
+    return True
+
+
+#: The old private name. `tests/test_ledger.py` and any caller written before
+#: the week-ahead needed this too still import it.
+_qualifies = qualifies

@@ -76,7 +76,7 @@ from typing import Any
 
 from daydag import recipes
 from daydag.brief import UNSOURCED, Section, Sources, red_items
-from daydag.ledger import NON_MEETING_KINDS, Ledger
+from daydag.ledger import Ledger, part_of_the_week
 from daydag.prep import Audience, Reason, SourcePlan, prep_worthy
 from daydag.prep import sources as build_source_plan
 from daydag.pulse import Pulse
@@ -294,7 +294,13 @@ def _week_lines(
         label = _WEEKDAY[day.weekday()]
         titles = [str(event.get("summary", "untitled")) for event in events]
         plural = "" if len(events) == 1 else "s"
-        body = f"{label}: {len(events)} meeting{plural} - " + ", ".join(titles)
+        # Named, not enumerated. Nineteen titles inline is a wall of text in a
+        # Slack DM, which is the delivery surface - the point of this line is
+        # the SHAPE of the day. The full list is one section up for Monday and
+        # on his calendar for the rest.
+        shown = titles[:_WEEK_TITLES]
+        tail = "" if len(titles) <= _WEEK_TITLES else f", +{len(titles) - _WEEK_TITLES} more"
+        body = f"{label}: {len(events)} meeting{plural} - " + ", ".join(shown) + tail
         link = next((_link(event) for event in events if _link(event)), None)
         found_flags = (_traveller_flag(e.get("attendees") or [], travel) for e in events)
         flag = next((flag for flag in found_flags if flag), None)
@@ -303,6 +309,62 @@ def _week_lines(
         else:
             text, travel_link = flag
             lines.append(_claim(f"{body} - {text}", link, travel_link))
+    return lines
+
+
+#: Titles named inline on a "the week" bullet before it collapses to a count.
+_WEEK_TITLES = 3
+
+
+def _clash_lines(
+    by_day: Mapping[date, Sequence[Mapping[str, Any]]], days: Sequence[date]
+) -> list[str]:
+    """Overlapping meetings across the week, one line per pile-up.
+
+    CLUSTERED, not pairwise, which is the difference between a usable line and
+    a wall. `brief._overlap_flags` reports every pair because a single day has
+    a handful of collisions; a real week measured FOUR meetings stacked at
+    Thursday 11:00, and pairwise that is six near-identical lines for one
+    conflict. Here they collapse into one item naming the span and everything
+    in it, so the count matches the number of decisions he has to make.
+
+    Half-open, same as `brief._overlap_flags`: 9:00-10:00 and 10:00-11:00 are
+    back-to-back, not a collision. Which invite wins is his call - surfacing
+    that there is a choice is the job (invariant 4).
+    """
+    lines: list[str] = []
+    for day in days:
+        events = sorted(by_day.get(day, ()), key=_instant)
+        clusters: list[list[Mapping[str, Any]]] = []
+        for event in events:
+            start, end = _local(event.get("start")), _local(event.get("end"))
+            if start is None or end is None:
+                continue  # an unplaceable meeting cannot be shown to collide
+            for cluster in clusters:
+                if any(
+                    start < other_end and other_start < end
+                    for other in cluster
+                    if (other_start := _local(other.get("start"))) is not None
+                    and (other_end := _local(other.get("end"))) is not None
+                ):
+                    cluster.append(event)
+                    break
+            else:
+                clusters.append([event])
+
+        for cluster in clusters:
+            if len(cluster) < 2:
+                continue
+            titles = ", ".join(str(e.get("summary", "untitled")) for e in cluster)
+            # `events` was sorted by `_instant`, and a cluster only ever grows
+            # by appending from it, so its first member is its earliest.
+            lines.append(
+                _claim(
+                    f"{WARN} {_WEEKDAY[day.weekday()]} {_clock(cluster[0].get('start'))}"
+                    f" - {len(cluster)} at once: {titles}",
+                    *[_link(e) for e in cluster],
+                )
+            )
     return lines
 
 
@@ -453,7 +515,17 @@ def assemble(
     travel = _travel_index(events)
     by_day: dict[date, list[Mapping[str, Any]]] = {}
     for event in events:
-        if event.get("kind") in NON_MEETING_KINDS:
+        # `ledger.part_of_the_week`, NOT a local `kind` check. This used to
+        # apply one rule where the ledger applies four, so a meeting he had
+        # DECLINED and a personal errand with no attendees rendered as part of
+        # his week - while `monday_prep_queue`, reading the same events through
+        # the ledger, dropped both. Two paths in one module, disagreeing.
+        #
+        # Its own function rather than `qualifies` for one reason, written out
+        # there: an UNREADABLE record is kept here and dropped by the ledger,
+        # because losing a real meeting off this page is the failure he cannot
+        # notice.
+        if not part_of_the_week(event):
             continue
         moment = _local(event.get("start"))
         if moment is not None:
@@ -468,6 +540,16 @@ def assemble(
     week_lines = _week_lines(by_day, week_days, travel)
     if week_lines:
         sections.append(Section("the week", tuple(week_lines)))
+
+    # -- clashes, across the WHOLE week ------------------------------------
+    # The single most valuable thing on a "prepare my week" page, and it was
+    # absent: `brief._overlap_flags` does exactly this for one day and the
+    # week-ahead never called it. Measured on a real week - 15 overlapping
+    # clusters, including four meetings stacked at Thursday 11:00 - every one
+    # unflagged.
+    clash_lines = _clash_lines(by_day, [next_monday + timedelta(days=n) for n in range(5)])
+    if clash_lines:
+        sections.append(Section(f"clashes ({len(clash_lines)})", tuple(clash_lines)))
 
     if watch_lines:
         sections.append(Section("watch", tuple(watch_lines)))

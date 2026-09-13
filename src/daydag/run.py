@@ -57,22 +57,32 @@ import json
 import sys
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 from daydag import brief, eod_wrap, recipes, week_ahead
 from daydag.config import ConfigError, resolve_reference, timezone_for
+from daydag.ingestion import classify_items
 from daydag.ledger import Ledger, Match, title_from_gemini_subject
+from daydag.prep import Audience, build, point, prep_worthy
 from daydag.runlog import RunLog
 from daydag.smoke import REACHED
-from daydag.state import EventLog, NotesGap, StateFolder
+from daydag.state import EventLog, NotesGap, StateFolder, read_section
 
 __all__ = ["LOOPS", "Plan", "RunError", "Step", "main", "plan", "render"]
 
-#: The loops that run off a fetch plan. Prep pings are absent on purpose - see
-#: the module docstring's KNOWN LIMIT.
-LOOPS = ("morning", "eod", "week-ahead")
+#: Every loop `SKILL.md` advertises. Three of these used to be absent, and the
+#: skill advertised them anyway: `prep.py`, `ingestion.py` and `pulse.py` were
+#: built and tested with no way to reach them, so asking for "chase" got a
+#: refusal naming the other three (#95).
+#:
+#: `ship` is the odd one - it reads local git mirrors, not a connector, so its
+#: plan has no fetch steps at all. See `_calendar_windows` for the rest.
+LOOPS = ("morning", "eod", "week-ahead", "prep", "ingest", "chase", "ship")
+
+#: Loops whose plan asks for no calendar at all.
+_NO_CALENDAR = frozenset({"ingest", "chase", "ship"})
 
 
 class RunError(RuntimeError):
@@ -138,7 +148,23 @@ def plan(loop: str, *, now: datetime, identities: Mapping[str, str]) -> Plan:
     # convention as `brief._local` and `recipes.timezone_for`.
     day = now.astimezone(timezone_for(identities)).date()
 
-    window = recipes.calendar_day(day)
+    if loop == "ship":
+        # No connector steps at all. `pulse` reads the git mirrors on disk, so
+        # this loop is the one that genuinely needs nothing fetched - the plan
+        # says so rather than emitting four steps whose payloads it ignores.
+        return Plan(
+            loop=loop,
+            at=now.isoformat(),
+            steps=(
+                Step(
+                    "git",
+                    "no connector fetch - sync the mirrors and pass the Pulse to render",
+                    {"watchlist": recipes.vault_relative("DayDAG", "Watchlist.md")},
+                ),
+            ),
+        )
+
+    windows = _calendar_windows(loop, day)
     overnight = recipes.slack_overnight(now, mentioning=principal, identities=identities)
     note = recipes.weekly_note(day)
 
@@ -147,7 +173,9 @@ def plan(loop: str, *, now: datetime, identities: Mapping[str, str]) -> Plan:
             "calendar",
             "one day, never a range - a five-day pull blew the output limit",
             {"day": str(window.day), "time_min": window.time_min, "time_max": window.time_max},
-        ),
+        )
+        for window in windows
+    ] + [
         Step(
             "slack",
             "search with this query verbatim; the id is already resolved",
@@ -177,8 +205,69 @@ def plan(loop: str, *, now: datetime, identities: Mapping[str, str]) -> Plan:
             # prefix included. Prepending a folder to it named nothing.
             {"path": note},
         ),
+        *_extra_notes(loop, day),
     ]
     return Plan(loop=loop, at=now.isoformat(), steps=tuple(steps))
+
+
+def _extra_notes(loop: str, day: date) -> list[Step]:
+    """Vault notes a loop reads BEYOND its own weekly note.
+
+    Only the EOD wrap has any: on a Friday it reports whether next week's plan
+    and next week's meeting prep actually landed, reading both through
+    `sources.vault_note`. The plan never asked for them, so even once that
+    method existed there was nothing for it to serve - the fix and the fetch
+    have to arrive together or the section still never renders.
+
+    They go under `vault_notes`, keyed by path, because `vault` already means
+    one specific note and overloading it would make "which note is missing"
+    unanswerable.
+    """
+    if loop != "eod":
+        return []
+    next_week = day + timedelta(days=7)
+    return [
+        Step(
+            "vault_notes",
+            "read each; absent is the finding - put it under `vault_notes` keyed by path",
+            {"paths": [recipes.weekly_note(next_week), recipes.meeting_prep(next_week)]},
+        )
+    ]
+
+
+def _calendar_windows(loop: str, day: date) -> list[recipes.DayWindow]:
+    """The calendar windows this LOOP will actually ask its sources for.
+
+    Every loop used to get the same single window - the principal's today -
+    because the plan never looked at `loop` at all. Each consumer then asked
+    for something else and was served today's events anyway, silently:
+
+        morning      today                    matched, by luck
+        eod          TOMORROW                 served today
+        week-ahead   next mon-sun, 7 windows  served today, seven times
+
+    So the two loops nobody had run were both fetching the wrong days. Kept in
+    step with the consumers deliberately - `eod_wrap` and `week_ahead` derive
+    their windows from these same `recipes` helpers, so the arithmetic (and
+    the Monday-of-next-week rule) lives in one place rather than two.
+    """
+    if loop in _NO_CALENDAR:
+        # `ingest` reads mail, `chase` reads the chase list he maintains by
+        # hand. Neither looks at the calendar, and fetching a day they ignore
+        # is a connector round-trip for nothing.
+        return []
+    if loop == "eod":
+        # `eod_wrap` reads exactly one window, and it is tomorrow's: the wrap
+        # reports the day that just ended and previews the first meeting of
+        # the next one.
+        return [recipes.calendar_day(day + timedelta(days=1))]
+    if loop == "week-ahead":
+        this_monday, _ = recipes.week_range(day)
+        next_monday = this_monday + timedelta(days=7)
+        # Seven requests, never one wide one - a five-day pull measured 156,681
+        # characters and exceeded the connector's output limit (#2 audit).
+        return recipes.calendar_days(next_monday, next_monday + timedelta(days=6))
+    return recipes.calendar_days(day, day)
 
 
 def _overnight_opened(window: recipes.OvernightWindow) -> Any:
@@ -250,8 +339,50 @@ class _Payloads:
             raise RunError(f"{name} came back as {type(value).__name__}, not a list of records")
         return value
 
+    @staticmethod
+    def _day_of(record: Mapping[str, Any]) -> date | None:
+        """The local date a record starts on, or None if it cannot be placed."""
+        start = record.get("start")
+        if isinstance(start, Mapping):
+            start = start.get("dateTime") or start.get("date_time") or start.get("date")
+        if isinstance(start, str):
+            try:
+                start = datetime.fromisoformat(start)
+            except ValueError:
+                try:
+                    return date.fromisoformat(start)
+                except ValueError:
+                    return None
+        if isinstance(start, datetime):
+            local = start.astimezone(recipes.PACIFIC) if start.tzinfo else start
+            return local.date()
+        if isinstance(start, date):
+            return start
+        return None
+
     def calendar(self, window: recipes.DayWindow) -> Sequence[Mapping[str, Any]]:
-        return [self.timed(record) for record in self._records("calendar")]
+        """The fetched events that fall on ``window``'s day.
+
+        Filtered, and that is the whole point. This used to return the entire
+        bucket for ANY window, so a consumer asking for a day the plan never
+        fetched was served a different day's events and could not tell:
+
+        * `eod_wrap` asks for TOMORROW and was handed today, so the wrap
+          printed this morning's 8:15 standup as tomorrow's first meeting.
+        * `week_ahead` asks for seven days, one window at a time, and was
+          handed the same single day seven times over.
+
+        Neither raised. Wrong data in a push is worse than a missing section,
+        because a missing one says so. Now an unfetched window comes back
+        empty, which is a section omitted rather than a section that lies.
+
+        A record whose start cannot be placed at all is returned for every
+        window rather than dropped: an untimed meeting is still a meeting, and
+        losing its ledger row loses a notes gap permanently. `Ledger.seed_day`
+        keys on (id, start) and so absorbs the repeat.
+        """
+        records = [self.timed(record) for record in self._records("calendar")]
+        return [r for r in records if self._day_of(r) in (window.day, None)]
 
     def slack(self, query: str) -> Sequence[Mapping[str, Any]]:
         return self._records("slack")
@@ -260,9 +391,60 @@ class _Payloads:
         return self._records("gmail")
 
     def weekly_note(self, path: str) -> str:
+        """The weekly note, in the THREE states `brief.read_vault_note` tells apart.
+
+        It splits on exception type - text, `FileNotFoundError` for a note that
+        was never written, anything else for a source it could not reach - and
+        this layer could only ever produce two of the three. `null` had no
+        meaning, so an agent reporting "the file is not there" had to choose
+        between omitting the key, which renders "couldn't check the weekly
+        note" and reads as a downed connector, and sending "", which renders
+        NOTHING AT ALL because an empty note is a note that was read.
+
+        The third state is the one that is true: the note is hand-written, and
+        the series has had a gap for weeks, so every real run meets it. It is
+        also the one worth saying out loud, because the brief cannot triage the
+        day against a plan of record that does not exist.
+
+        `str(None)` also used to render the note's body as the literal text
+        "None".
+
+            key absent  -> could not reach the vault   (RunError -> degrade)
+            null        -> the note does not exist     (FileNotFoundError)
+            ""          -> it exists and is empty
+            text        -> the note
+        """
         if "vault" not in self._payloads:
             raise RunError("the weekly note was not read")
-        return str(self._payloads["vault"])
+        note = self._payloads["vault"]
+        if note is None:
+            raise FileNotFoundError(path)
+        return str(note)
+
+    def vault_note(self, path: str) -> str:
+        """Any vault note by path, carried in `vault_notes`.
+
+        `eod_wrap` reads next week's plan and next week's meeting prep through
+        this to report whether Friday's planning actually landed. The `Sources`
+        protocol never declared it, so this class never implemented it, so both
+        reads raised and the whole "friday - weekly-planning outcome" section
+        was dropped on every real run. Both test doubles have the method, which
+        is exactly why nothing failed.
+
+        Same three states as `weekly_note`, one level down:
+
+            vault_notes absent       -> could not read any of them (degrade)
+            path absent from the map -> that note does not exist
+            null                     -> that note does not exist
+            text                     -> the note
+        """
+        notes = self._payloads.get("vault_notes")
+        if not isinstance(notes, Mapping):
+            raise RunError(f"{path} was not read")
+        note = notes.get(path)
+        if note is None:
+            raise FileNotFoundError(path)
+        return str(note)
 
 
 #: The event kind a seeded meeting is recorded under, so the next run can
@@ -320,6 +502,118 @@ def _jsonable(value: Any) -> Any:
     return value.isoformat() if isinstance(value, datetime) else value
 
 
+def _chase(now: datetime, folder: StateFolder | None, log: EventLog | None) -> str:
+    """What is owed to him, oldest first, with the ones past the clock marked.
+
+    Reads `State.md` rather than deriving the list: it is the file he CORRECTS
+    BY HAND, and CLAUDE.md is explicit that a hand edit is an event which wins
+    over derived state. A chaser that rebuilt the list from Slack every run
+    would silently undo every correction he made.
+
+    The nudges are drafted, never sent - guardrail 1. Nothing here addresses
+    anyone but him.
+    """
+    if folder is None:
+        return "owed to you: couldn't check - no vault is configured"
+    try:
+        written = folder.read_state()
+    except Exception:
+        return "owed to you: couldn't read State.md"
+
+    lines = read_section(written, "Chase list")
+    if not lines:
+        return "owed to you: nothing open"
+
+    out = [f"owed to you ({len(lines)})"]
+    out += [f"- {line}" for line in lines]
+
+    # Items the log is carrying that the file has not got to yet. `_visible`
+    # is the ONE gate on sensitivity and it lives in `state`; this reads what
+    # that gate already let through rather than making a second judgement.
+    if log is not None:
+        try:
+            carried = [
+                item for item in log.chase_items() if str(item.get("ask", "")) not in written
+            ]
+        except Exception:
+            carried = []
+        if carried:
+            out.append("")
+            out.append(f"not yet in State.md ({len(carried)})")
+            out += [f"- {item.get('owner', 'someone')}: {item.get('ask', '')}" for item in carried]
+    return "\n".join(out)
+
+
+def _ingest(sources: _Payloads) -> str:
+    """Classify what landed, and say plainly what could not be placed.
+
+    `classify_items` returns `label=None` for an item it cannot place, and the
+    whole point of surfacing those is that a guess here becomes a vault write
+    later. Invariant 4: surface, do not resolve.
+    """
+    try:
+        mail = list(sources.gmail(""))
+    except RunError:
+        return "ingest: couldn't check gmail"
+    if not mail:
+        return "ingest: nothing new landed"
+
+    # `item_id`, not `id`: `classify_items` reads that key and returns an item
+    # with no id as UNPLACED rather than under a made-up one - so the wrong key
+    # here made every item unplaceable, with a blank name to show for it.
+    items = [
+        {
+            "item_id": str(m.get("id") or m.get("subject") or n),
+            "text": str(m.get("subject", "")),
+        }
+        for n, m in enumerate(mail)
+        if isinstance(m, Mapping)
+    ]
+    placed = classify_items(items)
+    counts: dict[str, int] = {}
+    for record in placed:
+        counts[record.label or "unplaced"] = counts.get(record.label or "unplaced", 0) + 1
+
+    out = [f"ingest: {len(items)} item{'' if len(items) == 1 else 's'}"]
+    out += [f"- {label}: {n}" for label, n in sorted(counts.items()) if label != "unplaced"]
+    unplaced = [c.item_id for c in placed if c.label is None]
+    if unplaced:
+        out.append(f"- unplaced ({len(unplaced)}) - these need you, not a guess:")
+        out += [f"    {item_id}" for item_id in unplaced]
+    return "\n".join(out)
+
+
+def _prep(
+    now: datetime, identities: Mapping[str, str], payloads: Mapping[str, Any], ledger: Ledger
+) -> str:
+    """The next meeting worth prepping for, and what to raise in it.
+
+    The NEXT one rather than a named one: a prep ping is the only push allowed
+    to interrupt (`prep.may_interrupt`), so it is worth exactly as much as its
+    timing. Naming a meeting is a different command and needs a selector this
+    two-phase shape has nowhere to put yet - see KNOWN LIMIT.
+    """
+    audience = Audience.from_identities(identities)
+    upcoming = [row for row in ledger.open_rows() if row.start >= now]
+    for row in sorted(upcoming, key=lambda r: r.start):
+        reason = prep_worthy(row, audience)
+        if reason is None:
+            continue
+        points = [
+            point(
+                str(message.get("text", ""))[:160],
+                "raised since you last met",
+                quote=str(message.get("text", ""))[:160],
+                permalink=message.get("permalink"),
+                source="slack",
+            )
+            for message in payloads.get("slack", [])
+            if isinstance(message, Mapping) and message.get("permalink")
+        ][:3]
+        return build(row, reason, points).render()
+    return "prep: nothing coming up that needs it"
+
+
 def render(
     loop: str,
     *,
@@ -355,6 +649,19 @@ def render(
     runner = RunLog(events, clock=lambda: now) if events is not None else None
 
     def _assemble() -> str:
+        if loop == "ship":
+            # Nothing fetched, so nothing to serve - `pulse` already read the
+            # mirrors. Absent, it degrades like any other source (guardrail 6)
+            # rather than raising: one missing line, not a dead push.
+            if pulse is None:
+                return "shipped: couldn't check - no pulse was built"
+            return pulse.render()
+        if loop == "chase":
+            return _chase(now, folder, events)
+        if loop == "ingest":
+            return _ingest(sources)
+        if loop == "prep":
+            return _prep(now, identities, payloads, ledger)
         if loop == "morning":
             return brief.assemble(
                 now=now,
@@ -411,11 +718,11 @@ def _attach_notes(ledger: Ledger, payloads: Mapping[str, Any], now: datetime) ->
         ledger.offer_note(
             Match(
                 title=title,
-                # The mail's OWN timestamp. `ledger._in_window` only attaches a
-                # note that arrived within six hours of the meeting ending, so
+                # The mail's OWN timestamp. `ledger._in_window` attaches a
+                # note only inside `ARRIVAL_WINDOW` of the meeting ending, so
                 # defaulting to `now` makes a note fetched the next morning
                 # unmatchable - and a note that never attaches leaves its
-                # meeting reported as a gap forever.
+                # meeting reported as a gap unless the calendar declared one.
                 arrived=stamp if isinstance(stamp, datetime) else now,
                 attendees=[str(a) for a in (mail.get("attendees") or [])],
                 # "gemini", not "gmail": `ARRIVAL_WINDOW` is keyed by the

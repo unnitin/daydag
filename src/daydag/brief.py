@@ -140,6 +140,16 @@ class Sources(Protocol):
     def calendar(self, window: recipes.DayWindow) -> Iterable[Mapping[str, Any]]:
         """Events in one local day."""
 
+    def vault_note(self, path: str) -> str:
+        """Any vault note by path. `eod_wrap` reads next week's plan and prep
+        through this, and it was never DECLARED here - so `run._Payloads`
+        implemented only `weekly_note`, both reads raised, and the Friday
+        "weekly-planning outcome" section silently never rendered on a real
+        run. Both test doubles implement it, which is why the suite was green:
+        the fake was more capable than the adapter it stood in for.
+        """
+        ...
+
     def weekly_note(self, path: str) -> str:
         """The note's text. ``FileNotFoundError`` means nobody wrote it."""
 
@@ -688,11 +698,17 @@ def _seed_and_gaps(ledger: Ledger, events: Sequence[Mapping[str, Any]], now: dat
 _STAMP_FIELDS = ("ts", "internal_date", "internalDate")
 
 
-def _is_overnight(record: Mapping[str, Any], min_ts: float) -> bool:
-    """Whether a record landed after the cutoff.
+def _is_overnight(record: Mapping[str, Any], min_ts: float, max_ts: float = 0.0) -> bool:
+    """Whether a record landed inside the overnight window.
+
+    Bounded at BOTH ends when ``max_ts`` is given. The upper bound is not
+    pedantry: ``now`` is a parameter, so a backfilled or replayed run has a
+    ``now`` in the past while Slack's day-granular ``after:`` happily returns
+    everything since. A 06:40 brief rendered a real message sent at 18:06 that
+    evening as "overnight" - twelve hours of its own future - and said nothing.
 
     A record with no usable timestamp is **kept**. It cannot be placed relative
-    to the cutoff, and the two errors are not symmetric: over-reporting is a
+    to either cutoff, and the two errors are not symmetric: over-reporting is a
     line he skims past, under-reporting is a silence he has no way to notice.
     """
     for field in _STAMP_FIELDS:
@@ -705,7 +721,10 @@ def _is_overnight(record: Mapping[str, Any], min_ts: float) -> bool:
             return True
         # Gmail's internalDate is milliseconds; Slack's ts is seconds. A value
         # three orders of magnitude past now is the former.
-        return (stamp / 1000 if stamp > 1e11 else stamp) >= min_ts
+        seconds = stamp / 1000 if stamp > 1e11 else stamp
+        if seconds < min_ts:
+            return False
+        return not max_ts or seconds <= max_ts
     return True
 
 
@@ -721,7 +740,7 @@ def _overnight_lines(now: datetime, principal: str, sources: Sources, read: Read
     window = recipes.slack_overnight(now, mentioning=principal)
     lines: list[str] = []
     for message in read("slack", lambda: list(sources.slack(window.query)), []):
-        if not _is_overnight(message, window.min_ts):
+        if not _is_overnight(message, window.min_ts, window.max_ts):
             continue
         who = message.get("who") or message.get("from") or "someone"
         lines.append(claim(str(who), _link(message), quote=str(message.get("text", ""))))
@@ -731,7 +750,7 @@ def _overnight_lines(now: datetime, principal: str, sources: Sources, read: Read
     opened_on = datetime.fromtimestamp(window.min_ts, tz=recipes.PACIFIC).date()
     query = recipes.gmail_gemini_notes(after=opened_on)
     for mail in read("gmail", lambda: list(sources.gmail(query)), []):
-        if not _is_overnight(mail, window.min_ts):
+        if not _is_overnight(mail, window.min_ts, window.max_ts):
             continue
         subject = str(mail.get("subject", ""))
         title = title_from_gemini_subject(subject)

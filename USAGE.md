@@ -1,0 +1,124 @@
+# Using DayDAG
+
+## The one thing to understand
+
+**Python cannot call an MCP connector. The agent can.** So a loop runs in two
+halves with the fetch in between:
+
+```
+plan(loop)              ->  the bounded queries        [python]
+                            the agent runs them        [MCP]
+render(loop, payloads)  ->  the push                   [python]
+```
+
+That is why there is no `daydag run` that does everything, and why a plain
+`crontab` entry cannot work — it would produce a brief with every source empty
+and four "couldn't check" lines. **The thing that runs a loop is an agent
+session**, not a script.
+
+## Day to day
+
+Open Claude Code in this repo and say what you want:
+
+> run my morning
+
+The `daily-loops` skill does the three steps for you: gets the plan, runs each
+query over the connectors, shapes the results, renders the push. You read it in
+the terminal. Nothing is sent anywhere.
+
+That is the whole interface. `SKILL.md` maps the other phrasings ("wrap up",
+"week ahead").
+
+## What actually works today
+
+| Ask | Status |
+|---|---|
+| "run my morning" | **works.** Run against real data repeatedly; the notes-gap section matches hand-checked ground truth. |
+| "week ahead" | **works.** Run against a real week (68 events); flags clashes and reads the plan of record. |
+| "wrap up" | **runs**, including the Friday planning-outcome section, which never rendered before [#95](https://github.com/unnitin/daydag/issues/95). Exercised against real payloads rather than a live Friday. |
+| "prep me for X" | **runs.** Preps the next qualifying meeting; naming one is not wired yet. |
+| "ingest", "chase", "what shipped" | **run**, newly wired in [#95](https://github.com/unnitin/daydag/issues/95). `chase` reads `State.md`; `ship` needs a Pulse built from the mirrors. |
+
+All seven loops the skill advertises are now reachable. Two — morning and
+week-ahead — have been checked against real data end to end; the rest have run,
+which is not the same thing.
+
+## One-time setup
+
+```sh
+uv venv && uv pip install -e ".[dev]"
+cp .env.example .env        # then fill in the real ids
+```
+
+`.env` is gitignored and holds every real identifier. The repo is public;
+nothing real belongs in it. `pytest tests/test_config.py -k every_reference` checks that every `${VAR}`
+the repo references actually resolves against your `.env`.
+
+You also need the connectors reachable from Claude Code — Slack, Gmail,
+Calendar, Notion. The vault and `gh` are direct.
+
+## Memory: pass `--log`, or it forgets
+
+The differentiator — *"these meetings produced no notes"* — only works across
+days if runs share an event log. Without `--log` each run starts blank, reports
+nothing, and **says nothing about it**, because an empty section is omitted
+rather than labelled.
+
+```sh
+--log ~/.local/state/daydag/events.db
+```
+
+Outside the vault, deliberately: the vault is plaintext on every synced device,
+and iCloud corrupts a SQLite WAL touched from two machines. Anything sensitive
+goes to the log, never the vault.
+
+`--write-state` additionally writes the chase list and notes-gaps back to
+`DayDAG/State.md` in the vault. Hand-edit it freely — it is an input,
+re-read before every loop, and your edits win over derived state.
+
+## Running the halves by hand
+
+Only needed for debugging or a backfill:
+
+```sh
+python -m daydag.run plan morning                    # queries, as JSON
+echo "$PAYLOADS" | python -m daydag.run render morning --log ~/.local/state/daydag/events.db
+```
+
+`render` reads the payloads from stdin as one JSON object keyed by source. Two
+encodings bite, and both fail quietly in the direction of saying *less*:
+
+- **`vault: null`** means the weekly note does not exist. `""` means it exists
+  and is empty, and renders nothing at all. Omitting the key means you could
+  not reach the vault.
+- **`notes_attached`** on a calendar record is the notes-gap signal. Set it
+  from `usp=meet_tnfm_calendar` in an attachment's `fileUrl` — not the
+  attachment title, which is localized, and not "has an attachment", which
+  catches series-level recordings.
+
+`SKILL.md` carries the full shaping contract. Get it wrong and the loop
+degrades rather than lying, but it degrades silently.
+
+## What it will not do
+
+- **Drafts, not sends.** Autonomous output goes to one place: the principal's
+  own Slack DM. Anything addressed to anyone else is a draft that waits for an explicit
+  go, per message.
+- **Jira is read-only by construction** — the token carries `read:jira-work`,
+  so there is no transition, comment or assignment path at all.
+- **Vault writes are additive or proposed diffs.** Never a wholesale rewrite.
+- **Nothing runs on a schedule.** Every run today is one you asked for.
+
+## Honest status
+
+The foundations are solid and heavily tested. The wiring is where the bugs are:
+every defect found by actually running the loops was a case of a module being
+carefully right while the runner collapsed it — the plan ignoring its own loop
+([#94](https://github.com/unnitin/daydag/issues/94)), the overnight window
+unbounded above ([#96](https://github.com/unnitin/daydag/issues/96)), a
+three-state vault contract the runner could only express two of
+([#97](https://github.com/unnitin/daydag/issues/97)). None were visible to
+~1000 passing tests.
+
+Treat output as a draft to check, not a report to trust, until a loop has run
+against live data on days you can verify yourself.

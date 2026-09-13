@@ -78,8 +78,8 @@ Then write a payloads file keyed by source:
 
 | source | must carry | what breaks without it |
 |---|---|---|
-| calendar | `id`, `summary`, `start`, `end`, `attendees`, `response_status`, `organizer`, `organizer_is_self` | no `end` and the ledger refuses the event - no notes-gap, today or tomorrow |
-| gmail | `subject`, and the mail's own `date` | a note is only matched within six hours of its meeting ending; without a date it can never attach, and its meeting is a gap forever |
+| calendar | `id`, `summary`, `start`, `end`, `attendees`, `response_status`, `organizer`, `organizer_is_self`, `notes_attached`, `permalink` (`htmlLink`) | no `end` and the ledger refuses the event - no notes-gap, today or tomorrow. No `permalink` and EVERY line renders "couldn't source this one", because a claim without evidence is tagged rather than trusted |
+| gmail | `subject`, and the mail's own `date` | without a date a note can never attach to its meeting, and ingestion loses it |
 | slack | `permalink` | a claim with no link is withheld - evidence or silence |
 
 **Shaping the calendar payload**, because google's shape is not the ledger's:
@@ -94,6 +94,38 @@ Then write a payloads file keyed by source:
   calendar - so without an organizer a 45-minute interview is invisible. With
   it, his own focus blocks would read as meetings, which is what
   `organizer_is_self` prevents.
+- `notes_attached` is **the** notes-gap signal, and it makes the gap knowable
+  the same evening instead of the next morning. Google attaches the notes doc
+  to the event, so set it `true` when any entry in google's `attachments` has
+  `usp=meet_tnfm_calendar` in its `fileUrl`.
+  Match that URL marker, not the attachment's title, and not merely "has an
+  attachment" - both fail, in opposite directions:
+  - the title is **localized**. One real event carries both `Notes by Gemini`
+    and `Anotações do Gemini`; a meeting run in a pt-BR locale carries only the
+    second, and matching English reports it as a gap forever.
+  - a Drive **recording** is attached to the recurring SERIES and shows on
+    every instance, so "Data Health Check" would otherwise claim a note on
+    occurrences that never produced one. Recordings carry `usp=drive_web`.
+
+  If you pass google's `attachments` straight through the ledger reads them
+  itself, so forgetting to shape this degrades to the arrival-window fallback
+  rather than to a wrong answer.
+
+**The weekly note has three states, and `vault` encodes all three.** The note
+is hand-written and the series has had a gap for weeks, so the middle one is
+the one a real run actually meets:
+
+| `vault` value | means | renders |
+|---|---|---|
+| key omitted | you could not reach the vault | "couldn't check the weekly note" |
+| `null` | the file does not exist | "⚠ no weekly note for MMDD-MMDD" |
+| `""` | it exists and is empty | nothing |
+| the text | the note | triage against the week's priorities |
+
+Do not send `""` for a file that is not there - it means "read it, it was
+empty", so the brief says nothing at all and the day is silently triaged
+against no plan of record. An absent note is a fact about the week; an
+unreachable vault is a degrade. They must not read the same.
 
 A source you could not reach: **leave the key out**. That renders one
 "couldn't check X" line and the push still ships. Do not pass an empty list to
