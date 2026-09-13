@@ -53,6 +53,7 @@ artifact is the load-bearing rule; the rest is plumbing.
 | `delivery` | The one autonomous send - the principal's DM - and the threaded prep reply |
 | `run` | The two-phase contract that makes a loop runnable: plan the fetch, assemble the push |
 | `evalset` | The hand-labelled ingestion ground truth, and `score()` — so precision is measured, not asserted |
+| `soak` | The five-day gate's journal: every edit he asks for, and whether a repeat is still outstanding |
 | `ingestion` | SPEC §3.3's classifier: five labels, biased to precision, no write path |
 
 ## Working on it
