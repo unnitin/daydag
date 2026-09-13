@@ -1,7 +1,7 @@
 """Meeting prep pings: the one interrupt the system allows (SPEC 3.2, #20).
 
 USING IT
-    audience = Audience.from_identities(ids)
+    audience = Audience.from_directory(people, ids)   # people may be None: .env alone
     reason = prep_worthy(row, audience)     # -> Reason | None; None means skip
     due_at(row)                             # 30 min before it starts
     sources(row, now, identities=ids, channels=chans, terms=words)
@@ -173,27 +173,26 @@ class Audience:
 
     @classmethod
     def from_identities(cls, identities: Mapping[str, str]) -> Audience:
-        """Read ``PREP_LEADERSHIP`` and ``ORG_EMAIL_DOMAIN``, both optional.
+        """`.env` alone: ``PREP_LEADERSHIP`` for leadership, `_domains` for inside.
 
-        Unset means *unknown*, and unknown resolves to "no one qualifies on
-        this rule". The alternative default - treating every attendee as an
-        outside party when the org domain is unset - fires the interrupt on
-        every meeting on the calendar, which mutes it inside a day.
-
-        Both were in fact unset, so `has_leadership` and `has_external` always
-        answered False and two of the four reasons could never fire. Prefer
-        `from_directory`, which takes leadership from the people store, where a
-        person's seniority sits next to the rest of what is known about them
-        and can be corrected without editing a CSV in `.env`.
+        The same as `from_directory(None, identities)`, and kept only as the
+        name callers without a directory already use. Unset leadership means
+        *unknown*, and unknown resolves to "no one qualifies on this rule": the
+        alternative default - every attendee an outside party when nothing is
+        configured - fires the interrupt on every meeting, which mutes it
+        inside a day.
         """
-        return cls(
-            leadership=_csv(identities, LEADERSHIP_KEY),
-            internal_domains=_csv(identities, ORG_DOMAIN_KEY),
-        )
+        return cls.from_directory(None, identities)
 
     @classmethod
     def from_directory(cls, directory: Any, identities: Mapping[str, str]) -> Audience:
-        """Leadership from the people store, domains still from `.env`.
+        """Leadership from the people store, domains from `.env`.
+
+        Args:
+            directory: a `People`, or None for `.env` alone. One constructor
+                for both so a run with a log and one without cannot disagree
+                on anything but the leaders the log adds.
+            identities: the `.env` mapping.
 
         Split on purpose. "Who is senior" is a fact ABOUT A PERSON and belongs
         where the person is, learned and corrected over time. "Which domain is
@@ -201,27 +200,20 @@ class Audience:
         person attached, and is needed before any lookup can be trusted - so it
         stays configuration.
 
-        UNIONED with the `PREP_LEADERSHIP` CSV, not either/or. The first version
-        used the CSV only while the store was empty, so the first name added to
-        the store silently dropped every configured leader - the CEO in .env
-        stopped qualifying the moment the CTO was entered. And `brief` /
-        `week_ahead` still read the CSV (#119), so it has to keep working.
+        UNIONED with the `PREP_LEADERSHIP` CSV, not either/or, so a leader
+        configured the old way survives the first directory entry. The first
+        version used the CSV only while the store was empty, and the CEO in
+        `.env` stopped qualifying the moment the CTO was entered.
 
-        Internal domains: `ORG_EMAIL_DOMAIN`, or - when that is unset - the
-        domain of `EMAIL_PRINCIPAL`. He works for the org; his address is its
-        domain. Without this the external-party rule stayed dead for anyone who
-        never set the org key, which was everyone.
+        KNOWN LIMIT: leadership is matched on ADDRESS, because that is what a
+        calendar attendee is. A leader entered with a Slack id and no email
+        never qualifies a meeting; `people add` says so when it happens.
         """
-        from_store = frozenset(
-            address.casefold() for person in directory.leadership() for address in person.emails
-        )
-        domains = _csv(identities, ORG_DOMAIN_KEY)
-        if not domains:
-            principal = str(identities.get("EMAIL_PRINCIPAL", "") or "")
-            _, _, domain = principal.casefold().partition("@")
-            domains = frozenset({domain}) if domain else frozenset()
+        leaders = directory.leadership() if directory is not None else ()
+        from_store = frozenset(a.casefold() for person in leaders for a in person.emails)
         return cls(
-            leadership=from_store | _csv(identities, LEADERSHIP_KEY), internal_domains=domains
+            leadership=from_store | _csv(identities, LEADERSHIP_KEY),
+            internal_domains=_domains(identities),
         )
 
     def has_leadership(self, attendees: Iterable[str]) -> bool:
@@ -241,6 +233,21 @@ class Audience:
             if domain and domain not in self.internal_domains:
                 return True
         return False
+
+
+def _domains(identities: Mapping[str, str]) -> frozenset[str]:
+    """`ORG_EMAIL_DOMAIN`, or - unset - the domain of `EMAIL_PRINCIPAL`.
+
+    He works for the org; his address is its domain. Without the fallback the
+    external-party rule stayed dead for anyone who never set the org key,
+    which was everyone. It lived on the directory path only for a while, so
+    whether a meeting counted as external flipped on `--log` being passed.
+    """
+    domains = _csv(identities, ORG_DOMAIN_KEY)
+    if domains:
+        return domains
+    _, _, domain = str(identities.get("EMAIL_PRINCIPAL", "") or "").casefold().partition("@")
+    return frozenset({domain}) if domain else frozenset()
 
 
 def _csv(identities: Mapping[str, str], key: str) -> frozenset[str]:
@@ -354,8 +361,9 @@ def sources(
 ) -> SourcePlan:
     """The last ~4 weeks of this meeting, as literal queries.
 
-    ``audience`` is the caller's when it has one built from the people
-    directory; built from `.env` only when it does not (#119).
+    Args:
+        audience: decides `prep_worthy`. None means `.env` alone - pass the
+            run's own when there is a people directory behind it.
 
     Every query comes from :mod:`daydag.recipes` rather than being written here
     - that module exists because loops that write their own queries drift, and
@@ -363,7 +371,8 @@ def sources(
     """
     if now.tzinfo is None:
         raise PrepError("now must be timezone-aware; the lookback is bounded by local days")
-    audience = audience or Audience.from_identities(identities)
+    if audience is None:
+        audience = Audience.from_identities(identities)
     if prep_worthy(row, audience) is None:
         raise PrepError(f"{row.summary!r} does not qualify for a prep ping; nothing to source")
 

@@ -7,6 +7,7 @@ USING IT
         identities=identities,
         state=state_folder,     # optional: chase + watch, read like `brief` reads them
         pulse=pulse,             # optional: the shipping block
+        audience=audience,       # who is senior / outside; None means .env alone
     )
     pushed.render()              # the one Slack DM
     pushed.monday_preps          # Monday meetings due prep, and how to source them
@@ -357,7 +358,7 @@ def _monday_preps(
     events: Sequence[Mapping[str, Any]],
     now: datetime,
     identities: Mapping[str, str],
-    audience: Audience | None = None,
+    audience: Audience,
 ) -> list[MondayPrep]:
     """Qualifying Monday meetings, reusing the ledger and `prep` verbatim.
 
@@ -376,10 +377,6 @@ def _monday_preps(
             )
     ledger = Ledger()
     ledger.seed_day(events)
-    # The caller's audience when it has one from the people directory - so
-    # "leadership in the room" is what he has said about people, not a CSV he
-    # was told to stop maintaining (#119). `.env` only when nothing better.
-    audience = audience or Audience.from_identities(identities)
     preps: list[MondayPrep] = []
     for row in ledger.open_rows():
         reason = prep_worthy(row, audience)
@@ -409,7 +406,14 @@ def assemble(
     ``state`` and ``pulse`` are optional the same way they are in
     :func:`daydag.brief.assemble`: state the caller owns, not a source, and a
     run without either is silence rather than a failure.
+
+    ``audience`` decides which Monday meetings are worth a prep. None means
+    `.env` alone; the runner passes one built from the people directory, so a
+    leader who exists only there qualifies a meeting (#119). Resolved ONCE
+    here and handed down, so no helper can fall back to a different one.
     """
+    if audience is None:
+        audience = Audience.from_identities(identities)
     if now.tzinfo is None or now.utcoffset() is None:
         raise WeekAheadError(
             "now must be timezone-aware: the week-ahead is a Sunday-evening "

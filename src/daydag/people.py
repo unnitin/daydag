@@ -459,6 +459,12 @@ def main(argv: list[str] | None = None) -> int:
         leadership=True if "--leadership" in args else None,
     )
     print(f"  remembered {args[1]}")
+    person = directory.resolve(args[1])
+    if person is not None and person.leadership and not person.emails:
+        # Leadership is matched on ADDRESS, because a calendar attendee is
+        # one. A leader known only by Slack id never qualifies a meeting, and
+        # silence here is how that would be debugged as a prep bug.
+        print(f"  ⚠ {args[1]} is leadership with no email - add one or no meeting qualifies on it")
     return 0
 
 

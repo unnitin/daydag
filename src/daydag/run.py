@@ -100,10 +100,12 @@ _NO_CALENDAR = frozenset({"ingest", "chase", "ship"})
 #: write `notes_gaps=[]` over the section the morning run had just recorded.
 _NEEDS_LEDGER = frozenset({"morning", "eod", "prep"})
 
-#: Loops that read the people directory for "who is senior". The three that
-#: rehydrate a ledger, plus the week-ahead, which builds its own ledger but
-#: still asks who is in the room.
-_READS_DIRECTORY = _NEEDS_LEDGER | {"week-ahead"}
+#: Loops that open the people directory - to ask who is in the room (prep,
+#: week-ahead) or to record who was (morning, eod, via `_observe_past`).
+#: Derived, not listed: a loop with a calendar has attendees, and those are
+#: the only loops that have anything to ask or tell the directory. `People()`
+#: folds every fact row on construction, so the three without are spared it.
+_OPENS_DIRECTORY = frozenset(LOOPS) - _NO_CALENDAR
 
 
 class RunError(RuntimeError):
@@ -687,8 +689,8 @@ def _prep(
     identities: Mapping[str, str],
     payloads: Mapping[str, Any],
     ledger: Ledger,
-    selector: str = "",
-    directory: People | None = None,
+    selector: str,
+    audience: Audience,
 ) -> str:
     """The meeting to prep for, and what to raise in it.
 
@@ -706,11 +708,6 @@ def _prep(
     meeting is worse than none: he reads it, trusts it, and walks into the other
     one cold.
     """
-    audience = (
-        Audience.from_directory(directory, identities)
-        if directory is not None
-        else Audience.from_identities(identities)
-    )
 
     if selector:
         tz = timezone_for(identities)
@@ -811,14 +808,10 @@ def render(
     sources = _Payloads(payloads)
     folder = state if state is not None else _vault(identities)
     events = log if log is None else EventLog.open(log)
-    directory = People(events) if events is not None and loop in _READS_DIRECTORY else None
-    # One Audience for the run. From the directory when a log exists - what he
-    # has said about people, unioned with `.env` - else from `.env` alone.
-    audience = (
-        Audience.from_directory(directory, identities)
-        if directory is not None
-        else Audience.from_identities(identities)
-    )
+    directory = People(events) if events is not None and loop in _OPENS_DIRECTORY else None
+    # The ONE Audience for the run: the directory's leaders when there is a
+    # log, `.env` either way. Prep and the week-ahead both read this object.
+    audience = Audience.from_directory(directory, identities)
     fresh: set[tuple[Any, Any]] = set()
     if loop not in _NEEDS_LEDGER:
         # `chase`, `ingest`, `ship` and `week-ahead` never read this ledger
@@ -857,7 +850,7 @@ def render(
         if loop == "ingest":
             return _ingest(sources)
         if loop == "prep":
-            return _prep(now, identities, payloads, ledger, selector, directory)
+            return _prep(now, identities, payloads, ledger, selector, audience)
         if loop == "morning":
             return brief.assemble(
                 now=now,

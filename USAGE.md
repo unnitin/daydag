@@ -180,8 +180,11 @@ it, and a correction made after someone was already observed folds the observed
 entry into the role you named.
 
 Every loop that asks "who is senior" - prep, the week-ahead's Monday queue -
-reads it from here. `PREP_LEADERSHIP` in `.env` is optional now and unioned in
-if you kept it.
+reads it from here when run with `--log`; without one there is no directory
+to read and `.env` alone decides. `PREP_LEADERSHIP` in `.env` is optional now
+and unioned in if you kept it. Whether an attendee counts as *outside* comes
+from `ORG_EMAIL_DOMAIN`, or your own address's domain when that is unset -
+the same answer with or without `--log`.
 
 The Slack roster and the per-person DM/group ids that used to be `.env` keys
 live here now. `.env` keeps only the principal's id, because that has to be
