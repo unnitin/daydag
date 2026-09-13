@@ -20,8 +20,9 @@ from datetime import UTC, datetime
 
 import pytest
 
-from daydag import run
+from daydag import brief, run
 from daydag.config import Identities
+from daydag.state import StateFolder
 
 MONDAY = datetime(2026, 9, 7, 6, 40, tzinfo=UTC)
 
@@ -500,3 +501,105 @@ def test_a_null_note_never_renders_as_the_text_None(identities):
     text = run.render("morning", now=MONDAY_PT, identities=identities, payloads=payloads)
 
     assert "None" not in text, f"the note body rendered as the string None:\n{text}"
+
+
+# --------------------------------------------------------------------------
+# every loop the skill advertises is reachable (#95)
+# --------------------------------------------------------------------------
+
+
+def test_every_advertised_loop_can_be_planned(identities):
+    """`SKILL.md` advertised seven loops and the runner implemented three.
+
+    `prep.py`, `ingestion.py` and `pulse.py` were built and tested with no way
+    to reach them, so asking for "chase" got a refusal naming the other three.
+    This is the tripwire: the skill and the runner agree, or this fails.
+    """
+    for loop in ("morning", "eod", "week-ahead", "prep", "ingest", "chase", "ship"):
+        assert run.plan(loop, now=MONDAY_PT, identities=identities).steps or loop == "ship"
+
+
+def test_every_advertised_loop_renders_something(identities):
+    for loop in run.LOOPS:
+        text = run.render(loop, now=MONDAY_PT, identities=identities, payloads=_payloads())
+        assert text.strip(), f"{loop} rendered nothing at all"
+
+
+def test_ship_asks_for_no_connector_fetch(identities):
+    """`pulse` reads the git mirrors on disk. Emitting four connector steps
+    whose payloads it ignores would be a round-trip for nothing."""
+    (step,) = run.plan("ship", now=MONDAY_PT, identities=identities).steps
+
+    assert step.source == "git"
+
+
+def test_the_loops_that_ignore_the_calendar_do_not_fetch_it(identities):
+    for loop in ("ingest", "chase", "ship"):
+        sources = {s.source for s in run.plan(loop, now=MONDAY_PT, identities=identities).steps}
+        assert "calendar" not in sources, f"{loop} fetches a calendar it never reads"
+
+
+def test_chase_reads_the_file_he_corrects_by_hand(identities, tmp_path):
+    """CLAUDE.md: a hand edit is an event and WINS over derived state. A chaser
+    that rebuilt the list from Slack each run would undo every correction."""
+    folder = StateFolder.create(tmp_path / "DayDAG")
+    folder.write_state(chase=[{"owner": "VP-Data", "ask": "the compute consolidation plan"}])
+
+    text = run.render(
+        "chase", now=MONDAY_PT, identities=identities, payloads=_payloads(), state=folder
+    )
+
+    assert "compute consolidation" in text, f"State.md was not read:\n{text}"
+
+
+def test_ingest_names_the_items_it_could_not_place(identities):
+    """`classify_items` reads `item_id`. Handing it `id` made every item
+    unplaceable with a BLANK name to show for it - the guess this section
+    exists to refuse, with nothing he could act on."""
+    payloads = _payloads(
+        gmail=[{"id": "m1", "subject": "Re: advance mapping"}, {"id": "m2", "subject": "hello"}]
+    )
+
+    text = run.render("ingest", now=MONDAY_PT, identities=identities, payloads=payloads)
+
+    assert "m1" in text and "m2" in text, f"unplaced items have no names:\n{text}"
+
+
+def test_ship_without_a_pulse_degrades_rather_than_raising(identities):
+    text = run.render("ship", now=MONDAY_PT, identities=identities, payloads=_payloads())
+
+    assert "couldn't check" in text
+
+
+# --------------------------------------------------------------------------
+# the adapter implements what the protocol declares (#95)
+# --------------------------------------------------------------------------
+
+
+def test_the_payload_adapter_serves_every_source_method(identities):
+    """`eod_wrap` reads next week's plan through `sources.vault_note`, which
+    the `Sources` protocol never declared - so this adapter never implemented
+    it, both reads raised, and the whole "friday - weekly-planning outcome"
+    section was dropped on every real run. BOTH test doubles have the method,
+    which is precisely why the suite stayed green: the fake was more capable
+    than the thing it stood in for.
+    """
+    for name in ("calendar", "slack", "gmail", "weekly_note", "vault_note"):
+        assert hasattr(brief.Sources, name), f"the protocol lost {name}"
+        assert callable(getattr(run._Payloads(_payloads()), name, None)), (
+            f"_Payloads does not implement {name}, so every read of it degrades"
+        )
+
+
+def test_the_friday_section_renders_when_its_notes_are_fetched(identities):
+    friday = datetime(2026, 9, 11, 17, 0, tzinfo=UTC)
+    plan = run.plan("eod", now=friday, identities=identities)
+    (step,) = [s for s in plan.steps if s.source == "vault_notes"]
+
+    payloads = _payloads()
+    payloads["vault_notes"] = dict.fromkeys(step.detail["paths"])
+
+    text = run.render("eod", now=friday, identities=identities, payloads=payloads)
+
+    assert "weekly-planning outcome" in text, f"the friday section never renders:\n{text}"
+    assert "hasn't landed yet" in text

@@ -34,11 +34,14 @@ That is the whole interface. `SKILL.md` maps the other phrasings ("wrap up",
 | Ask | Status |
 |---|---|
 | "run my morning" | **works.** Run against real data repeatedly; the notes-gap section matches hand-checked ground truth. |
-| "wrap up" | fixed but **unproven** — correct against real calendar payloads, never run end-to-end against live connectors. |
-| "week ahead" | same. It could not work at all until [#94](https://github.com/unnitin/daydag/issues/94). |
-| "prep me for X", "ingest", "chase", "what shipped" | **not wired.** The modules exist and are tested; the runner has no entry point. [#95](https://github.com/unnitin/daydag/issues/95). |
+| "week ahead" | **works.** Run against a real week (68 events); flags clashes and reads the plan of record. |
+| "wrap up" | **runs**, including the Friday planning-outcome section, which never rendered before [#95](https://github.com/unnitin/daydag/issues/95). Exercised against real payloads rather than a live Friday. |
+| "prep me for X" | **runs.** Preps the next qualifying meeting; naming one is not wired yet. |
+| "ingest", "chase", "what shipped" | **run**, newly wired in [#95](https://github.com/unnitin/daydag/issues/95). `chase` reads `State.md`; `ship` needs a Pulse built from the mirrors. |
 
-So: one loop you can trust, two that need a real run, four that will refuse.
+All seven loops the skill advertises are now reachable. Two — morning and
+week-ahead — have been checked against real data end to end; the rest have run,
+which is not the same thing.
 
 ## One-time setup
 
