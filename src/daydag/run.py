@@ -65,7 +65,8 @@ from daydag import brief, eod_wrap, recipes, week_ahead
 from daydag.config import ConfigError, resolve_reference, timezone_for
 from daydag.ingestion import classify_items
 from daydag.ledger import Ledger, Match, title_from_gemini_subject
-from daydag.prep import Audience, build, point, prep_worthy
+from daydag.prep import Audience, Reason, build, point, prep_worthy
+from daydag.prep_selector import select, windows_for
 from daydag.runlog import RunLog
 from daydag.smoke import REACHED
 from daydag.state import EventLog, NotesGap, StateFolder, read_section
@@ -136,7 +137,7 @@ def _principal(identities: Mapping[str, str]) -> str:
     )
 
 
-def plan(loop: str, *, now: datetime, identities: Mapping[str, str]) -> Plan:
+def plan(loop: str, *, now: datetime, identities: Mapping[str, str], selector: str = "") -> Plan:
     """What the agent must fetch, with every bound the recipe already applies."""
     _known(loop)
     _aware(now)
@@ -164,7 +165,7 @@ def plan(loop: str, *, now: datetime, identities: Mapping[str, str]) -> Plan:
             ),
         )
 
-    windows = _calendar_windows(loop, day)
+    windows = _calendar_windows(loop, day, now=now, selector=selector)
     overnight = recipes.slack_overnight(now, mentioning=principal, identities=identities)
     note = recipes.weekly_note(day)
 
@@ -235,7 +236,9 @@ def _extra_notes(loop: str, day: date) -> list[Step]:
     ]
 
 
-def _calendar_windows(loop: str, day: date) -> list[recipes.DayWindow]:
+def _calendar_windows(
+    loop: str, day: date, *, now: datetime | None = None, selector: str = ""
+) -> list[recipes.DayWindow]:
     """The calendar windows this LOOP will actually ask its sources for.
 
     Every loop used to get the same single window - the principal's today -
@@ -256,6 +259,12 @@ def _calendar_windows(loop: str, day: date) -> list[recipes.DayWindow]:
         # hand. Neither looks at the calendar, and fetching a day they ignore
         # is a connector round-trip for nothing.
         return []
+    if loop == "prep" and selector and now is not None:
+        # A NAMED prep searches a week, not today. The meeting he wants prepped
+        # is usually not today's - that is the whole reason for naming it - and
+        # a today-only fetch would answer "nothing matches" for a Thursday
+        # meeting on a Monday, which reads as "no such meeting".
+        return list(windows_for(now))
     if loop == "eod":
         # `eod_wrap` reads exactly one window, and it is tomorrow's: the wrap
         # reports the day that just ended and previews the first meeting of
@@ -584,34 +593,73 @@ def _ingest(sources: _Payloads) -> str:
 
 
 def _prep(
-    now: datetime, identities: Mapping[str, str], payloads: Mapping[str, Any], ledger: Ledger
+    now: datetime,
+    identities: Mapping[str, str],
+    payloads: Mapping[str, Any],
+    ledger: Ledger,
+    selector: str = "",
 ) -> str:
-    """The next meeting worth prepping for, and what to raise in it.
+    """The meeting to prep for, and what to raise in it.
 
-    The NEXT one rather than a named one: a prep ping is the only push allowed
-    to interrupt (`prep.may_interrupt`), so it is worth exactly as much as its
-    timing. Naming a meeting is a different command and needs a selector this
-    two-phase shape has nowhere to put yet - see KNOWN LIMIT.
+    Without a selector: the NEXT qualifying one, because a prep ping is the only
+    push allowed to interrupt (`prep.may_interrupt`) and is worth exactly as
+    much as its timing.
+
+    With one: the meeting he NAMED, and `prep_worthy` is deliberately not
+    consulted. That gate answers "is this worth interrupting him for", which is
+    a question about an unprompted ping. He asked - a standup he wants prepped
+    is a standup he gets prepped, and refusing on the grounds that it is a
+    standup would be the tool arguing with the request.
+
+    Several matches surface as several (`Selection.render`). Prep for the wrong
+    meeting is worse than none: he reads it, trusts it, and walks into the other
+    one cold.
     """
     audience = Audience.from_identities(identities)
     upcoming = [row for row in ledger.open_rows() if row.start >= now]
+
+    if selector:
+        found = select(
+            upcoming,
+            selector,
+            now=now,
+            # EMAIL_PRINCIPAL, not SLACK_USER_PRINCIPAL: `Row.attendees` holds
+            # email addresses, and a Slack id compared against one matches
+            # nothing - the exclusion would be dead while looking wired.
+            principal=str(identities.get("EMAIL_PRINCIPAL", "")),
+        )
+        row = found.one
+        if row is None:
+            return found.render()
+        reason = prep_worthy(row, audience) or Reason.ASKED_FOR
+        return build(row, reason, _points(payloads)).render()
+
     for row in sorted(upcoming, key=lambda r: r.start):
         reason = prep_worthy(row, audience)
         if reason is None:
             continue
-        points = [
-            point(
-                str(message.get("text", ""))[:160],
-                "raised since you last met",
-                quote=str(message.get("text", ""))[:160],
-                permalink=message.get("permalink"),
-                source="slack",
-            )
-            for message in payloads.get("slack", [])
-            if isinstance(message, Mapping) and message.get("permalink")
-        ][:3]
-        return build(row, reason, points).render()
+        return build(row, reason, _points(payloads)).render()
     return "prep: nothing coming up that needs it"
+
+
+def _points(payloads: Mapping[str, Any]) -> list[Any]:
+    """Talking points from what the agent fetched, evidence or nothing.
+
+    A message with no permalink is dropped rather than quoted: house rule 1 is
+    that a claim carries its link, and a prep point he cannot click through to
+    is one he has to take on trust in a meeting.
+    """
+    return [
+        point(
+            str(message.get("text", ""))[:160],
+            "raised since you last met",
+            quote=str(message.get("text", ""))[:160],
+            permalink=message.get("permalink"),
+            source="slack",
+        )
+        for message in payloads.get("slack", [])
+        if isinstance(message, Mapping) and message.get("permalink")
+    ][:3]
 
 
 def render(
@@ -624,6 +672,7 @@ def render(
     log: Path | str | None = None,
     pulse: Any = None,
     write_state: bool = False,
+    selector: str = "",
 ) -> str:
     """The push text for ``loop``, assembled from what the agent fetched.
 
@@ -661,7 +710,7 @@ def render(
         if loop == "ingest":
             return _ingest(sources)
         if loop == "prep":
-            return _prep(now, identities, payloads, ledger)
+            return _prep(now, identities, payloads, ledger, selector)
         if loop == "morning":
             return brief.assemble(
                 now=now,
@@ -776,7 +825,7 @@ def main(argv: list[str] | None = None) -> int:
         print(
             "usage: python -m daydag.run {plan|render} {"
             + "|".join(LOOPS)
-            + "} [--log PATH] [--write-state]"
+            + '} [--log PATH] [--write-state] [--for "<meeting or person>"]'
         )
         return 2
 
@@ -790,11 +839,15 @@ def main(argv: list[str] | None = None) -> int:
     # `--write-state` projects what the run learned back into `State.md`.
     log = args[args.index("--log") + 1] if "--log" in args[:-1] else None
     write_state = "--write-state" in args
+    # `--for` names the meeting to prep. Without it `prep` takes the next
+    # qualifying one, which is the scheduled ping's behaviour.
+    selector = args[args.index("--for") + 1] if "--for" in args[:-1] else ""
     try:
         identities = Identities.from_file(Path(".env"))
         now = datetime.now().astimezone()
         if command == "plan":
-            print(json.dumps(plan(loop, now=now, identities=identities).to_dict(), indent=2))
+            built = plan(loop, now=now, identities=identities, selector=selector)
+            print(json.dumps(built.to_dict(), indent=2))
         else:
             payloads = json.load(sys.stdin)
             print(
@@ -805,6 +858,7 @@ def main(argv: list[str] | None = None) -> int:
                     payloads=payloads,
                     log=log,
                     write_state=write_state,
+                    selector=selector,
                 )
             )
     except (RunError, ConfigError) as bad:

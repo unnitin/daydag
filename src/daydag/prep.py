@@ -137,6 +137,12 @@ class Reason(Enum):
     STEERING = "steering/pod"
     LEADERSHIP = "leadership in the room"
     EXTERNAL = "external party"
+    #: He named this meeting. The others are rules deciding whether to
+    #: interrupt him unprompted; this one is not a rule at all, and recording it
+    #: as its own reason keeps that distinction auditable. A prep that says
+    #: "1:1" when it actually fired because he asked would make the ping rules
+    #: look better than they are.
+    ASKED_FOR = "you asked"
 
 
 #: Prep's single extra rule. Focus blocks, holds and OOO are already gone via

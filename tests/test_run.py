@@ -603,3 +603,87 @@ def test_the_friday_section_renders_when_its_notes_are_fetched(identities):
 
     assert "weekly-planning outcome" in text, f"the friday section never renders:\n{text}"
     assert "hasn't landed yet" in text
+
+
+# --------------------------------------------------------------------------
+# prep, for a meeting he named
+# --------------------------------------------------------------------------
+
+
+def _meeting(summary, *attendees, day="2026-09-07", at="15:00"):
+    return {
+        "id": summary.lower().replace(" ", "-"),
+        "summary": summary,
+        "start": f"{day}T{at}:00-07:00",
+        "end": f"{day}T{at[:2]}:45:00-07:00",
+        "attendees": list(attendees),
+        "response_status": "accepted",
+        "permalink": f"https://cal/{summary[:6]}",
+    }
+
+
+def test_a_named_prep_picks_the_meeting_he_asked_for(identities):
+    """`prep` alone takes the next qualifying meeting. Named, it takes the one
+    named - even when another sorts earlier."""
+    payloads = _payloads(
+        calendar=[
+            _meeting("Pod Steering", "a@x.com", "b@x.com", at="11:00"),
+            _meeting("Finance x Data meeting", "a@x.com", "c@x.com", at="16:00"),
+        ]
+    )
+
+    text = run.render(
+        "prep",
+        now=MONDAY_PT,
+        identities=identities,
+        payloads=payloads,
+        selector="finance x data",
+    )
+
+    assert "Finance x Data" in text, text
+    assert "Pod Steering" not in text, f"it prepped the sooner meeting instead:\n{text}"
+
+
+def test_a_named_prep_that_matches_two_asks_rather_than_guessing(identities):
+    """Invariant 5, and the common case: a recurring 1:1 appears twice in any
+    horizon worth searching. Prep for the wrong one is worse than none."""
+    payloads = _payloads(
+        calendar=[
+            _meeting("1:1 | Nitin x Wren", "a@x.com", "wren.alder@x.com", at="11:00"),
+            _meeting(
+                "1:1 | Nitin x Wren", "a@x.com", "wren.alder@x.com", day="2026-09-09", at="11:00"
+            ),
+        ]
+    )
+
+    text = run.render(
+        "prep", now=MONDAY_PT, identities=identities, payloads=payloads, selector="wren"
+    )
+
+    assert "which one" in text.lower(), text
+
+
+def test_a_named_prep_that_matches_nothing_says_what_it_searched(identities):
+    text = run.render(
+        "prep",
+        now=MONDAY_PT,
+        identities=identities,
+        payloads=_payloads(calendar=[_meeting("Pod Steering", "a@x.com", "b@x.com")]),
+        selector="nobody by that name",
+    )
+
+    assert "nobody by that name" in text.lower(), text
+
+
+def test_a_named_standup_is_prepped_even_though_a_ping_never_would_be(identities):
+    """`prep_worthy` answers "is this worth interrupting him unprompted". He
+    asked - so the gate does not apply, and refusing would be the tool arguing
+    with the request."""
+    payloads = _payloads(calendar=[_meeting("DE Standup", "a@x.com", "b@x.com", at="11:00")])
+
+    text = run.render(
+        "prep", now=MONDAY_PT, identities=identities, payloads=payloads, selector="de standup"
+    )
+
+    assert "DE Standup" in text, text
+    assert "nothing coming up" not in text, text

@@ -89,6 +89,11 @@ Then write a payloads file keyed by source:
 - `attendees` must be PEOPLE. Google lists conference rooms as attendees on
   `resource.calendar.google.com`; a room cannot take a note, and counting one
   made a solo block with a room booked look like a two-person meeting.
+- **Carry the `displayName` when google gives one**, as `"Full Name <addr>"`.
+  Measured on the real directory: plenty of addresses are a bare first name -
+  `jonathan@`, `alex@` - so the surname exists ONLY in `displayName`. Dropping
+  it means `prep --for "jonathan strauss"` cannot match, while bare "jonathan"
+  matches a different Jonathan. The address alone is not an identity.
 - `organizer` and `organizer_is_self` decide the one-attendee case. An ATS
   interview invite lists only him - the candidate comes through a different
   calendar - so without an organizer a 45-minute interview is invisible. With
