@@ -14,21 +14,26 @@ A persistent agent for Nitin Srivastava (SVP Data & AI, Create Music Group) that
 
 Ownership map (from the weekly notes, stable): **VP-AI** → A&R Discovery + AI Platform · **Enablement-Lead** → Agentic Enablement (Kiwi / CreateOS Labs) · **VP-Data** → Data Platform, Ingestion, DevOps, Security. Everything else sits with Nitin directly. **Sponsor** is the executive sponsor/audience (Former-Sponsor departed). **CTO** is newly named (relocating to Vancouver as of early Sep). Cross-teaming partners: **Analytics-Partner** (analytics/data product), **CTO**, **Gov-Lead** (governance/roadmap).
 
-Slack user IDs (search by ID, never display name):
+**Who people are lives in the people directory, not in this file.** Slack ids,
+addresses, titles, the DM with Nitin, the group DMs they sit in, and how often
+he has met them - keyed by role token, learned from every meeting the ledger
+seeds, corrected by hand when wrong (a stated fact outranks an inferred one):
+
+```sh
+python -m daydag.people show vp-data  --log ~/.local/state/daydag/events.db
+python -m daydag.people list          --log ~/.local/state/daydag/events.db
+```
+
+Search Slack by the id it returns, never by display name - `from:@someone`
+fails silently. The one identity still in `.env` is the principal, because it
+is needed before any lookup can happen:
 
 | Person | Slack ID | Role context |
 |---|---|---|
 | Nitin (the principal) | `${SLACK_USER_PRINCIPAL}` | DM target for all agent output |
-| VP-Data | `${SLACK_USER_VP_DATA}` | VP Data Engineering |
-| VP-AI | `${SLACK_USER_VP_AI}` | A&R Discovery + AI Platform lead |
-| CTO | `${SLACK_USER_CTO}` | Chief Technology Officer |
-| Sponsor | `${SLACK_USER_SPONSOR}` | Exec sponsor |
-| Gov-Lead | `${SLACK_USER_GOV_LEAD}` | Governance/roadmap |
-| Modeler-Owner | `${SLACK_USER_MODELER_OWNER}` | Deal Modeler owner |
-| Eng-Sr | `${SLACK_USER_ENG_SR}` | Sr engineer (Toptal) |
-| DataEng-1 | `${SLACK_USER_DATAENG_1}` | Data engineering |
-| Eng-2 | `${SLACK_USER_ENG_2}` | Engineering |
-| Revenue-Lead | `${SLACK_USER_REVENUE_LEAD}` | Revenue lead |
+
+The role tokens above (VP-Data, VP-AI, CTO, Sponsor, Gov-Lead, Modeler-Owner,
+Eng-Sr, DataEng-1, Eng-2, Revenue-Lead) are the directory keys.
 
 Other frequent names: ML-Lead (lead ML, first-party models), Stakeholder-1, Eng-4, Eng-5, Eng-6, Eng-7, Eng-8, Eng-3, Product-1 (product).
 
@@ -48,11 +53,7 @@ Other frequent names: ML-Lead (lead ML, first-party models), Stakeholder-1, Eng-
 | #dt-leadership | `${SLACK_CH_DT_LEADERSHIP}` |
 | #dnt-leadership | `${SLACK_CH_DNT_LEADERSHIP}` |
 | #project-dream | `${SLACK_CH_PROJECT_DREAM}` |
-| Group DM CTO/VP-Data/VP-AI/Nitin | `${SLACK_GDM_LEADS_4}` |
-| Group DM VP-Data/VP-AI/Nitin | `${SLACK_GDM_LEADS_3}` |
-| Group DM Sponsor/VP-Data/Nitin | `${SLACK_GDM_SPONSOR_3}` |
-| DM Sponsor | `${SLACK_DM_SPONSOR}` |
-| DM VP-AI | `${SLACK_DM_VP_AI}` |
+| DMs and group DMs | per person, in the directory: `python -m daydag.people show <role>` - `dm` is the 1:1 with Nitin, `groups` the group DMs and channels they are tracked in |
 
 **Obsidian vault (direct filesystem access in Claude Code — no MCP needed):**
 `${VAULT_ROOT}/`

@@ -54,6 +54,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from enum import Enum
+from typing import Any
 
 from daydag.config import resolve_reference
 from daydag.ledger import Row
@@ -178,9 +179,37 @@ class Audience:
         this rule". The alternative default - treating every attendee as an
         outside party when the org domain is unset - fires the interrupt on
         every meeting on the calendar, which mutes it inside a day.
+
+        Both were in fact unset, so `has_leadership` and `has_external` always
+        answered False and two of the four reasons could never fire. Prefer
+        `from_directory`, which takes leadership from the people store, where a
+        person's seniority sits next to the rest of what is known about them
+        and can be corrected without editing a CSV in `.env`.
         """
         return cls(
             leadership=_csv(identities, LEADERSHIP_KEY),
+            internal_domains=_csv(identities, ORG_DOMAIN_KEY),
+        )
+
+    @classmethod
+    def from_directory(cls, directory: Any, identities: Mapping[str, str]) -> Audience:
+        """Leadership from the people store, domains still from `.env`.
+
+        Split on purpose. "Who is senior" is a fact ABOUT A PERSON and belongs
+        where the person is, learned and corrected over time. "Which domain is
+        ours" is one value that decides inside-vs-outside for everybody, has no
+        person attached, and is needed before any lookup can be trusted - so it
+        stays configuration.
+
+        Falls back to the CSV when the store knows no leadership yet, so a
+        directory that is still filling up does not silently switch the rule
+        off for someone who had configured it the old way.
+        """
+        from_store = frozenset(
+            address.casefold() for person in directory.leadership() for address in person.emails
+        )
+        return cls(
+            leadership=from_store or _csv(identities, LEADERSHIP_KEY),
             internal_domains=_csv(identities, ORG_DOMAIN_KEY),
         )
 
