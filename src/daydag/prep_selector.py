@@ -1,7 +1,7 @@
 """Naming the meeting to prep for, and refusing to guess between two.
 
 USING IT
-    found = select(rows, "finance x data", now=now, principal=me)
+    found = select(rows, "finance x data", now=now, until=until, principal=me, tz=tz)
     found.one          # -> Row | None, only when exactly one matched
     found.candidates   # -> every match, in time order
     found.render()     # -> the line to show when `one` is None
@@ -9,12 +9,17 @@ USING IT
 CONTRACTS
     1. `one` is set ONLY when exactly one meeting matched. Two matches is not a
        tie to break, it is a question to ask - see WHY IT EXISTS.
-    2. A selector matches a meeting's TITLE loosely, or an attendee by name
-       tokens, where every token must be present. One token is enough on its
-       own; "bo finch" needs both.
+    2. A selector matches by TOKENS - against the title, or against an
+       attendee's address local-part and display name - and every token must
+       be present. One token is enough on its own; "bo finch" needs both. No
+       substring path: "fin" does not find Finance, because partial-word
+       matching is the fuzziness KNOWN LIMIT argues against.
     3. The principal never matches. He is on every meeting.
-    4. Only meetings that have not started, and only inside `HORIZON_DAYS`.
-    5. An empty selector raises rather than matching everything.
+    4. Only meetings that have not started, and only before ``until`` - the
+       bound the caller computed from the same day arithmetic as its fetch.
+    5. A selector with no word in it raises rather than matching everything.
+       The guard is on the TOKENS, because an empty token set is a subset of
+       every title - "---" passed a guard on the string and matched the week.
 
 WHY IT EXISTS
     `run._prep` preps the NEXT qualifying meeting, because a prep ping is the
@@ -33,12 +38,16 @@ KNOWN LIMIT
     `wren.alder@` are the same person as "Wren Alder" in a title - only that
     the token `wren` appears in each.
 
-    This makes the SHAPING load-bearing. Plenty of real addresses are a bare
-    first name (`jonathan@`, `alex@`), so the surname exists only in google's
-    `displayName` and an attendee shaped as the address alone cannot be
-    distinguished from a different Jonathan. `SKILL.md` requires the
-    `"Full Name <addr>"` form for exactly this, and `_person_tokens` reads
-    both.
+    So the display name matters. Plenty of real addresses are a bare first
+    name (`jonathan@`, `alex@`), and the surname exists only in google's
+    `displayName` - shaped as the address alone, "jonathan strauss" cannot
+    match and bare "jonathan" matches a different Jonathan. The name reaches
+    here as `Row.attendee_names`, split from the address once in
+    `Ledger.seed_day` (`ledger.attendee_parts`). It is deliberately NOT folded
+    into the address string: that was tried, and every other consumer of
+    `Row.attendees` compares bare emails, so it broke `has_external`,
+    `has_leadership`, note matching and this module's own principal skip at
+    once.
 
     A genuine nickname sharing no token with either ("Bill" against
     `william.smith@` with no display name) still will not match. The honest fix
@@ -49,10 +58,11 @@ KNOWN LIMIT
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, tzinfo
 
+from daydag import recipes
 from daydag.ledger import Row
 
 __all__ = ["HORIZON_DAYS", "Selection", "select"]
@@ -70,17 +80,28 @@ def _tokens(text: str) -> set[str]:
     return {part for part in _TOKENS.split(str(text).casefold()) if part}
 
 
-def _person_tokens(attendee: str) -> set[str]:
-    """The name tokens in an attendee, with the domain thrown away.
+def _person_tokens(address: str, name: str) -> set[str]:
+    """The name tokens for one attendee: address local-part plus display name.
 
     `wren.alder@example.com` is `{wren, alder}`, so a first name finds the
     person without anyone storing a display name - and `example`/`com` are NOT
     matchable, because every colleague shares them and a selector that hit the
-    domain would match the entire invite list.
-
-    A display name rather than an address just tokenises whole.
+    domain would match the entire invite list. The display name adds the
+    surname a bare-first-name address lacks (`jonathan@` + "Jonathan Strauss").
     """
-    return _tokens(str(attendee).split("@", 1)[0])
+    return _tokens(address.split("@", 1)[0]) | _tokens(name)
+
+
+def _clock(moment: datetime, tz: tzinfo) -> str:
+    """``mon 14 sep 9:00`` - his zone, his register, same as the brief.
+
+    A row's start carries whatever offset the connector emitted; rendered raw,
+    a 13:00 PT meeting delivered as ``20:00Z`` listed as 20:00 in the which-one
+    prompt while the morning brief showed 1:00 for the same meeting. A naive
+    start is read as already his wall-clock, the `brief._local` convention.
+    """
+    local = (moment if moment.tzinfo else moment.replace(tzinfo=tz)).astimezone(tz)
+    return f"{local:%a %d %b}".lower() + f" {local.hour % 12 or 12}:{local.minute:02d}"
 
 
 @dataclass(frozen=True)
@@ -89,6 +110,7 @@ class Selection:
 
     candidates: tuple[Row, ...]
     selector: str
+    tz: tzinfo = recipes.PACIFIC
 
     @property
     def one(self) -> Row | None:
@@ -104,31 +126,31 @@ class Selection:
                 " on the invite"
             )
         lines = [f'prep: "{self.selector}" matches {len(self.candidates)} meetings - which one?']
-        lines.extend(f"  {row.start:%a %d %b %H:%M}  {row.summary}" for row in self.candidates)
+        lines.extend(f"  {_clock(row.start, self.tz)}  {row.summary}" for row in self.candidates)
         return "\n".join(lines)
 
 
-def _matches(row: Row, wanted: set[str], phrase: str, principal: str) -> bool:
+def _matches(row: Row, wanted: set[str], principal: str) -> bool:
     """Whether one meeting answers to this selector.
 
-    Title first and loosely, because "finance x data" is how he refers to the
-    meeting and is not anybody's name. Then attendees, where EVERY token has to
-    land: one token is enough to name a person, but a two-token selector that
-    matched on either half would pick the wrong Bo.
+    Title first, because "finance x data" is how he refers to the meeting and
+    is not anybody's name. Then attendees, where EVERY token has to land: one
+    token is enough to name a person, but a two-token selector that matched on
+    either half would pick the wrong Bo. Tokens only - a substring path let
+    "fin" find Finance, which is the fuzziness this module refuses.
     """
-    if phrase and phrase in str(row.summary).casefold():
-        return True
     if wanted <= _tokens(row.summary):
         return True
-    for attendee in row.attendees or ():
-        # Contract 3, and it has to compare like with like: `attendees` are
-        # EMAILS, so the principal has to arrive as one. Passing a Slack id
-        # here matches nothing and silently disables this skip - which is what
-        # the first wiring of this did, while the tests passed because their
-        # fixture principal happened to be email-shaped.
-        if principal and str(attendee).casefold() == principal.casefold():
+    names = list(row.attendee_names) + [""] * (len(row.attendees) - len(row.attendee_names))
+    for address, name in zip(row.attendees, names, strict=False):
+        # Contract 3, comparing like with like: `Row.attendees` are bare EMAILS
+        # (split from any display name in `Ledger.seed_day`), so the principal
+        # has to arrive as one. A Slack id here matches nothing and silently
+        # disables the skip - the first wiring did exactly that, and the tests
+        # passed because their fixture principal happened to be email-shaped.
+        if principal and address.casefold() == principal.casefold():
             continue
-        if wanted and wanted <= _person_tokens(attendee):
+        if wanted <= _person_tokens(address, name):
             return True
     return False
 
@@ -138,37 +160,25 @@ def select(
     selector: str,
     *,
     now: datetime,
+    until: datetime,
     principal: str = "",
-    horizon_days: int = HORIZON_DAYS,
+    tz: tzinfo = recipes.PACIFIC,
 ) -> Selection:
-    """Every upcoming meeting answering to ``selector``, in time order.
+    """Every meeting in ``[now, until)`` answering to ``selector``, in time order.
 
-    Raises `ValueError` on an empty selector: `""` is a substring of every
-    title, so matching everything and taking the first would look exactly like
-    a selector that works.
+    ``until`` is the caller's, not derived here: the plan fetched a specific
+    set of day windows and the match bound has to be the END of the last one,
+    or the two halves of one loop disagree about what "the next 7 days" means.
+    A `now + 7 days` instant here fetched an eighth day it then discarded.
+
+    Raises `ValueError` when the selector has no word in it. The guard is on
+    the TOKENS: an empty token set is a subset of every title's, so "---" or a
+    stray quote passed a check on the string and matched the whole week.
     """
-    phrase = " ".join(str(selector).casefold().split())
-    if not phrase:
-        raise ValueError("a prep selector cannot be empty - name a meeting or a person")
     wanted = _tokens(selector)
+    if not wanted:
+        raise ValueError("a prep selector needs a word in it - a title word, or a name")
+    phrase = " ".join(str(selector).split())
 
-    horizon = now + timedelta(days=horizon_days)
-    found = [
-        row
-        for row in rows
-        if now <= row.start <= horizon and _matches(row, wanted, phrase, principal)
-    ]
-    return Selection(tuple(sorted(found, key=lambda r: r.start)), phrase)
-
-
-def windows_for(now: datetime, *, horizon_days: int = HORIZON_DAYS) -> Sequence[object]:
-    """Day windows a named prep must fetch - one per day across the horizon.
-
-    Separate from `recipes.calendar_days` only to keep the horizon in one
-    place; the bound itself is the #2 audit's, one request per day and never a
-    wide one.
-    """
-    from daydag import recipes
-
-    day = now.astimezone(recipes.PACIFIC).date()
-    return recipes.calendar_days(day, day + timedelta(days=horizon_days))
+    found = [row for row in rows if now <= row.start < until and _matches(row, wanted, principal)]
+    return Selection(tuple(sorted(found, key=lambda r: r.start)), phrase, tz)

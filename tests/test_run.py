@@ -40,7 +40,8 @@ MONDAY_PT = datetime(2026, 9, 7, 13, 40, tzinfo=UTC)
 def identities(tmp_path):
     env = tmp_path / ".env"
     env.write_text(
-        f"SLACK_USER_PRINCIPAL=UPRINCIPAL1\nVAULT_ROOT={tmp_path / 'vault'}\n",
+        f"SLACK_USER_PRINCIPAL=UPRINCIPAL1\nEMAIL_PRINCIPAL=principal@x.com\n"
+        f"VAULT_ROOT={tmp_path / 'vault'}\n",
         encoding="utf-8",
     )
     (tmp_path / "vault" / "Weekly Notes").mkdir(parents=True)
@@ -687,3 +688,96 @@ def test_a_named_standup_is_prepped_even_though_a_ping_never_would_be(identities
 
     assert "DE Standup" in text, text
     assert "nothing coming up" not in text, text
+
+
+# --------------------------------------------------------------------------
+# what the review of the selector found, at the runner
+# --------------------------------------------------------------------------
+
+
+def test_a_named_prep_plan_fetches_seven_days_in_his_zone_and_only_what_it_reads(identities):
+    """Eight windows for a seven-day horizon, in hardcoded Pacific, plus gmail
+    and vault steps `_prep` never reads. Now: seven, in `timezone_for`, and only
+    the two sources the loop consumes."""
+    steps = run.plan("prep", now=MONDAY_PT, identities=identities, selector="wren").steps
+
+    days = [s.detail["day"] for s in steps if s.source == "calendar"]
+    assert days == [f"2026-09-{d:02d}" for d in range(7, 14)], days
+    assert {s.source for s in steps} == {"calendar", "slack"}
+
+
+def test_a_shaped_attendee_does_not_break_the_ping_rules(identities):
+    """The shape review caught: a display name folded into the address made
+    every internal colleague read as external. Google's dict form goes straight
+    through and is split at the seam."""
+    from daydag.prep import Audience
+
+    payloads = _payloads(
+        calendar=[
+            {
+                "id": "e1",
+                "summary": "Roadmap review",
+                "start": "2026-09-07T11:00:00-07:00",
+                "end": "2026-09-07T12:00:00-07:00",
+                "attendees": [
+                    {"email": "principal@x.com", "displayName": "Prin Cipal"},
+                    {"email": "wren@x.com", "displayName": "Wren Alder"},
+                    "Jo Strauss <jo@x.com>",
+                ],
+                "response_status": "accepted",
+                "permalink": "https://cal/e1",
+            }
+        ]
+    )
+    from daydag.ledger import Ledger
+
+    ledger = Ledger()
+    ledger.seed_day(run._seedable(payloads))
+    (row,) = ledger.open_rows()
+
+    assert row.attendees == ["principal@x.com", "wren@x.com", "jo@x.com"]
+    assert row.attendee_names == ["Prin Cipal", "Wren Alder", "Jo Strauss"]
+    audience = Audience(leadership=frozenset({"jo@x.com"}), internal_domains=frozenset({"x.com"}))
+    assert not audience.has_external(row.attendees), "a colleague read as external"
+    assert audience.has_leadership(row.attendees), "leadership stopped matching"
+
+
+def test_a_named_prep_does_not_persist_the_week_it_fetched(identities, tmp_path):
+    """A prep is a question, not a day's seeding. Remembering its seven fetched
+    days made a meeting cancelled after the snapshot a permanent notes gap."""
+    from daydag.state import EventLog
+
+    log = tmp_path / "events.db"
+    payloads = _payloads(
+        calendar=[_meeting("Finance x Data meeting", "a@x.com", "b@x.com", day="2026-09-10")]
+    )
+    run.render(
+        "prep", now=MONDAY_PT, identities=identities, payloads=payloads, log=log, selector="finance"
+    )
+
+    assert EventLog.open(log).recorded("meeting") == [], "a named prep wrote future meetings"
+
+
+def test_a_trailing_for_is_refused_not_silently_dropped(tmp_path, monkeypatch, capsys):
+    """`render prep --for` with the name forgotten used to prep the next
+    qualifying meeting and say nothing - the wrong-meeting failure."""
+    env = tmp_path / ".env"
+    env.write_text(
+        f"SLACK_USER_PRINCIPAL=UPRINCIPAL1\nEMAIL_PRINCIPAL=p@x.com\n"
+        f"VAULT_ROOT={tmp_path / 'vault'}\n"
+    )
+    (tmp_path / "vault" / "Weekly Notes").mkdir(parents=True)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("sys.stdin", __import__("io").StringIO('{"calendar":[],"slack":[]}'))
+
+    assert run.main(["render", "prep", "--for"]) == 2
+    assert "--for needs" in capsys.readouterr().err
+
+
+def test_a_blank_selector_is_one_line_on_stderr_not_a_traceback(identities):
+    """CLAUDE.md rule 6. `select` raises ValueError; the runner turns it into
+    the RunError path every other refusal takes."""
+    with pytest.raises(run.RunError):
+        run.render(
+            "prep", now=MONDAY_PT, identities=identities, payloads=_payloads(), selector="  "
+        )

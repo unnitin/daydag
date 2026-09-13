@@ -22,20 +22,32 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from daydag.ledger import Row
-from daydag.prep_selector import HORIZON_DAYS, Selection, select
+from daydag.ledger import Row, attendee_parts
+from daydag.prep_selector import HORIZON_DAYS, Selection
+from daydag.prep_selector import select as _select
 
 NOW = datetime(2026, 9, 14, 9, 0, tzinfo=UTC)
+UNTIL = NOW + timedelta(days=HORIZON_DAYS)
+
+
+def select(rows, selector, **kw):
+    kw.setdefault("now", NOW)
+    kw.setdefault("until", UNTIL)
+    return _select(rows, selector, **kw)
 
 
 def _row(summary: str, *attendees: str, hours: int = 4, event_id: str = "") -> Row:
+    """Attendees may be bare addresses or `"Name <addr>"`; split the way
+    `Ledger.seed_day` does, so these rows look like real ones."""
     start = NOW + timedelta(hours=hours)
+    parts = [attendee_parts(a) for a in attendees]
     return Row(
         event_id=event_id or summary.lower().replace(" ", "-"),
         start=start,
         end=start + timedelta(minutes=30),
         summary=summary,
-        attendees=list(attendees),
+        attendees=[addr for addr, _ in parts],
+        attendee_names=[name for _, name in parts],
     )
 
 
@@ -216,6 +228,69 @@ def test_selection_renders_the_candidates_with_their_times():
     assert "Pod Steering" in rendered
     assert "1:1" in rendered
     assert isinstance(Selection((), "x").render(), str)
+
+
+# --------------------------------------------------------------------------
+# what the review found
+# --------------------------------------------------------------------------
+
+
+def test_a_selector_with_no_word_in_it_raises_rather_than_matching_the_week():
+    """The guard is on the TOKENS. An empty token set is a subset of every
+    title's, so "---" passed a guard on the string and matched everything -
+    rendering "which one?" over the whole week instead of saying the selector
+    was bad."""
+    rows = [_row("Pod Steering", PRINCIPAL, "a@example.com")]
+
+    for bad in ("---", "@@", "?", "  "):
+        with pytest.raises(ValueError):
+            select(rows, bad)
+
+
+def test_a_partial_word_does_not_match():
+    """No substring path. "fin" finding Finance is the fuzziness KNOWN LIMIT
+    refuses, because it buys back the wrong-meeting failure."""
+    rows = [_row("Finance x Data meeting", PRINCIPAL, "a@example.com")]
+
+    assert select(rows, "fin").candidates == ()
+    assert select(rows, "finance").one is not None
+
+
+def test_a_display_name_never_reaches_the_address_the_principal_is_compared_to():
+    """The shape that broke everything: a name folded into the address string
+    made `"Nitin S <p@x>" == "p@x"` false and the skip died. Split at the seam,
+    the address is bare and the skip holds while the name still matches."""
+    rows = [_row("Sync", "Prin Cipal <principal@example.com>", "Wren Alder <wren@example.com>")]
+
+    assert select(rows, "prin", principal=PRINCIPAL).candidates == ()
+    assert select(rows, "wren alder", principal=PRINCIPAL).one is not None
+
+
+def test_candidates_render_in_his_zone_and_his_register():
+    """A 13:00 PT meeting delivered as 20:00Z listed as 20:00 while the brief
+    said 1:00 for the same meeting - he picks off a list that disagrees with
+    his calendar. Localised, lowercase, 12-hour, like every other push."""
+    from zoneinfo import ZoneInfo
+
+    pt = ZoneInfo("America/Los_Angeles")
+    rows = [
+        _row("Ruwen / Nitin 1-1", PRINCIPAL, "r@example.com", hours=4),
+        _row("D&T Program Review", PRINCIPAL, "r@example.com", hours=30),
+    ]
+
+    rendered = select(rows, "r", tz=pt).render()
+
+    assert "20:00" not in rendered and "13:00" not in rendered
+    assert "mon 14 sep" in rendered, rendered
+
+
+def test_the_match_bound_is_the_end_of_the_fetched_window_not_a_rolling_instant():
+    """`until` belongs to the caller: the plan fetched specific day windows and
+    a match past the last one is a meeting nobody fetched."""
+    rows = [_row("Late", PRINCIPAL, "a@example.com", hours=24 * HORIZON_DAYS - 1)]
+
+    assert select(rows, "late").one is not None
+    assert select(rows, "late", until=NOW + timedelta(days=HORIZON_DAYS - 1)).one is None
 
 
 def test_the_domain_half_of_an_address_is_not_matchable():

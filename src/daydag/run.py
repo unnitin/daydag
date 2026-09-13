@@ -57,7 +57,7 @@ import json
 import sys
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -66,7 +66,7 @@ from daydag.config import ConfigError, resolve_reference, timezone_for
 from daydag.ingestion import classify_items
 from daydag.ledger import Ledger, Match, title_from_gemini_subject
 from daydag.prep import Audience, Reason, build, point, prep_worthy
-from daydag.prep_selector import select, windows_for
+from daydag.prep_selector import HORIZON_DAYS, select
 from daydag.runlog import RunLog
 from daydag.smoke import REACHED
 from daydag.state import EventLog, NotesGap, StateFolder, read_section
@@ -147,7 +147,8 @@ def plan(loop: str, *, now: datetime, identities: Mapping[str, str], selector: s
     # midnight Pacific the plan fetched one day while the brief reported
     # another, and the two would have disagreed on every evening run. Same
     # convention as `brief._local` and `recipes.timezone_for`.
-    day = now.astimezone(timezone_for(identities)).date()
+    tz = timezone_for(identities)
+    day = now.astimezone(tz).date()
 
     if loop == "ship":
         # No connector steps at all. `pulse` reads the git mirrors on disk, so
@@ -165,7 +166,7 @@ def plan(loop: str, *, now: datetime, identities: Mapping[str, str], selector: s
             ),
         )
 
-    windows = _calendar_windows(loop, day, now=now, selector=selector)
+    windows = _calendar_windows(loop, day, tz=tz, selector=selector)
     overnight = recipes.slack_overnight(now, mentioning=principal, identities=identities)
     note = recipes.weekly_note(day)
 
@@ -208,6 +209,12 @@ def plan(loop: str, *, now: datetime, identities: Mapping[str, str], selector: s
         ),
         *_extra_notes(loop, day),
     ]
+    if loop == "prep" and selector:
+        # `_prep` reads the calendar and the Slack payload, nothing else. No
+        # note can attach to a meeting that has not happened, and the weekly
+        # note is never read - so gmail and vault were two connector round-trips
+        # for nothing, the same waste `_NO_CALENDAR` exists to prevent.
+        steps = [step for step in steps if step.source in {"calendar", "slack"}]
     return Plan(loop=loop, at=now.isoformat(), steps=tuple(steps))
 
 
@@ -237,7 +244,7 @@ def _extra_notes(loop: str, day: date) -> list[Step]:
 
 
 def _calendar_windows(
-    loop: str, day: date, *, now: datetime | None = None, selector: str = ""
+    loop: str, day: date, *, tz: Any = recipes.PACIFIC, selector: str = ""
 ) -> list[recipes.DayWindow]:
     """The calendar windows this LOOP will actually ask its sources for.
 
@@ -259,12 +266,15 @@ def _calendar_windows(
         # hand. Neither looks at the calendar, and fetching a day they ignore
         # is a connector round-trip for nothing.
         return []
-    if loop == "prep" and selector and now is not None:
-        # A NAMED prep searches a week, not today. The meeting he wants prepped
-        # is usually not today's - that is the whole reason for naming it - and
-        # a today-only fetch would answer "nothing matches" for a Thursday
-        # meeting on a Monday, which reads as "no such meeting".
-        return list(windows_for(now))
+    if loop == "prep" and selector:
+        # A NAMED prep searches the week, not today - the meeting he wants
+        # prepped is usually not today's, that is why he named it. Seven
+        # windows, in HIS zone: an earlier version recomputed the day in
+        # hardcoded Pacific and fetched an eighth day the match then discarded,
+        # so a London principal got windows a day off and the answer "nothing
+        # matches" for a meeting that existed. `_prep` derives its `until` from
+        # this same arithmetic, so fetch and match are one set.
+        return recipes.calendar_days(day, day + timedelta(days=HORIZON_DAYS - 1), tz=tz)
     if loop == "eod":
         # `eod_wrap` reads exactly one window, and it is tomorrow's: the wrap
         # reports the day that just ended and previews the first meeting of
@@ -616,25 +626,42 @@ def _prep(
     one cold.
     """
     audience = Audience.from_identities(identities)
-    upcoming = [row for row in ledger.open_rows() if row.start >= now]
 
     if selector:
-        found = select(
-            upcoming,
-            selector,
-            now=now,
-            # EMAIL_PRINCIPAL, not SLACK_USER_PRINCIPAL: `Row.attendees` holds
-            # email addresses, and a Slack id compared against one matches
-            # nothing - the exclusion would be dead while looking wired.
-            principal=str(identities.get("EMAIL_PRINCIPAL", "")),
-        )
+        tz = timezone_for(identities)
+        day = now.astimezone(tz).date()
+        # The END of the last window the plan fetched - same arithmetic as
+        # `_calendar_windows`, so what was fetched and what can match are one
+        # set rather than a 7-day fetch against an 8-day bound.
+        until = datetime.combine(day + timedelta(days=HORIZON_DAYS), time.min, tzinfo=tz)
+        try:
+            found = select(
+                ledger.open_rows(),
+                selector,
+                now=now,
+                until=until,
+                # EMAIL_PRINCIPAL, not SLACK_USER_PRINCIPAL: `Row.attendees`
+                # holds email addresses, and a Slack id compared against one
+                # matches nothing - the exclusion would be dead while looking
+                # wired. Resolved the way every other identity is, so a missing
+                # key REFUSES instead of silently switching the skip off.
+                principal=resolve_reference(
+                    "${EMAIL_PRINCIPAL}", identities, what="the principal's address", error=RunError
+                ),
+                tz=tz,
+            )
+        except ValueError as bad:
+            raise RunError(str(bad)) from bad  # one line on stderr, not a traceback
         row = found.one
         if row is None:
             return found.render()
-        reason = prep_worthy(row, audience) or Reason.ASKED_FOR
-        return build(row, reason, _points(payloads)).render()
+        # ASKED_FOR, unconditionally. He named it; the ping rules are not
+        # consulted, so they must not be credited - a named 1:1 stamped "1:1"
+        # would make the rules look better than they are.
+        return build(row, Reason.ASKED_FOR, _points(payloads)).render()
 
-    for row in sorted(upcoming, key=lambda r: r.start):
+    # `open_rows` is already oldest-first; filtering keeps that order.
+    for row in (r for r in ledger.open_rows() if r.start >= now):
         reason = prep_worthy(row, audience)
         if reason is None:
             continue
@@ -735,7 +762,13 @@ def render(
             text = _assemble()
             active.observe([{"name": loop, "source": "daydag", "status": REACHED, "reason": ""}])
 
-    _remember(events, _seeded(payloads))
+    if loop != "prep":
+        # A prep is a QUESTION about the week ahead, not a day's seeding.
+        # Remembering its seven fetched days persisted every future meeting;
+        # one cancelled after the snapshot was re-seeded on every later run and
+        # reported as a permanent "meeting w/ no notes", and a rescheduled one
+        # became two rows - a phantom gap beside the real meeting.
+        _remember(events, _seeded(payloads))
     if write_state and folder is not None and events is not None:
         _project(folder, events, ledger, now)
     return text
@@ -841,7 +874,16 @@ def main(argv: list[str] | None = None) -> int:
     write_state = "--write-state" in args
     # `--for` names the meeting to prep. Without it `prep` takes the next
     # qualifying one, which is the scheduled ping's behaviour.
-    selector = args[args.index("--for") + 1] if "--for" in args[:-1] else ""
+    selector = ""
+    if "--for" in args:
+        after = args[args.index("--for") + 1 :]
+        if not after or after[0].startswith("--"):
+            # Falling through to the next-qualifying meeting here would prep a
+            # meeting he did not ask about and say nothing - the wrong-meeting
+            # failure prep_selector calls worse than no prep.
+            print("--for needs a meeting or a person after it", file=sys.stderr)
+            return 2
+        selector = after[0]
     try:
         identities = Identities.from_file(Path(".env"))
         now = datetime.now().astimezone()
