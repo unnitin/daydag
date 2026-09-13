@@ -40,8 +40,9 @@ from __future__ import annotations
 import difflib
 import re
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from email.utils import parseaddr
 from typing import Any
 
 #: How long after a meeting ends its notes may still arrive, by the system that
@@ -136,6 +137,12 @@ class Row:
     attendees: list[str]
     note: Match | None = None
     day_closed: bool = False
+    #: Display names, aligned with `attendees`, "" where google gave none. Kept
+    #: APART from the addresses on purpose: every consumer of `attendees` -
+    #: `Audience.has_external`, `has_leadership`, `_score`, the prep selector's
+    #: principal skip - compares bare emails, and a display name folded into
+    #: that string broke all four at once (see `attendee_parts`).
+    attendee_names: list[str] = field(default_factory=list)
     #: The CALENDAR said a note artifact exists for this instance - Google
     #: attaches the "Notes by Gemini" doc to the event itself. Independent of
     #: `note`, which is set only when a note has actually been ingested: a
@@ -153,6 +160,28 @@ class Row:
 #: participant: it cannot take a note, so counting it made a solo block with a
 #: room booked look like a two-person meeting and chased it forever (#90).
 _RESOURCE_DOMAIN = "resource.calendar.google.com"
+
+
+def attendee_parts(attendee: Any) -> tuple[str, str]:
+    """``(address, display_name)`` from however the connector shaped one attendee.
+
+    Google's native ``{"email": ..., "displayName": ...}``, RFC-style
+    ``"Full Name <addr>"``, or a bare address all come out the same way; the
+    name is ``""`` when there is none. THIS is why the split lives at the seam:
+    a first attempt carried the name inside the attendee string, and every
+    consumer that partitions on ``@`` or compares whole strings - `has_external`
+    read the domain as ``example.com>`` and called every colleague external,
+    `has_leadership` never matched, note-to-meeting attendee overlap went to
+    zero, the principal skip died - broke together. Parse once, compare bare.
+    """
+    if isinstance(attendee, Mapping):
+        return str(attendee.get("email", "")).strip(), str(attendee.get("displayName", "")).strip()
+    name, addr = parseaddr(str(attendee))
+    if not addr:
+        # parseaddr gives ("", "") for a string with no address in it - keep the
+        # raw text as the address so a name-only attendee is not silently lost.
+        return str(attendee).strip(), ""
+    return addr.strip(), name.strip()
 
 
 def _is_resource(attendee: Any) -> bool:
@@ -259,12 +288,17 @@ class Ledger:
         for event in events:
             if not qualifies(event):
                 continue
+            # The one place an attendee is parsed. Everything downstream reads
+            # `attendees` as bare addresses and `attendee_names` beside them.
+            parts = [attendee_parts(a) for a in (event.get("attendees") or [])]
+            parts = [(addr, name) for addr, name in parts if addr]
             row = Row(
                 event_id=event["id"],
                 start=event["start"],
                 end=event["end"],
                 summary=event["summary"],
-                attendees=list(event.get("attendees") or []),
+                attendees=[addr for addr, _ in parts],
+                attendee_names=[name for _, name in parts],
                 notes_declared=_declares_note(event),
             )
             self._rows.setdefault(row.key, row)

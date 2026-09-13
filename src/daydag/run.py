@@ -57,7 +57,7 @@ import json
 import sys
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -65,7 +65,8 @@ from daydag import brief, eod_wrap, recipes, week_ahead
 from daydag.config import ConfigError, resolve_reference, timezone_for
 from daydag.ingestion import classify_items
 from daydag.ledger import Ledger, Match, title_from_gemini_subject
-from daydag.prep import Audience, build, point, prep_worthy
+from daydag.prep import Audience, Reason, build, point, prep_worthy
+from daydag.prep_selector import HORIZON_DAYS, select
 from daydag.runlog import RunLog
 from daydag.smoke import REACHED
 from daydag.state import EventLog, NotesGap, StateFolder, read_section
@@ -136,7 +137,7 @@ def _principal(identities: Mapping[str, str]) -> str:
     )
 
 
-def plan(loop: str, *, now: datetime, identities: Mapping[str, str]) -> Plan:
+def plan(loop: str, *, now: datetime, identities: Mapping[str, str], selector: str = "") -> Plan:
     """What the agent must fetch, with every bound the recipe already applies."""
     _known(loop)
     _aware(now)
@@ -146,7 +147,8 @@ def plan(loop: str, *, now: datetime, identities: Mapping[str, str]) -> Plan:
     # midnight Pacific the plan fetched one day while the brief reported
     # another, and the two would have disagreed on every evening run. Same
     # convention as `brief._local` and `recipes.timezone_for`.
-    day = now.astimezone(timezone_for(identities)).date()
+    tz = timezone_for(identities)
+    day = now.astimezone(tz).date()
 
     if loop == "ship":
         # No connector steps at all. `pulse` reads the git mirrors on disk, so
@@ -164,7 +166,7 @@ def plan(loop: str, *, now: datetime, identities: Mapping[str, str]) -> Plan:
             ),
         )
 
-    windows = _calendar_windows(loop, day)
+    windows = _calendar_windows(loop, day, tz=tz, selector=selector)
     overnight = recipes.slack_overnight(now, mentioning=principal, identities=identities)
     note = recipes.weekly_note(day)
 
@@ -207,6 +209,12 @@ def plan(loop: str, *, now: datetime, identities: Mapping[str, str]) -> Plan:
         ),
         *_extra_notes(loop, day),
     ]
+    if loop == "prep" and selector:
+        # `_prep` reads the calendar and the Slack payload, nothing else. No
+        # note can attach to a meeting that has not happened, and the weekly
+        # note is never read - so gmail and vault were two connector round-trips
+        # for nothing, the same waste `_NO_CALENDAR` exists to prevent.
+        steps = [step for step in steps if step.source in {"calendar", "slack"}]
     return Plan(loop=loop, at=now.isoformat(), steps=tuple(steps))
 
 
@@ -235,7 +243,9 @@ def _extra_notes(loop: str, day: date) -> list[Step]:
     ]
 
 
-def _calendar_windows(loop: str, day: date) -> list[recipes.DayWindow]:
+def _calendar_windows(
+    loop: str, day: date, *, tz: Any = recipes.PACIFIC, selector: str = ""
+) -> list[recipes.DayWindow]:
     """The calendar windows this LOOP will actually ask its sources for.
 
     Every loop used to get the same single window - the principal's today -
@@ -256,6 +266,15 @@ def _calendar_windows(loop: str, day: date) -> list[recipes.DayWindow]:
         # hand. Neither looks at the calendar, and fetching a day they ignore
         # is a connector round-trip for nothing.
         return []
+    if loop == "prep" and selector:
+        # A NAMED prep searches the week, not today - the meeting he wants
+        # prepped is usually not today's, that is why he named it. Seven
+        # windows, in HIS zone: an earlier version recomputed the day in
+        # hardcoded Pacific and fetched an eighth day the match then discarded,
+        # so a London principal got windows a day off and the answer "nothing
+        # matches" for a meeting that existed. `_prep` derives its `until` from
+        # this same arithmetic, so fetch and match are one set.
+        return recipes.calendar_days(day, day + timedelta(days=HORIZON_DAYS - 1), tz=tz)
     if loop == "eod":
         # `eod_wrap` reads exactly one window, and it is tomorrow's: the wrap
         # reports the day that just ended and previews the first meeting of
@@ -584,34 +603,90 @@ def _ingest(sources: _Payloads) -> str:
 
 
 def _prep(
-    now: datetime, identities: Mapping[str, str], payloads: Mapping[str, Any], ledger: Ledger
+    now: datetime,
+    identities: Mapping[str, str],
+    payloads: Mapping[str, Any],
+    ledger: Ledger,
+    selector: str = "",
 ) -> str:
-    """The next meeting worth prepping for, and what to raise in it.
+    """The meeting to prep for, and what to raise in it.
 
-    The NEXT one rather than a named one: a prep ping is the only push allowed
-    to interrupt (`prep.may_interrupt`), so it is worth exactly as much as its
-    timing. Naming a meeting is a different command and needs a selector this
-    two-phase shape has nowhere to put yet - see KNOWN LIMIT.
+    Without a selector: the NEXT qualifying one, because a prep ping is the only
+    push allowed to interrupt (`prep.may_interrupt`) and is worth exactly as
+    much as its timing.
+
+    With one: the meeting he NAMED, and `prep_worthy` is deliberately not
+    consulted. That gate answers "is this worth interrupting him for", which is
+    a question about an unprompted ping. He asked - a standup he wants prepped
+    is a standup he gets prepped, and refusing on the grounds that it is a
+    standup would be the tool arguing with the request.
+
+    Several matches surface as several (`Selection.render`). Prep for the wrong
+    meeting is worse than none: he reads it, trusts it, and walks into the other
+    one cold.
     """
     audience = Audience.from_identities(identities)
-    upcoming = [row for row in ledger.open_rows() if row.start >= now]
-    for row in sorted(upcoming, key=lambda r: r.start):
+
+    if selector:
+        tz = timezone_for(identities)
+        day = now.astimezone(tz).date()
+        # The END of the last window the plan fetched - same arithmetic as
+        # `_calendar_windows`, so what was fetched and what can match are one
+        # set rather than a 7-day fetch against an 8-day bound.
+        until = datetime.combine(day + timedelta(days=HORIZON_DAYS), time.min, tzinfo=tz)
+        try:
+            found = select(
+                ledger.open_rows(),
+                selector,
+                now=now,
+                until=until,
+                # EMAIL_PRINCIPAL, not SLACK_USER_PRINCIPAL: `Row.attendees`
+                # holds email addresses, and a Slack id compared against one
+                # matches nothing - the exclusion would be dead while looking
+                # wired. Resolved the way every other identity is, so a missing
+                # key REFUSES instead of silently switching the skip off.
+                principal=resolve_reference(
+                    "${EMAIL_PRINCIPAL}", identities, what="the principal's address", error=RunError
+                ),
+                tz=tz,
+            )
+        except ValueError as bad:
+            raise RunError(str(bad)) from bad  # one line on stderr, not a traceback
+        row = found.one
+        if row is None:
+            return found.render()
+        # ASKED_FOR, unconditionally. He named it; the ping rules are not
+        # consulted, so they must not be credited - a named 1:1 stamped "1:1"
+        # would make the rules look better than they are.
+        return build(row, Reason.ASKED_FOR, _points(payloads)).render()
+
+    # `open_rows` is already oldest-first; filtering keeps that order.
+    for row in (r for r in ledger.open_rows() if r.start >= now):
         reason = prep_worthy(row, audience)
         if reason is None:
             continue
-        points = [
-            point(
-                str(message.get("text", ""))[:160],
-                "raised since you last met",
-                quote=str(message.get("text", ""))[:160],
-                permalink=message.get("permalink"),
-                source="slack",
-            )
-            for message in payloads.get("slack", [])
-            if isinstance(message, Mapping) and message.get("permalink")
-        ][:3]
-        return build(row, reason, points).render()
+        return build(row, reason, _points(payloads)).render()
     return "prep: nothing coming up that needs it"
+
+
+def _points(payloads: Mapping[str, Any]) -> list[Any]:
+    """Talking points from what the agent fetched, evidence or nothing.
+
+    A message with no permalink is dropped rather than quoted: house rule 1 is
+    that a claim carries its link, and a prep point he cannot click through to
+    is one he has to take on trust in a meeting.
+    """
+    return [
+        point(
+            str(message.get("text", ""))[:160],
+            "raised since you last met",
+            quote=str(message.get("text", ""))[:160],
+            permalink=message.get("permalink"),
+            source="slack",
+        )
+        for message in payloads.get("slack", [])
+        if isinstance(message, Mapping) and message.get("permalink")
+    ][:3]
 
 
 def render(
@@ -624,6 +699,7 @@ def render(
     log: Path | str | None = None,
     pulse: Any = None,
     write_state: bool = False,
+    selector: str = "",
 ) -> str:
     """The push text for ``loop``, assembled from what the agent fetched.
 
@@ -661,7 +737,7 @@ def render(
         if loop == "ingest":
             return _ingest(sources)
         if loop == "prep":
-            return _prep(now, identities, payloads, ledger)
+            return _prep(now, identities, payloads, ledger, selector)
         if loop == "morning":
             return brief.assemble(
                 now=now,
@@ -686,7 +762,13 @@ def render(
             text = _assemble()
             active.observe([{"name": loop, "source": "daydag", "status": REACHED, "reason": ""}])
 
-    _remember(events, _seeded(payloads))
+    if loop != "prep":
+        # A prep is a QUESTION about the week ahead, not a day's seeding.
+        # Remembering its seven fetched days persisted every future meeting;
+        # one cancelled after the snapshot was re-seeded on every later run and
+        # reported as a permanent "meeting w/ no notes", and a rescheduled one
+        # became two rows - a phantom gap beside the real meeting.
+        _remember(events, _seeded(payloads))
     if write_state and folder is not None and events is not None:
         _project(folder, events, ledger, now)
     return text
@@ -776,7 +858,7 @@ def main(argv: list[str] | None = None) -> int:
         print(
             "usage: python -m daydag.run {plan|render} {"
             + "|".join(LOOPS)
-            + "} [--log PATH] [--write-state]"
+            + '} [--log PATH] [--write-state] [--for "<meeting or person>"]'
         )
         return 2
 
@@ -790,11 +872,24 @@ def main(argv: list[str] | None = None) -> int:
     # `--write-state` projects what the run learned back into `State.md`.
     log = args[args.index("--log") + 1] if "--log" in args[:-1] else None
     write_state = "--write-state" in args
+    # `--for` names the meeting to prep. Without it `prep` takes the next
+    # qualifying one, which is the scheduled ping's behaviour.
+    selector = ""
+    if "--for" in args:
+        after = args[args.index("--for") + 1 :]
+        if not after or after[0].startswith("--"):
+            # Falling through to the next-qualifying meeting here would prep a
+            # meeting he did not ask about and say nothing - the wrong-meeting
+            # failure prep_selector calls worse than no prep.
+            print("--for needs a meeting or a person after it", file=sys.stderr)
+            return 2
+        selector = after[0]
     try:
         identities = Identities.from_file(Path(".env"))
         now = datetime.now().astimezone()
         if command == "plan":
-            print(json.dumps(plan(loop, now=now, identities=identities).to_dict(), indent=2))
+            built = plan(loop, now=now, identities=identities, selector=selector)
+            print(json.dumps(built.to_dict(), indent=2))
         else:
             payloads = json.load(sys.stdin)
             print(
@@ -805,6 +900,7 @@ def main(argv: list[str] | None = None) -> int:
                     payloads=payloads,
                     log=log,
                     write_state=write_state,
+                    selector=selector,
                 )
             )
     except (RunError, ConfigError) as bad:

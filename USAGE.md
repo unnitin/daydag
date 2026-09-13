@@ -36,7 +36,7 @@ That is the whole interface. `SKILL.md` maps the other phrasings ("wrap up",
 | "run my morning" | **works.** Run against real data repeatedly; the notes-gap section matches hand-checked ground truth. |
 | "week ahead" | **works.** Run against a real week (68 events); flags clashes and reads the plan of record. |
 | "wrap up" | **runs**, including the Friday planning-outcome section, which never rendered before [#95](https://github.com/unnitin/daydag/issues/95). Exercised against real payloads rather than a live Friday. |
-| "prep me for X" | **runs.** Preps the next qualifying meeting; naming one is not wired yet. |
+| "prep me for X" | **works.** Names a meeting or a person, searches 7 days, and asks which one when the name matches several. |
 | "ingest", "chase", "what shipped" | **run**, newly wired in [#95](https://github.com/unnitin/daydag/issues/95). `chase` reads `State.md`; `ship` needs a Pulse built from the mirrors. |
 
 All seven loops the skill advertises are now reachable. Two — morning and
@@ -99,6 +99,34 @@ encodings bite, and both fail quietly in the direction of saying *less*:
 `SKILL.md` carries the full shaping contract. Get it wrong and the loop
 degrades rather than lying, but it degrades silently.
 
+## Prepping a meeting you name
+
+```sh
+python -m daydag.run plan  prep --for "finance x data"
+echo "$PAYLOADS" | python -m daydag.run render prep --for "finance x data"
+```
+
+Match a title phrase, or a person as they appear on the invite. Searches the
+next **7 days** - a bi-weekly 1:1 that last ran on Monday is not found until its
+next instance comes inside the window.
+
+**It asks rather than guessing when a name matches more than one meeting**, and
+that is the normal case rather than the edge:
+
+```
+prep: "ruwen" matches 4 meetings - which one?
+  Wed 16 Sep 11:30  D&T Program Review
+  Thu 17 Sep 13:00  Ruwen / Nitin 1-1
+  Thu 17 Sep 14:00  Pod Steering (AIM)
+  Fri 18 Sep 10:00  CMG Label Partner's Summit
+```
+
+Narrow it with words from the title - `"ruwen / nitin"` - rather than hoping it
+picks right. Prep for the wrong meeting is worse than none: you read it, trust
+it, and walk into the other one cold.
+
+Naming a meeting skips the "is this worth interrupting you" gate, so a standup
+you ask about is a standup you get prepped.
 ## The soak (running now)
 
 The morning brief is inside its five-day gate - BUILD's M2-5 - which was set

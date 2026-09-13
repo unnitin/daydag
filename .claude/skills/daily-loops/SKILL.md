@@ -89,6 +89,15 @@ Then write a payloads file keyed by source:
 - `attendees` must be PEOPLE. Google lists conference rooms as attendees on
   `resource.calendar.google.com`; a room cannot take a note, and counting one
   made a solo block with a room booked look like a two-person meeting.
+- **Pass each attendee as google's own `{"email": ..., "displayName": ...}`
+  dict, or as a bare address.** `Ledger.seed_day` splits name from address once
+  at the seam. The name matters: plenty of addresses are a bare first name -
+  `jonathan@`, `alex@` - so the surname exists ONLY in `displayName`, and
+  without it `prep --for "jonathan strauss"` cannot match while bare
+  "jonathan" matches a different Jonathan. Do NOT fold the name into the
+  address string yourself (`"Full Name <addr>"`): that was the first contract,
+  and every consumer that compares addresses - external-party detection,
+  leadership, note matching, the principal skip - broke at once.
 - `organizer` and `organizer_is_self` decide the one-attendee case. An ATS
   interview invite lists only him - the candidate comes through a different
   calendar - so without an organizer a 45-minute interview is invisible. With
@@ -170,7 +179,7 @@ but knowing which is which before you start saves a wasted round-trip.
 
 | Command | How |
 |---|---|
-| `prep <meeting>` | `python -m daydag.run plan prep` - but note it preps the NEXT qualifying meeting; a NAMED one has no selector yet, so do that one by hand off SPEC §3.2 |
+| `prep <meeting or person>` | `python -m daydag.run plan prep --for "<name or title words>"`, then fetch, then `render prep --for ...`. Searches the next 7 days in his zone. When the name fits several meetings it ASKS - narrow with words from the title (`"ruwen / nitin"`), never pick one for him. Without `--for`, `prep` takes the next qualifying meeting |
 | `ship <repo>` | `render ship`, with a `Pulse` built from the mirrors. Without one it degrades to a line |
 | `sweep` | you, following SPEC §3.8 - a pending-items pass across Slack/Gmail/Notion/Obsidian, triaged, every item with a permalink |
 | `find <question>` | you - person-scoped Slack (`from:<@ID>`, `sort:timestamp asc`), then Gmail, then read the thread. Answer with quote + link, never from memory |
