@@ -57,7 +57,7 @@ import json
 import sys
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -138,7 +138,7 @@ def plan(loop: str, *, now: datetime, identities: Mapping[str, str]) -> Plan:
     # convention as `brief._local` and `recipes.timezone_for`.
     day = now.astimezone(timezone_for(identities)).date()
 
-    window = recipes.calendar_day(day)
+    windows = _calendar_windows(loop, day)
     overnight = recipes.slack_overnight(now, mentioning=principal, identities=identities)
     note = recipes.weekly_note(day)
 
@@ -147,7 +147,9 @@ def plan(loop: str, *, now: datetime, identities: Mapping[str, str]) -> Plan:
             "calendar",
             "one day, never a range - a five-day pull blew the output limit",
             {"day": str(window.day), "time_min": window.time_min, "time_max": window.time_max},
-        ),
+        )
+        for window in windows
+    ] + [
         Step(
             "slack",
             "search with this query verbatim; the id is already resolved",
@@ -179,6 +181,36 @@ def plan(loop: str, *, now: datetime, identities: Mapping[str, str]) -> Plan:
         ),
     ]
     return Plan(loop=loop, at=now.isoformat(), steps=tuple(steps))
+
+
+def _calendar_windows(loop: str, day: date) -> list[recipes.DayWindow]:
+    """The calendar windows this LOOP will actually ask its sources for.
+
+    Every loop used to get the same single window - the principal's today -
+    because the plan never looked at `loop` at all. Each consumer then asked
+    for something else and was served today's events anyway, silently:
+
+        morning      today                    matched, by luck
+        eod          TOMORROW                 served today
+        week-ahead   next mon-sun, 7 windows  served today, seven times
+
+    So the two loops nobody had run were both fetching the wrong days. Kept in
+    step with the consumers deliberately - `eod_wrap` and `week_ahead` derive
+    their windows from these same `recipes` helpers, so the arithmetic (and
+    the Monday-of-next-week rule) lives in one place rather than two.
+    """
+    if loop == "eod":
+        # `eod_wrap` reads exactly one window, and it is tomorrow's: the wrap
+        # reports the day that just ended and previews the first meeting of
+        # the next one.
+        return [recipes.calendar_day(day + timedelta(days=1))]
+    if loop == "week-ahead":
+        this_monday, _ = recipes.week_range(day)
+        next_monday = this_monday + timedelta(days=7)
+        # Seven requests, never one wide one - a five-day pull measured 156,681
+        # characters and exceeded the connector's output limit (#2 audit).
+        return recipes.calendar_days(next_monday, next_monday + timedelta(days=6))
+    return recipes.calendar_days(day, day)
 
 
 def _overnight_opened(window: recipes.OvernightWindow) -> Any:
@@ -250,8 +282,50 @@ class _Payloads:
             raise RunError(f"{name} came back as {type(value).__name__}, not a list of records")
         return value
 
+    @staticmethod
+    def _day_of(record: Mapping[str, Any]) -> date | None:
+        """The local date a record starts on, or None if it cannot be placed."""
+        start = record.get("start")
+        if isinstance(start, Mapping):
+            start = start.get("dateTime") or start.get("date_time") or start.get("date")
+        if isinstance(start, str):
+            try:
+                start = datetime.fromisoformat(start)
+            except ValueError:
+                try:
+                    return date.fromisoformat(start)
+                except ValueError:
+                    return None
+        if isinstance(start, datetime):
+            local = start.astimezone(recipes.PACIFIC) if start.tzinfo else start
+            return local.date()
+        if isinstance(start, date):
+            return start
+        return None
+
     def calendar(self, window: recipes.DayWindow) -> Sequence[Mapping[str, Any]]:
-        return [self.timed(record) for record in self._records("calendar")]
+        """The fetched events that fall on ``window``'s day.
+
+        Filtered, and that is the whole point. This used to return the entire
+        bucket for ANY window, so a consumer asking for a day the plan never
+        fetched was served a different day's events and could not tell:
+
+        * `eod_wrap` asks for TOMORROW and was handed today, so the wrap
+          printed this morning's 8:15 standup as tomorrow's first meeting.
+        * `week_ahead` asks for seven days, one window at a time, and was
+          handed the same single day seven times over.
+
+        Neither raised. Wrong data in a push is worse than a missing section,
+        because a missing one says so. Now an unfetched window comes back
+        empty, which is a section omitted rather than a section that lies.
+
+        A record whose start cannot be placed at all is returned for every
+        window rather than dropped: an untimed meeting is still a meeting, and
+        losing its ledger row loses a notes gap permanently. `Ledger.seed_day`
+        keys on (id, start) and so absorbs the repeat.
+        """
+        records = [self.timed(record) for record in self._records("calendar")]
+        return [r for r in records if self._day_of(r) in (window.day, None)]
 
     def slack(self, query: str) -> Sequence[Mapping[str, Any]]:
         return self._records("slack")
@@ -260,9 +334,35 @@ class _Payloads:
         return self._records("gmail")
 
     def weekly_note(self, path: str) -> str:
+        """The weekly note, in the THREE states `brief.read_vault_note` tells apart.
+
+        It splits on exception type - text, `FileNotFoundError` for a note that
+        was never written, anything else for a source it could not reach - and
+        this layer could only ever produce two of the three. `null` had no
+        meaning, so an agent reporting "the file is not there" had to choose
+        between omitting the key, which renders "couldn't check the weekly
+        note" and reads as a downed connector, and sending "", which renders
+        NOTHING AT ALL because an empty note is a note that was read.
+
+        The third state is the one that is true: the note is hand-written, and
+        the series has had a gap for weeks, so every real run meets it. It is
+        also the one worth saying out loud, because the brief cannot triage the
+        day against a plan of record that does not exist.
+
+        `str(None)` also used to render the note's body as the literal text
+        "None".
+
+            key absent  -> could not reach the vault   (RunError -> degrade)
+            null        -> the note does not exist     (FileNotFoundError)
+            ""          -> it exists and is empty
+            text        -> the note
+        """
         if "vault" not in self._payloads:
             raise RunError("the weekly note was not read")
-        return str(self._payloads["vault"])
+        note = self._payloads["vault"]
+        if note is None:
+            raise FileNotFoundError(path)
+        return str(note)
 
 
 #: The event kind a seeded meeting is recorded under, so the next run can

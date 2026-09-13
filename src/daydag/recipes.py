@@ -300,6 +300,13 @@ class OvernightWindow:
     #: Epoch seconds. Slack message ``ts`` values are epoch strings, so the
     #: caller compares ``float(message["ts"]) >= min_ts``.
     min_ts: float
+    #: Epoch seconds for the other end - ``now``. Slack's ``after:`` resolves to
+    #: whole days and cannot say "until 06:40", so the upper cutoff comes back
+    #: here the same way the lower one does. Not pedantry: `now` is a parameter,
+    #: so a BACKFILLED run has a `now` in the past and the query happily returns
+    #: everything since. A 06:40 brief reported a message sent at 18:06 that
+    #: evening as "overnight" - twelve hours of its own future.
+    max_ts: float = 0.0
 
 
 #: Section 3.1's overnight window opens at 6pm the previous evening.
@@ -353,10 +360,19 @@ def slack_overnight(
             # then skipped the exact 6pm-to-midnight hours it exists to capture,
             # while min_ts still claimed them. The two disagreed silently.
             f"after:{after_day.isoformat()}",
-            "sort:timestamp sort_dir:asc",
+            # DESCENDING, and this is load-bearing rather than cosmetic.
+            # `after:` resolves to a whole day, so the query returns from
+            # midnight while the window opens at 6pm - and Slack pages the
+            # results. Ascending therefore fills page one with the OLDEST
+            # messages in the range, every one of which this window discards,
+            # and puts the ones it wants on a page nobody fetches. Measured on
+            # a real day: all 20 ascending results predated the cutoff, so the
+            # overnight section was structurally empty on any busy day.
+            # Descending starts at the recent end, which is where the window is.
+            "sort:timestamp sort_dir:desc",
         ]
     )
-    return OvernightWindow(query=query, min_ts=cutoff.timestamp())
+    return OvernightWindow(query=query, min_ts=cutoff.timestamp(), max_ts=now.timestamp())
 
 
 # ---------------------------------------------------------------------------
