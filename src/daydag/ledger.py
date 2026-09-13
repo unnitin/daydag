@@ -19,6 +19,11 @@ CONTRACTS
        answered, and requiring it dropped 61% of real meetings silently.
     3. An ambiguous match is SURFACED, never guessed. Back-to-back 1:1s with
        the same person are the case that produces one.
+    4. A calendar event may DECLARE its note (`notes_attached`), and that beats
+       every heuristic here: it is the source stating the fact rather than this
+       module inferring it from a title and a time window. Matching still runs,
+       because the gap list is not the only consumer - ingestion wants the note
+       itself - but a declared row is never reported as missing.
 
 WHY IT EXISTS
     The gap this closes is an absence, not a presence. Gemini mail puts the
@@ -39,15 +44,17 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
-#: How long after a meeting ends a note may still plausibly belong to it.
-#: Source-dependent by necessity: Gemini mails within hours of the call, while
-#: the Notion database lags about a week. One constant would either reject every
-#: real Notion note or accept a Gemini note from two meetings later.
 #: How long after a meeting ends its notes may still arrive, by the system that
-#: WROTE them. Measured across ~100 real Gemini notes: delivery is tight (2-94
-#: minutes from generation to inbox) but GENERATION runs late, and a Sep 10
+#: WROTE them. Source-dependent by necessity: one constant would either reject
+#: every real Notion note or accept a Gemini note from two meetings later.
+#:
+#: Measured across 49 real Gemini notes: delivery is tight (median 5 min, p90
+#: 19, max 94 from generation to inbox) but GENERATION runs late, and a Sep 10
 #: 11:00-12:00 meeting was generated at 00:52 the next morning - 12.9 hours out.
 #: Six hours dropped it and the meeting was a gap forever.
+#:
+#: This is now the FALLBACK path. When the calendar declares the note outright
+#: (`notes_attached`, see `Row.notes_declared`) no window is consulted at all.
 #:
 #: Bounded BELOW 24 hours on purpose, and that is the real constraint rather
 #: than a guess: a daily standup has rows 24 hours apart, so a wider window
@@ -129,6 +136,11 @@ class Row:
     attendees: list[str]
     note: Match | None = None
     day_closed: bool = False
+    #: The CALENDAR said a note artifact exists for this instance - Google
+    #: attaches the "Notes by Gemini" doc to the event itself. Independent of
+    #: `note`, which is set only when a note has actually been ingested: a
+    #: declared note may not have been mailed yet, or ever.
+    notes_declared: bool = False
 
     @property
     def key(self) -> tuple[str, datetime]:
@@ -150,6 +162,48 @@ def _is_resource(attendee: Any) -> bool:
             return True
         attendee = attendee.get("email", "")
     return _RESOURCE_DOMAIN in str(attendee).casefold()
+
+
+#: Google attaches the Gemini notes doc to the calendar event. Measured as
+#: per-INSTANCE: the "1:1 | 2x weekly" series carries one on the Sep 1
+#: instance, which produced a note, and none on the Sep 10 one, which did not.
+#:
+#: Identified by this URL marker, which Meet's notetaker puts on the docs it
+#: creates, rather than by the attachment's TITLE. Two reasons, both measured:
+#:
+#: * The title is LOCALIZED. A real event carries both "Notes by Gemini" and
+#:   "Anotacoes do Gemini" - and a meeting run in a pt-BR locale would carry
+#:   only the second. Matching English would report it as a gap forever, and
+#:   this org has a large Brazilian contingent on exactly these invites.
+#: * "Has an attachment" is too loose in the other direction: a Drive RECORDING
+#:   is attached to the series master and shows on every instance, so
+#:   "Data Health Check" carries a 2024 recording on every 2026 occurrence.
+#:
+#: A recording's url carries `usp=drive_web` instead, so the marker separates
+#: the two without reading a word of any language.
+_NOTES_DOC_MARKER = "usp=meet_tnfm_calendar"
+
+#: The English title, kept only as a fallback for a payload that carried the
+#: attachment titles but dropped the urls. Never the primary test - see above.
+_NOTES_ATTACHMENT_TITLE = "notes by gemini"
+
+
+def _declares_note(event: Mapping[str, Any]) -> bool:
+    """Whether the calendar entry itself says a note artifact exists.
+
+    Takes the shaped boolean when the caller supplied one, and otherwise reads
+    Google's raw `attachments` - because the realistic failure here is an agent
+    passing the connector payload through unshaped, and silently losing the
+    signal is exactly the docs-ahead-of-code gap this repo keeps finding.
+    """
+    if "notes_attached" in event:
+        return bool(event["notes_attached"])
+    return any(
+        _NOTES_DOC_MARKER in str(item.get("fileUrl", ""))
+        or _NOTES_ATTACHMENT_TITLE in str(item.get("title", "")).casefold()
+        for item in (event.get("attachments") or [])
+        if isinstance(item, Mapping)
+    )
 
 
 def _qualifies(event: dict[str, Any]) -> bool:
@@ -204,6 +258,7 @@ class Ledger:
                 end=event["end"],
                 summary=event["summary"],
                 attendees=list(event.get("attendees") or []),
+                notes_declared=_declares_note(event),
             )
             self._rows.setdefault(row.key, row)
 
@@ -324,5 +379,13 @@ class Ledger:
 
         This is the actual deliverable: the next morning's "3 meetings w/ no
         notes" line, which is how a missing note becomes visible at all.
+
+        A row whose calendar entry DECLARES a note is never a gap, even with
+        nothing ingested yet. Google attaches the notes doc to the event, so
+        the source states the fact the arrival window was reconstructing by
+        guesswork - and states it as soon as the meeting ends rather than
+        whenever the mail happens to land.
         """
-        return [row.summary for row in self.open_rows() if row.end < as_of]
+        return [
+            row.summary for row in self.open_rows() if row.end < as_of and not row.notes_declared
+        ]
