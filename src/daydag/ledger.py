@@ -414,6 +414,15 @@ class Ledger:
 
     # -- what the brief asks for -----------------------------------------
 
+    def keys(self) -> set[tuple[str, datetime]]:
+        """The (event_id, start) pairs held - `Row.key` for every QUALIFYING row.
+
+        Differenced before and after a `seed_day` by the runner to learn what a
+        run was first to see; only those rows are worth persisting, because
+        only those will a replay through `seed_day` accept again.
+        """
+        return set(self._rows)
+
     def open_rows(self) -> list[Row]:
         """Rows with no note attached, oldest first."""
         return sorted(

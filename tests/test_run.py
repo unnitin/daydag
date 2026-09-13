@@ -945,3 +945,124 @@ def test_a_past_meeting_teaches_the_directory_and_a_future_one_does_not(identiti
     assert directory.resolve("wren@x.com") is not None, "a past meeting taught nothing"
     assert directory.resolve("bo@x.com") is None, "a meeting not yet held was recorded as met"
     assert directory.resolve("principal@x.com") is None, "he was added to his own directory"
+
+
+# --------------------------------------------------------------------------
+# the event log does not grow with every render (#114) or get read whole (#115)
+# --------------------------------------------------------------------------
+
+
+def _recorded_meetings(log):
+    from daydag.state import EventLog
+
+    return EventLog.open(log).recorded("meeting")
+
+
+def test_rendering_the_same_day_repeatedly_remembers_it_once(identities, tmp_path):
+    """Morning, a re-run, then eod: three renders of one day appended the
+    day's meetings three times, and every later run replayed all of it."""
+    log = tmp_path / "events.db"
+    payloads = _payloads(calendar=[_meeting("Pod Steering", "a@x.com", "b@x.com", at="09:00")])
+    for loop in ("morning", "morning", "eod"):
+        run.render(loop, now=MONDAY_PT, identities=identities, payloads=payloads, log=log)
+
+    assert len(_recorded_meetings(log)) == 1
+
+
+def test_only_what_the_ledger_accepted_is_remembered(identities, tmp_path):
+    """A solo hold and a declined invite never enter the ledger, so a dedupe
+    keyed on the ledger never saw them - and they were re-appended on every
+    render, forever. The log holds what a replay can use, nothing else."""
+    log = tmp_path / "events.db"
+    payloads = _payloads(
+        calendar=[
+            _meeting("Pod Steering", "a@x.com", "b@x.com", at="09:00"),
+            {**_meeting("Focus", "me@x.com", at="11:00"), "organizer_is_self": True},
+            {
+                **_meeting("Declined sync", "a@x.com", "b@x.com", at="14:00"),
+                "response_status": "declined",
+            },
+        ]
+    )
+    for _ in range(3):
+        run.render("morning", now=MONDAY_PT, identities=identities, payloads=payloads, log=log)
+
+    assert [m["summary"] for m in _recorded_meetings(log)] == ["Pod Steering"]
+
+
+def test_an_all_day_entry_neither_crashes_the_render_nor_gets_remembered(identities, tmp_path):
+    """Google's all-day start is `{"date": ...}`, which `timed` leaves alone and
+    which cannot be hashed into a ledger key. A holiday on the calendar took
+    the whole morning render down AFTER the brief was assembled."""
+    log = tmp_path / "events.db"
+    holiday = {
+        "id": "holiday-1",
+        "summary": "Labor Day",
+        "start": {"date": "2026-09-07"},
+        "end": {"date": "2026-09-08"},
+        "attendees": ["a@x.com", "b@x.com"],
+        "response_status": "accepted",
+    }
+    payloads = _payloads(calendar=[holiday, _meeting("Pod Steering", "a@x.com", "b@x.com")])
+
+    text = run.render("morning", now=MONDAY_PT, identities=identities, payloads=payloads, log=log)
+
+    assert "Pod Steering" in text
+    assert [m["summary"] for m in _recorded_meetings(log)] == ["Pod Steering"]
+
+
+def test_a_raw_calendar_record_carrying_a_kind_field_is_remembered_and_replayed(
+    identities, tmp_path
+):
+    """Every raw Google event has `kind`, and so did `record(kind, **payload)`:
+    the collision was a TypeError on the first remember."""
+    log = tmp_path / "events.db"
+    payloads = _payloads(
+        calendar=[{**_meeting("Pod Steering", "a@x.com", "b@x.com"), "kind": "calendar#event"}]
+    )
+    run.render("morning", now=MONDAY_PT, identities=identities, payloads=payloads, log=log)
+    run.render("morning", now=MONDAY_PT, identities=identities, payloads=payloads, log=log)
+
+    rows = _recorded_meetings(log)
+    assert [r["kind"] for r in rows] == ["calendar#event"]
+
+
+@pytest.mark.parametrize(
+    ("loop", "day", "extra"),
+    [
+        ("prep", "2026-09-10", {"selector": "steering"}),
+        ("eod", "2026-09-08", {}),
+        ("week-ahead", "2026-09-14", {}),
+    ],
+)
+def test_a_meeting_in_the_future_is_not_persisted_by_the_loop_that_fetched_it(
+    identities, tmp_path, loop, day, extra
+):
+    """Prep fetches seven days ahead, eod fetches TOMORROW, week-ahead next
+    week. Remembered now, each is a phantom notes gap if cancelled before it
+    happens. The morning that seeds a day is its writer - decided from the
+    row's date, not from which loop ran."""
+    log = tmp_path / "events.db"
+    payloads = _payloads(calendar=[_meeting("Pod Steering", "a@x.com", "b@x.com", day=day)])
+
+    run.render(loop, now=MONDAY_PT, identities=identities, payloads=payloads, log=log, **extra)
+
+    assert _recorded_meetings(log) == []
+
+
+def test_a_prep_that_sees_today_remembers_today(identities, tmp_path):
+    """The rule is the row's date, not the loop: a named prep whose window
+    starts now sees today's meetings too, and today is fair to remember."""
+    log = tmp_path / "events.db"
+    payloads = _payloads(
+        calendar=[
+            _meeting("Pod Steering", "a@x.com", "b@x.com", at="15:00"),
+            _meeting("Finance x Data", "a@x.com", "c@x.com", day="2026-09-10"),
+        ]
+    )
+
+    run.render(
+        "prep", now=MONDAY_PT, identities=identities, payloads=payloads, log=log, selector="finance"
+    )
+
+    assert [m["summary"] for m in _recorded_meetings(log)] == ["Pod Steering"]

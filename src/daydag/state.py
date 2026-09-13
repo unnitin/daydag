@@ -656,6 +656,10 @@ class EventLog:
             " sensitivity TEXT NOT NULL DEFAULT 'normal',"
             " payload TEXT NOT NULL)"
         )
+        # Every reader filters by kind, and the run log makes the table mostly
+        # rows no reader wants. Without this each per-kind read is a scan of
+        # the whole history (#115); with it, `ORDER BY id` comes off the index.
+        self._db.execute("CREATE INDEX IF NOT EXISTS events_kind ON events (kind, id)")
         self._db.commit()
 
     @classmethod
@@ -671,6 +675,24 @@ class EventLog:
         an unmarked comp item reached a plaintext `State.md` (#105), and a
         misspelt mark would take the same road, since `_is_private` compares
         for equality. Pass `classify_sensitivity(...)` if you do not know.
+
+        Keyword payloads cannot carry a field named ``kind`` - it is this
+        method's own first parameter. A payload that might (a raw calendar
+        record does) goes through `record_all`.
+        """
+        self.record_all(kind, [payload], sensitivity=sensitivity)
+
+    def record_all(
+        self,
+        kind: str,
+        payloads: Iterable[Mapping[str, Any]],
+        *,
+        sensitivity: str | None = None,
+    ) -> None:
+        """Append many events of one kind in ONE transaction.
+
+        `record` commits per row, which is one fsync per meeting when a morning
+        remembers its day. Same gate as `record`, checked once.
         """
         if sensitivity is None and kind in VAULT_BOUND:
             raise SensitivityRequired(
@@ -684,13 +706,15 @@ class EventLog:
                 f"sensitivity={sensitivity!r} is not one of {sorted(SENSITIVITIES)}; "
                 "the vault gate compares for equality, so a near miss renders as visible"
             )
-        self._db.execute(
+        self._db.executemany(
             "INSERT INTO events (kind, sensitivity, payload) VALUES (?, ?, ?)",
-            (kind, sensitivity, json.dumps(payload)),
+            [(kind, sensitivity, json.dumps(dict(payload))) for payload in payloads],
         )
         self._db.commit()
 
-    def _rows(self, kind: str | None = None) -> list[tuple[str, str, dict[str, Any]]]:
+    def _rows(
+        self, kind: str | Iterable[str] | None = None
+    ) -> list[tuple[str, str, dict[str, Any]]]:
         """Decoded events, skipping any row whose payload will not parse.
 
         Skipped rather than raised. This feeds `chase_items`, which feeds
@@ -701,13 +725,16 @@ class EventLog:
         list could show anyway; `payloads` hands the raw text back for callers
         that want to say so.
         """
+        kinds = (kind,) if isinstance(kind, str) else tuple(kind or ())
         sql = "SELECT kind, sensitivity, payload FROM events"
-        args: tuple[Any, ...] = ()
-        if kind is not None:
-            sql += " WHERE kind = ?"
-            args = (kind,)
+        if kinds:
+            # One shape for one or many: `IN (?)` costs what `= ?` costs.
+            sql += " WHERE kind IN (" + ",".join("?" * len(kinds)) + ")"
+        # Ordered explicitly, like `recorded`: the chase list's order in
+        # State.md must not depend on which index SQLite picks.
+        sql += " ORDER BY id"
         rows = []
-        for k, s, p in self._db.execute(sql, args):
+        for k, s, p in self._db.execute(sql, kinds):
             try:
                 rows.append((k, s, json.loads(p)))
             except ValueError:
@@ -808,10 +835,12 @@ class EventLog:
         `ChaseItem.from_payload` is where that agreement now lives, and
         `write_state` is held to the same shape on its side of the seam.
         """
+        # Filtered in SQL, not in Python: `_rows()` with no kind decoded EVERY
+        # row - the run log's included, and its own docstring calls that "by
+        # far the highest-volume writer" - to keep two kinds (#115).
         return [
             ChaseItem.from_payload(payload, sensitivity=sensitivity)
-            for kind, sensitivity, payload in self._rows()
-            if kind in {"loop_opened", "carry_forward"}
+            for _, sensitivity, payload in self._rows(VAULT_BOUND)
         ]
 
     def median_days_to_answer(self) -> float:

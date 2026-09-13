@@ -62,6 +62,7 @@ import json
 import sys
 from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Set as AbstractSet
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
@@ -526,13 +527,42 @@ def _remembered(log: EventLog | None) -> Ledger:
     return ledger
 
 
-def _remember(log: EventLog | None, events: Iterable[Mapping[str, Any]]) -> None:
-    """Record today's meetings so the next run can ask what produced nothing."""
-    if log is None:
+def _remember(
+    log: EventLog | None,
+    events: Iterable[Mapping[str, Any]],
+    *,
+    fresh: AbstractSet[tuple[Any, Any]],
+    today: date,
+) -> None:
+    """Persist the meetings this run was FIRST to see, so tomorrow can ask
+    what produced nothing.
+
+    ``events`` is the list `seed_day` was fed and ``fresh`` the keys it added -
+    so the log holds exactly what a replay can use, and nothing else. Two
+    other shapes were tried and both grew the table without bound (#114):
+    persisting every calendar record (holds, declined invites, all-day
+    entries, which `seed_day` rejects again on every replay), and deduping
+    against a hand-built key that disagreed with `Row.key` on the id's type
+    and could not hash an all-day start.
+
+    Only rows dated ``today`` or earlier. A prep fetches seven future days and
+    eod fetches tomorrow; persisting those made a meeting cancelled after the
+    snapshot a permanent "meeting w/ no notes", and a rescheduled one two rows.
+    The morning that seeds a day is its writer - decided per row from the data,
+    not per loop from a membership set that was already wrong about eod.
+    """
+    if log is None or not fresh:
         return
-    for event in events:
-        if isinstance(event, Mapping) and event.get("id"):
-            log.record(MEETING, **{k: _jsonable(v) for k, v in event.items()})
+    log.record_all(
+        MEETING,
+        [
+            {k: _jsonable(v) for k, v in event.items()}
+            for event in events
+            if (event.get("id"), event.get("start")) in fresh
+            and (when := _Payloads._day_of(event)) is not None
+            and when <= today
+        ],
+    )
 
 
 def _jsonable(value: Any) -> Any:
@@ -779,6 +809,7 @@ def render(
     folder = state if state is not None else _vault(identities)
     events = log if log is None else EventLog.open(log)
     directory = People(events) if events is not None and loop in _NEEDS_LEDGER else None
+    fresh: set[tuple[Any, Any]] = set()
     if loop not in _NEEDS_LEDGER:
         # `chase`, `ingest`, `ship` and `week-ahead` never read this ledger
         # (week-ahead builds its own). Rehydrating every remembered meeting and
@@ -788,13 +819,16 @@ def render(
         ledger = Ledger()
     else:
         ledger = _remembered(events)
+        known = ledger.keys()  # before today's seeding: what is ALREADY on disk
         # SEED TODAY BEFORE OFFERING NOTES. `brief._seed_and_gaps` seeds during
         # assembly, which is too late: a note offered to a ledger that has no
         # rows yet attaches to nothing, and on a FIRST run there are no
         # rehydrated rows either - so every meeting became a gap while its note
         # was listed by name in the section directly above. `seed_day` is
         # idempotent per instance, so brief's own seeding stays a no-op.
-        ledger.seed_day(_seedable(payloads))
+        seedable = _seedable(payloads)
+        ledger.seed_day(seedable)
+        fresh = ledger.keys() - known  # what THIS run was first to see
         _attach_notes(ledger, payloads, now)
         if directory is not None:
             _observe_past(directory, ledger, identities, now)
@@ -838,13 +872,8 @@ def render(
             text = _assemble()
             active.observe([{"name": loop, "source": "daydag", "status": REACHED, "reason": ""}])
 
-    if loop != "prep":
-        # A prep is a QUESTION about the week ahead, not a day's seeding.
-        # Remembering its seven fetched days persisted every future meeting;
-        # one cancelled after the snapshot was re-seeded on every later run and
-        # reported as a permanent "meeting w/ no notes", and a rescheduled one
-        # became two rows - a phantom gap beside the real meeting.
-        _remember(events, _seeded(payloads))
+    if fresh:
+        _remember(events, seedable, fresh=fresh, today=now.astimezone(recipes.PACIFIC).date())
     # `_project` writes the notes-gaps section FROM the ledger, so a loop that
     # was handed an empty one must not project - it would replace what the
     # morning run recorded with nothing, silently, under a flag main() accepts
@@ -925,7 +954,11 @@ def _seedable(payloads: Mapping[str, Any]) -> list[dict[str, Any]]:
     ready = []
     for raw in _seeded(payloads):
         event = dict(_Payloads.timed(raw))
-        if all(event.get(key) for key in needed):
+        # `Row.key` is (id, start) and is hashed. An all-day entry's start is
+        # google's `{"date": ...}` mapping, untouched by `timed` on purpose, so
+        # it has no instant to key on - and a dict in a key is a TypeError from
+        # inside `seed_day`, after the brief was assembled. Not ledger material.
+        if all(event.get(key) for key in needed) and isinstance(event["start"], datetime):
             ready.append(event)
     return ready
 

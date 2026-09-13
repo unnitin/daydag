@@ -500,3 +500,29 @@ def test_a_sensitive_meeting_title_never_reaches_state_md_as_a_notes_gap(tmp_pat
     text = folder.state_path.read_text()
     assert "Pod steering" in text
     assert "Exit interview" not in text
+
+
+def test_chase_items_reads_only_the_vault_bound_kinds_in_recorded_order():
+    """Filtered in SQL by kind (#115) and ordered by row, whichever kinds
+    interleave - a kind-grouped order would silently reshuffle State.md."""
+    from daydag.state import EventLog
+
+    log = EventLog.open(":memory:")
+    log.record("run", loop="morning")
+    log.record("loop_opened", sensitivity="normal", owner="VP-Data", ask="first", key="a")
+    log.record("carry_forward", sensitivity="normal", owner="VP-AI", ask="second", key="b")
+    log.record("loop_opened", sensitivity="normal", owner="VP-Data", ask="third", key="c")
+
+    assert [i.get("ask") for i in log.chase_items()] == ["first", "second", "third"]
+
+
+def test_record_all_writes_many_rows_under_one_gate():
+    from daydag.state import EventLog, SensitivityRequired
+
+    log = EventLog.open(":memory:")
+    log.record_all("meeting", [{"id": 1, "kind": "calendar#event"}, {"id": 2}])
+    assert [row["id"] for row in log.recorded("meeting")] == [1, 2]
+
+    with pytest.raises(SensitivityRequired):
+        log.record_all("loop_opened", [{"ask": "x"}])
+    assert log.chase_items() == []
