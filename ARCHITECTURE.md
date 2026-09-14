@@ -110,7 +110,12 @@ So: **clone, and also keep the API.** The clones are not a replacement for API a
 
 Jira is the data team's plan of record; GitHub Projects is where pods that never moved to Jira still live. Both are read-only to DayDAG (ownership table), both feed the same `shipping` block, and both are joined to Slack, PRs and meeting notes on the **ticket key** — `ABC-123` in a branch name, a PR title, a Slack line, a meeting-note next-step. That join is the whole point; it's what turns "jasmeet said he'd do the compute-engine consolidation" into a ticket, a PR and a status without Nitin holding the mapping in his head.
 
-What's watched lives in `DayDAG/Watchlist.md`: a `jira` block (project key · board/sprint · saved JQL · linked workstream) and a `projects` block (org project number · linked workstream). The `repos` block feeds the mirrors — one bullet per repo, `owner/repo` or its github url, with anything after a `·` treated as notes; the marker `wiki` on a line also mirrors that repo's `<repo>.wiki.git`. A bullet that isn't a recognisable slug is skipped, because that file is hand-edited and a typo should cost one repo, not the pulse.
+What's watched lives in `DayDAG/Watchlist.md`: a `jira` block (project key · board/sprint · saved JQL · linked workstream) and a `projects` block (org project number · linked workstream). The `repos` block feeds the mirrors — one bullet per repo, `owner/repo` or its github url, with anything after a `·` treated as notes **except two markers**, each of which must be a field of its own rather than a word appearing somewhere in the prose:
+
+- `wiki` — also mirrors that repo's `<repo>.wiki.git`.
+- `branch:<name>` — where landings appear, when that is not the default branch. Omitted means `HEAD`, which in a bare mirror is the remote's default. This exists because it is otherwise unsayable and the failure is silent: a repo that lands on `dev` contributes no items, is not stale, is not unavailable, gets no degrade line, and reads as healthy and quiet (#128). A named branch that doesn't resolve is reported with the branch in the message, because that one is fixed by editing the watchlist rather than by looking at git.
+
+A bullet that isn't a recognisable slug is skipped, because that file is hand-edited and a typo should cost one repo, not the pulse. One repo listed twice under different branches is reported rather than deduped away — a mirror carries one cursor, so the second row would never be read.
 
 Two mechanical notes worth writing down before someone rediscovers them:
 
