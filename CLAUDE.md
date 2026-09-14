@@ -68,7 +68,15 @@ Other frequent names: ML-Lead (lead ML, first-party models), Stakeholder-1, Eng-
 
 **Gmail:** Gemini meeting notes come from `gemini-notes@google.com`. **Corrected Sep 6, 2026 by the connector audit (#2):** the subject IS consistent and structured — `Notes: “<meeting title>” <date>` — across all 201 notes in a 30-day window. Parse the subject for an exact title; it beats fuzzy body matching and resolves the back-to-back-1:1 ambiguity outright. Every note also carries the `meeting notes` label, so `label:` narrows the search further. The earlier “never search by subject” guidance was wrong. VP-AI's AIM updates: `from:${EMAIL_VP_AI} subject:"AIM Program Update"`.
 
-**GitHub:** org `CreateMusicGroup`. Active repos for the progress loop: `createos-discovery-services` (prod Deal Modeler), `createos-lead-generation` (first-party ML, ML-Lead), `createos-analytics` (Luminate exploration, locked), `createos-ai-platform` (agent platform; has a wiki). Pods use GitHub issue boards with wave parent issues. Use `gh` CLI (assume authenticated on Nitin's machine). Private wiki pages don't fetch anonymously.
+**GitHub:** org `CreateMusicGroup`. Active repos for the progress loop: `createos-discovery-services` (prod Deal Modeler), `createos-lead-generation` (first-party ML, ML-Lead), `createos-analytics` (Luminate exploration, locked), `createos-ai-platform` (agent platform; has a wiki). Pods use GitHub issue boards with wave parent issues. Private wiki pages don't fetch anonymously.
+
+Use the `gh` CLI, but **do not assume it is authorized** — the org enforces SAML SSO, and an unauthorized token fails every REST call with a 403 while `git` keeps working over SSH and keychain HTTPS. Check before concluding a repo is quiet:
+
+```sh
+gh api repos/CreateMusicGroup/createos-discovery-services --jq .pushed_at
+```
+
+`reference/github-access.md` carries the fix and the **minimum permission DayDAG actually needs** (`Pull requests: Read` — nothing else), measured against the code rather than the loop descriptions.
 
 **Atlassian/Jira:** authorized Sep 6, 2026, `createmusic.atlassian.net`, cloud id in `${ATLASSIAN_CLOUD_ID}`. **Read-only token** (`read:jira-work`) - the agent cannot transition or comment on anyone's ticket, by construction. The data team's live board is **`CDI`**; `DED`/`CING`/`DCTF` returned nothing in 14 days. Bound every JQL - an unbounded 4-project query returned 125k chars and blew the output limit.
 
