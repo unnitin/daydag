@@ -9,7 +9,16 @@ from datetime import UTC, datetime
 
 import pytest
 
-from daydag.pulse import Item, Mirror, Pulse, PulseError
+from daydag.pulse import (
+    Item,
+    Mirror,
+    MirrorStore,
+    Pulse,
+    PulseError,
+    WatchedRepo,
+    _parse_repo_line,
+    _run_git,
+)
 
 
 def test_merges_since_last_run_uses_the_stored_cursor(fake_repo):
@@ -176,3 +185,63 @@ def test_a_successful_fetch_records_its_time_and_clears_the_staleness(fake_repo)
 
     assert m.stale is False
     assert m.last_fetched_at == FETCHED
+
+
+# -- issue #128: a repo that lands somewhere other than its default branch ----
+
+
+def test_a_repo_landing_on_dev_reports_its_landings(repo_landing_on_dev):
+    """The bug in #128: silence from the wrong branch reads as a healthy repo.
+
+    `main` holds only the base commit, so following the default branch reports
+    nothing at all - not stale, not unavailable, just empty. That is how two
+    months of real work on `createos-ingestion` were reported as a stall.
+    """
+    m = Mirror.attach(repo_landing_on_dev, cursor="dev~2", ref="dev")
+    assert [c.title for c in m.merges_since_cursor()] == ["Merge PR #501", "Merge PR #502"]
+
+
+def test_the_default_branch_stays_the_default(fake_repo):
+    """Omitting `ref` must behave exactly as before, or every existing row moves."""
+    m = Mirror.attach(fake_repo, cursor="HEAD~2")
+    assert m.ref == "HEAD"
+    assert [c.title for c in m.merges_since_cursor()] == ["Merge PR #412", "Merge PR #413"]
+
+
+def test_the_cursor_advances_to_the_named_ref_not_to_HEAD(repo_landing_on_dev):
+    """Advancing to HEAD would park the cursor on a branch nothing lands on.
+
+    The next run would then read `main..dev` and re-report every landing it had
+    already reported, forever.
+    """
+    m = Mirror.attach(repo_landing_on_dev, cursor="dev~2", ref="dev")
+    m.merges_since_cursor()
+    head = _run_git(("rev-parse", "HEAD"), cwd=repo_landing_on_dev).stdout.strip()
+    dev = _run_git(("rev-parse", "dev"), cwd=repo_landing_on_dev).stdout.strip()
+    assert m.cursor == dev
+    assert m.cursor != head, "cursor parked on the default branch, not on the watched one"
+
+
+def test_a_ref_that_does_not_resolve_names_the_ref(repo_landing_on_dev):
+    """A typo in the watchlist must not read as a broken mirror."""
+    m = Mirror.attach(repo_landing_on_dev, cursor="HEAD", ref="devv")
+    with pytest.raises(PulseError) as caught:
+        m.merges_since_cursor()
+    assert "devv" in str(caught.value)
+
+
+def test_a_branch_field_is_parsed_off_the_watchlist_bullet():
+    """`branch:` is a field of its own, exactly as `wiki` is - never a substring."""
+    assert _parse_repo_line("ExampleOrg/svc · branch:dev · statement ingestion").branch == "dev"
+    assert _parse_repo_line("ExampleOrg/svc · wiki").branch == ""
+    # Prose that merely mentions a branch is not a marker.
+    assert _parse_repo_line("ExampleOrg/svc · see the dev branch for details").branch == ""
+
+
+def test_a_watched_repos_branch_reaches_its_mirror(tmp_path, repo_landing_on_dev, git_env):
+    """The seam the bug actually lived in: parsed, then dropped before the read."""
+    store = MirrorStore(tmp_path / "mirrors", url_for=lambda _r: str(repo_landing_on_dev))
+    repo = WatchedRepo("ExampleOrg", "svc", branch="dev")
+    mirror = store.ensure(repo, cursor="dev~2")
+    assert mirror.ref == "dev"
+    assert [c.title for c in mirror.merges_since_cursor()] == ["Merge PR #501", "Merge PR #502"]
