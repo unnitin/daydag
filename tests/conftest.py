@@ -89,3 +89,29 @@ def make_origin(tmp_path, add_commit):
         return repo
 
     return _make
+
+
+@pytest.fixture
+def repo_landing_on_dev(tmp_path, git_env):
+    """A repo whose work lands on `dev` while `main` sits still (issue #128).
+
+    `main` carries only the base commit; every landing is on `dev`. A reader
+    that follows the default branch sees an empty, healthy-looking repo - which
+    is the exact failure this fixture exists to pin.
+    """
+    repo = tmp_path / "d.git"
+    repo.mkdir()
+    run = lambda *a: _run(repo, *a)  # noqa: E731
+    run("git", "init", "-q", "-b", "main")
+    run("git", "config", "user.email", "t@example.com")
+    run("git", "config", "user.name", "t")
+    (repo / "f").write_text("0")
+    run("git", "add", "-A")
+    run("git", "commit", "-qm", "base")
+    run("git", "checkout", "-q", "-b", "dev")
+    for n in (501, 502):
+        (repo / "f").write_text(str(n))
+        run("git", "add", "-A")
+        run("git", "commit", "-qm", f"Merge PR #{n}")
+    run("git", "checkout", "-q", "main")
+    return repo

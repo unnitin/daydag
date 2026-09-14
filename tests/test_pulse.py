@@ -9,7 +9,17 @@ from datetime import UTC, datetime
 
 import pytest
 
-from daydag.pulse import Item, Mirror, Pulse, PulseError
+from daydag.pulse import (
+    Item,
+    Mirror,
+    MirrorStore,
+    Pulse,
+    PulseError,
+    WatchedRepo,
+    WatchlistError,
+    _parse_repo_line,
+    _run_git,
+)
 
 
 def test_merges_since_last_run_uses_the_stored_cursor(fake_repo):
@@ -176,3 +186,176 @@ def test_a_successful_fetch_records_its_time_and_clears_the_staleness(fake_repo)
 
     assert m.stale is False
     assert m.last_fetched_at == FETCHED
+
+
+# -- issue #128: a repo that lands somewhere other than its default branch ----
+
+
+def test_a_repo_landing_on_dev_reports_its_landings(repo_landing_on_dev):
+    """The bug in #128: silence from the wrong branch reads as a healthy repo.
+
+    `main` holds only the base commit, so following the default branch reports
+    nothing at all - not stale, not unavailable, just empty. That is how two
+    months of real work on `createos-ingestion` were reported as a stall.
+    """
+    m = Mirror.attach(repo_landing_on_dev, cursor="dev~2", ref="dev")
+    assert [c.title for c in m.merges_since_cursor()] == ["Merge PR #501", "Merge PR #502"]
+
+
+def test_the_default_branch_stays_the_default(fake_repo):
+    """Omitting `ref` must behave exactly as before, or every existing row moves."""
+    m = Mirror.attach(fake_repo, cursor="HEAD~2")
+    assert m.ref == "HEAD"
+    assert [c.title for c in m.merges_since_cursor()] == ["Merge PR #412", "Merge PR #413"]
+
+
+def test_the_cursor_advances_to_the_named_ref_not_to_HEAD(repo_landing_on_dev):
+    """Advancing to HEAD would park the cursor on a branch nothing lands on.
+
+    The next run would then read `main..dev` and re-report every landing it had
+    already reported, forever.
+    """
+    m = Mirror.attach(repo_landing_on_dev, cursor="dev~2", ref="dev")
+    m.merges_since_cursor()
+    head = _run_git(("rev-parse", "HEAD"), cwd=repo_landing_on_dev).stdout.strip()
+    dev = _run_git(("rev-parse", "dev"), cwd=repo_landing_on_dev).stdout.strip()
+    assert m.cursor == dev
+    assert m.cursor != head, "cursor parked on the default branch, not on the watched one"
+
+
+def test_a_ref_that_does_not_resolve_names_the_ref(repo_landing_on_dev):
+    """A typo in the watchlist must not read as a broken mirror."""
+    m = Mirror.attach(repo_landing_on_dev, cursor="HEAD", ref="devv")
+    with pytest.raises(PulseError) as caught:
+        m.merges_since_cursor()
+    assert "devv" in str(caught.value)
+
+
+def test_a_branch_field_is_parsed_off_the_watchlist_bullet():
+    """`branch:` is a field of its own, exactly as `wiki` is - never a substring."""
+    assert _parse_repo_line("ExampleOrg/svc · branch:dev · statement ingestion").branch == "dev"
+    assert _parse_repo_line("ExampleOrg/svc · wiki").branch == ""
+    # Prose that merely mentions a branch is not a marker.
+    assert _parse_repo_line("ExampleOrg/svc · see the dev branch for details").branch == ""
+
+
+def test_a_watched_repos_branch_reaches_its_mirror(tmp_path, repo_landing_on_dev, git_env):
+    """The seam the bug actually lived in: parsed, then dropped before the read."""
+    store = MirrorStore(tmp_path / "mirrors", url_for=lambda _r: str(repo_landing_on_dev))
+    repo = WatchedRepo("ExampleOrg", "svc", branch="dev")
+    mirror = store.ensure(repo, cursor="dev~2")
+    assert mirror.ref == "dev"
+    assert [c.title for c in mirror.merges_since_cursor()] == ["Merge PR #501", "Merge PR #502"]
+
+
+# -- what the review of #128 found -------------------------------------------
+
+
+def test_first_sight_on_a_branch_repo_reports_no_backlog(tmp_path, repo_landing_on_dev):
+    """A fresh clone opens at the WATCHED tip, not at the default branch's.
+
+    `HEAD..dev` is the branch's whole divergence, so first sight of a repo that
+    has been on `dev` for two months would open with two months of merges -
+    the backlog FIRST_SIGHT exists to suppress, on the repos `branch:` is for.
+    """
+    store = MirrorStore(tmp_path / "m", url_for=lambda _r: str(repo_landing_on_dev))
+    report = store.sync([WatchedRepo("ExampleOrg", "svc", branch="dev")])
+    assert [m.merges_since_cursor() for m in report.mirrors] == [[]]
+
+
+def test_the_second_read_reports_only_what_landed_after_first_sight(
+    tmp_path, repo_landing_on_dev, add_commit
+):
+    """First sight suppresses the backlog without suppressing the next landing."""
+    store = MirrorStore(tmp_path / "m", url_for=lambda _r: str(repo_landing_on_dev))
+    repo = WatchedRepo("ExampleOrg", "svc", branch="dev")
+    mirror = store.sync([repo]).mirrors[0]
+    mirror.merges_since_cursor()
+    _run_git(("checkout", "-q", "dev"), cwd=repo_landing_on_dev)
+    add_commit(repo_landing_on_dev, "Merge PR #503")
+    store.refresh(mirror)
+    assert [c.title for c in mirror.merges_since_cursor()] == ["Merge PR #503"]
+
+
+def test_a_watchlist_typo_reaches_the_reader(tmp_path, repo_landing_on_dev):
+    """The branch name has to survive to the brief, or the fix is undiscoverable.
+
+    `items()` is the only path to a report, and it used to swallow every
+    message - leaving a repo silently unread with no way to find out why.
+    """
+    store = MirrorStore(tmp_path / "m", url_for=lambda _r: str(repo_landing_on_dev))
+    mirror = store.sync([WatchedRepo("ExampleOrg", "svc", branch="devv")]).mirrors[0]
+    pulse = Pulse(mirrors=[mirror])
+    assert pulse.items() == []
+    rendered = pulse.render()
+    assert "devv" in rendered, rendered
+
+
+def test_a_broken_mirror_is_not_blamed_on_the_watchlist(tmp_path):
+    """Sending the reader to edit a file that is already correct is the inversion."""
+    empty = tmp_path / "not-a-mirror"
+    empty.mkdir()
+    m = Mirror.attach(empty, cursor="HEAD", ref="dev")
+    with pytest.raises(PulseError) as caught:
+        m.merges_since_cursor()
+    assert not isinstance(caught.value, WatchlistError)
+    assert "watchlist" not in str(caught.value).casefold()
+
+
+def test_the_cursor_lands_on_the_sha_that_bounded_the_read(repo_landing_on_dev):
+    """Resolved once. Two resolutions let a push between them skip landings."""
+    m = Mirror.attach(repo_landing_on_dev, cursor="dev~2", ref="dev")
+    items = m.merges_since_cursor()
+    tip = _run_git(("rev-parse", "dev"), cwd=repo_landing_on_dev).stdout.strip()
+    assert len(items) == 2
+    assert m.cursor == tip
+
+
+def test_one_repo_listed_twice_on_different_branches_is_reported(tmp_path, repo_landing_on_dev):
+    """One mirror carries one cursor, so the second row can never be read.
+
+    Deduping it away silently is the same "silence reads as health" failure
+    this module keeps relearning.
+    """
+    store = MirrorStore(tmp_path / "m", url_for=lambda _r: str(repo_landing_on_dev))
+    report = store.sync(
+        [
+            WatchedRepo("ExampleOrg", "svc", branch="dev"),
+            WatchedRepo("ExampleOrg", "svc", branch="release"),
+        ]
+    )
+    assert len(report.mirrors) == 1
+    assert any("listed twice" in line for line in report.unreadable), report.unreadable
+
+
+def test_the_same_repo_listed_twice_identically_stays_quiet(tmp_path, repo_landing_on_dev):
+    """A duplicate row that agrees with itself is not a problem worth a line."""
+    store = MirrorStore(tmp_path / "m", url_for=lambda _r: str(repo_landing_on_dev))
+    repo = WatchedRepo("ExampleOrg", "svc", branch="dev")
+    report = store.sync([repo, repo])
+    assert len(report.mirrors) == 1
+    assert report.unreadable == []
+
+
+def test_an_empty_repos_unborn_HEAD_is_not_blamed_on_the_watchlist(tmp_path, make_origin):
+    """`HEAD` is the default, not a line anyone typed.
+
+    Caught by `test_a_mirror_that_cannot_be_read_costs_one_line_not_the_block`:
+    the first cut of the watchlist-typo message called an empty repo a config
+    error and told the reader to edit a line that does not exist.
+    """
+    empty = make_origin("empty", messages=())
+    store = MirrorStore(tmp_path / "m", url_for=lambda _r: str(empty))
+    mirror = store.sync([WatchedRepo("ExampleOrg", "empty")]).mirrors[0]
+    with pytest.raises(PulseError) as caught:
+        mirror.merges_since_cursor()
+    assert not isinstance(caught.value, WatchlistError)
+    assert "watchlist" not in str(caught.value).casefold()
+
+
+def test_the_typo_line_names_the_repo_once(tmp_path, repo_landing_on_dev):
+    """`render` already prefixes the slug; the message must not repeat it."""
+    store = MirrorStore(tmp_path / "m", url_for=lambda _r: str(repo_landing_on_dev))
+    mirror = store.sync([WatchedRepo("ExampleOrg", "svc", branch="devv")]).mirrors[0]
+    rendered = Pulse(mirrors=[mirror]).render()
+    assert rendered.count("ExampleOrg/svc") == 1, rendered

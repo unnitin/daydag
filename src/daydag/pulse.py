@@ -64,6 +64,18 @@ class PulseError(RuntimeError):
     """A source could not be read. Never silently swallowed into a clean report."""
 
 
+class WatchlistError(PulseError):
+    """A read failed because `Watchlist.md` is wrong, not because git is.
+
+    Split out because the two degrade the same way but are fixed in different
+    places, and only this one has a message worth putting in front of a reader.
+    Git's own stderr is deliberately not quoted into a brief - it is noise the
+    reader cannot act on - but "the watchlist names branch 'devv'" is the whole
+    fix, and swallowing it leaves a repo silently unread with no way to find
+    out why.
+    """
+
+
 #: Ceiling on any one git command. A clone of a large repo is minutes, not
 #: hours; anything past this is git waiting on something that will never come.
 GIT_TIMEOUT_SECONDS = 600
@@ -225,9 +237,14 @@ class Mirror:
         cursor: str,
         label: str | None = None,
         last_fetched_at: datetime | None = None,
+        ref: str = "HEAD",
     ) -> None:
         self.path = Path(path)
         self.cursor = cursor
+        #: The ref landings are read from. `HEAD` in a bare mirror is the
+        #: remote's default branch, which is right for most repos and silently
+        #: wrong for one that lands on `dev` - see issue #128.
+        self.ref = ref or "HEAD"
         #: What a failure line calls this mirror. The owner belongs in it: two
         #: orgs can both have a `platform`, and "platform.git could not be read"
         #: names neither of them.
@@ -240,9 +257,13 @@ class Mirror:
 
     @classmethod
     def attach(
-        cls, path: str | Path, cursor: str, last_fetched_at: datetime | None = None
+        cls,
+        path: str | Path,
+        cursor: str,
+        last_fetched_at: datetime | None = None,
+        ref: str = "HEAD",
     ) -> Mirror:
-        return cls(Path(path), cursor, last_fetched_at=last_fetched_at)
+        return cls(Path(path), cursor, last_fetched_at=last_fetched_at, ref=ref)
 
     @property
     def stale(self) -> bool:
@@ -287,12 +308,17 @@ class Mirror:
         """
         if _fail:
             raise PulseError("simulated read failure")
+        # Resolved to a sha ONCE, before the log, and that same sha is both the
+        # upper bound of the range and the new cursor. Naming the ref twice -
+        # `log ..dev` then `rev-parse dev` - lets a fetch landing between the
+        # two calls park the cursor past landings this call never returned.
+        tip = self._resolve_ref()
         # --first-parent WITHOUT --merges. The ruleset permits squash and rebase
         # as well as merge commits, and a squashed PR lands as a single-parent
         # commit - so filtering on --merges would silently report nothing for
-        # the most common workflow. Every first-parent commit on the default
-        # branch is one landing.
-        out = self._git("log", "--first-parent", "--format=%H%x1f%s", f"{self.cursor}..HEAD")
+        # the most common workflow. Every first-parent commit on the watched
+        # ref is one landing.
+        out = self._git("log", "--first-parent", "--format=%H%x1f%s", f"{self.cursor}..{tip}")
         items: list[Item] = []
         for line in out.splitlines():
             if not line.strip():
@@ -300,8 +326,43 @@ class Mirror:
             sha, _, subject = line.partition("\x1f")
             items.append(Item(title=subject, permalink=f"{self.path}#{sha[:7]}"))
         items.reverse()
-        self.cursor = self._git("rev-parse", "HEAD").strip()
+        self.cursor = tip
         return items
+
+    def _resolve_ref(self) -> str:
+        """The watched ref as a sha, or a failure that says whose fault it is.
+
+        Three outcomes, deliberately distinguished. A mirror that is not a git
+        directory is a MIRROR problem and must not be reported as a watchlist
+        typo - blaming `Watchlist.md` for a half-finished clone sends the
+        reader to edit a file that is already correct, which is the exact
+        misattribution this method exists to prevent, inverted. A ref that does
+        not resolve inside a healthy mirror IS a watchlist problem, and says so
+        in a message the brief is allowed to quote. Anything else is git.
+        """
+        # `git rev-parse --git-dir` rather than probing for a `HEAD` file: a
+        # mirror is bare and keeps HEAD at its root, but the fixtures and any
+        # hand-made clone keep it under `.git/`, and a layout check would call
+        # a perfectly readable repo broken.
+        readable = _run_git(("rev-parse", "--git-dir"), cwd=self.path)
+        if readable.returncode != 0:
+            raise PulseError(f"{self.label}: not a git mirror at {self.path}")
+        result = _run_git(
+            ("rev-parse", "--verify", "--quiet", f"{self.ref}^{{commit}}"), cwd=self.path
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
+        # Only a ref the watchlist actually NAMED is the watchlist's fault. An
+        # unresolvable `HEAD` is the default, not a choice anyone typed - it is
+        # what an empty repo with an unborn HEAD looks like, and calling that a
+        # config error sends the reader to edit a line that does not exist.
+        if self.ref == "HEAD":
+            raise PulseError(f"{self.label}: could not resolve HEAD")
+        # No label prefix: `render` already writes the slug in front of every
+        # reason, and prefixing here printed it twice.
+        raise WatchlistError(
+            f"the watchlist names branch {self.ref!r}, which does not resolve in the mirror"
+        )
 
 
 # -- what gets mirrored --------------------------------------------------
@@ -314,6 +375,11 @@ class WatchedRepo:
     owner: str
     name: str
     wiki: bool = False
+    #: Where landings actually appear, when that is not the default branch.
+    #: Empty means `HEAD`, so every row written before issue #128 is unchanged.
+    #: Not inferred: guessing the busiest branch is how #128 started, and the
+    #: watchlist is hand-edited config that can simply say which one it is.
+    branch: str = ""
 
     @property
     def slug(self) -> str:
@@ -394,6 +460,8 @@ _NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 
 #: Markers a line may carry after a `·`, each in a field of its own.
 _WIKI_MARKER = "wiki"
+#: `branch:<name>` - which ref landings appear on, when it is not the default.
+_BRANCH_MARKER = "branch:"
 
 #: github.com paths whose first segment is the site, not an owner. Without this
 #: `github.com/orgs/<org>/repositories` - a plausible paste - parses as the repo
@@ -450,7 +518,15 @@ def _parse_repo_line(body: str) -> WatchedRepo | None:
     # A marker has to be a field of its own. Scanning the whole line for the
     # word would read "see the wiki for the runbook" as a marker and go cloning.
     markers = {field_.casefold() for field_ in fields[1:]}
-    return WatchedRepo(*slug, wiki=_WIKI_MARKER in markers)
+    # Same rule as the wiki marker: a field of its own, never a substring scan.
+    # "see the dev branch for details" is prose somebody left themselves, and
+    # reading a branch out of it would point the pulse at the wrong ref.
+    branch = ""
+    for field_ in fields[1:]:
+        if field_.casefold().startswith(_BRANCH_MARKER):
+            branch = field_[len(_BRANCH_MARKER) :].strip()
+            break
+    return WatchedRepo(*slug, wiki=_WIKI_MARKER in markers, branch=branch)
 
 
 @dataclass(frozen=True)
@@ -624,6 +700,15 @@ class MirrorStore:
         if not self.has(repo):
             self._clone(repo, path)
         self._disable_push(repo.slug, path)
+        # First sight is measured from the WATCHED ref, not from `HEAD`. Both
+        # are "start where the repo is now", but on a `branch:` repo they are
+        # different commits: `HEAD..dev` is the branch's whole divergence from
+        # the default, so a fresh clone of a repo that has been on `dev` for
+        # two months would open with two months of merges - exactly the backlog
+        # FIRST_SIGHT exists to suppress, on exactly the repos this change was
+        # written for.
+        if cursor == FIRST_SIGHT and repo.branch:
+            cursor = repo.branch
         # Seeded from the log at attach time, because the mirror that needs a
         # date is by definition the one whose fetch is about to fail - so the
         # value can only come from a run that already finished.
@@ -632,7 +717,13 @@ class MirrorStore:
         # the one place both are chosen - so the write key and the read key
         # cannot drift into disagreeing and quietly answering `None`.
         last = self._log.last_fetch(repo.slug) if self._log is not None else None
-        return Mirror(path, cursor, label=repo.slug, last_fetched_at=last)
+        # The watched branch is threaded through here rather than looked up
+        # later: this is the one place a WatchedRepo becomes a Mirror, and
+        # issue #128 was exactly the field being parsed and then dropped at
+        # this seam.
+        return Mirror(
+            path, cursor, label=repo.slug, last_fetched_at=last, ref=repo.branch or "HEAD"
+        )
 
     def _clone(self, repo: WatchedRepo, path: Path) -> None:
         """Clone into staging, disable its push url there, then move it in.
@@ -742,11 +833,27 @@ class MirrorStore:
         cursors = cursors or {}
         report = SyncReport(unreadable=list(watchlist.unparsed))
         seen: set[Path] = set()
+        #: Which branch each mirror was provisioned for, so a second row naming
+        #: a different one is caught rather than quietly ignored.
+        branches: dict[Path, str] = {}
         for repo, optional in self._targets(watchlist.repos):
             path = self.path_for(repo)
             if path in seen:
+                # Two rows for one repo. Harmless when they agree, and a silent
+                # drop when they do not: one mirror carries one cursor, so the
+                # second `branch:` would simply never be read and its repo would
+                # report nothing forever. Reported rather than deduped away -
+                # silence reading as health is the bug this module keeps
+                # relearning.
+                if repo.branch != branches.get(path, ""):
+                    report.unreadable.append(
+                        f"{repo.slug} is listed twice with different branches "
+                        f"({branches.get(path, '') or 'default'!r} and "
+                        f"{repo.branch or 'default'!r}); only the first is read"
+                    )
                 continue
             seen.add(path)
+            branches[path] = repo.branch
             newly = not self.has(repo)
             try:
                 mirror = self.ensure(repo, cursors.get(repo.slug, FIRST_SIGHT))
@@ -848,6 +955,13 @@ class Pulse:
                     continue
                 try:
                     collected.extend(mirror.merges_since_cursor())
+                except WatchlistError as misconfigured:
+                    # This one IS quoted. It names a branch the reader can fix
+                    # in `Watchlist.md`, and a repo that silently reports
+                    # nothing because of a typo is the failure mode this whole
+                    # change exists to remove - replacing it with a generic
+                    # line would reintroduce it one layer up.
+                    self._unavailable.append(Unavailable(mirror.label, str(misconfigured)))
                 except PulseError:
                     # One unreadable mirror is one line, not a dead brief: an
                     # unborn HEAD on a repo with nothing in it yet, or a cursor
