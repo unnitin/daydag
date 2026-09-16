@@ -142,9 +142,14 @@ def open_items(*, state: str, note: str, note_path: str) -> list[OpenItem]:
     complete. A struck chase row and a ticked red item are each his own answer
     already and are not returned - re-proposing something he has crossed off
     is the loudest possible way to prove his edits do not win.
+
+    Top-level bullets only. An indented one is his comment on the item above
+    it, which is the file's documented convention and not a second loop: the
+    live State.md has 4 chase items under 22 bullets, and reading all 22 as
+    open would propose movement against his own annotations.
     """
     items: list[OpenItem] = []
-    for body in read_section(str(state or ""), "Chase list"):
+    for body in read_section(str(state or ""), "Chase list", top_level=True):
         if "~~" in body:
             continue
         owner = body.split("·")[0] if "·" in body else ""
