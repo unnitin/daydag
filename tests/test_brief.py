@@ -353,9 +353,9 @@ def test_the_chase_list_and_watch_items_come_from_the_state_file(state):
 
 
 def test_a_chase_line_with_no_link_admits_it(state):
-    """`write_state` records owner and ask but no permalink, so most lines have
+    """`update_state` records owner and ask but no permalink, so most lines have
     none. Saying so is guardrail 3; asserting it anyway is what it forbids."""
-    state.write_state(chase=[{"owner": "VP-Data", "ask": "silver trigger"}])
+    state.update_state(chase=[{"owner": "VP-Data", "ask": "silver trigger"}])
     text = _assemble(FakeSources(), state=state).render()
 
     assert "silver trigger" in text
@@ -462,7 +462,7 @@ def _busy_sources():
 
 
 def test_a_full_brief_reads_in_his_voice(state, fake_repo):
-    state.write_state(
+    state.update_state(
         chase=[{"owner": "VP-Data", "ask": "silver trigger"}],
         watch=[{"what": "10k e2e run"}],
     )
@@ -484,7 +484,7 @@ def test_every_claim_in_a_full_brief_carries_evidence_or_admits_it(state, fake_r
     On the render rather than the objects: a permalink held on something nobody
     prints is not a citation.
     """
-    state.write_state(chase=[{"owner": "VP-Data", "ask": "silver trigger"}])
+    state.update_state(chase=[{"owner": "VP-Data", "ask": "silver trigger"}])
     text = _assemble(
         _busy_sources(),
         state=state,

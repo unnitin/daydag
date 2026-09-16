@@ -33,11 +33,20 @@ def test_create_lays_out_the_four_files_and_two_dirs(folder):
     }
 
 
-def test_state_is_regenerated_each_loop(folder):
-    """State.md is a projection - the agent rewrites it wholesale every run."""
-    folder.write_state(chase=[{"owner": "seth", "ask": "compute consolidation"}])
-    folder.write_state(chase=[{"owner": "jon", "ask": "wave 2 scope"}])
-    assert "seth" not in folder.read_state()
+def test_state_is_added_to_each_loop_never_regenerated(folder):
+    """The inverse of what this test asserted until #130.
+
+    It read: "State.md is a projection - the agent rewrites it wholesale every
+    run", and the code did exactly that. On 2026-09-14 the first real
+    `eod --write-state` run derived nothing and truncated a hand-written chase
+    list to 41 bytes. The file is the record; a second loop adds to it.
+
+    `tests/test_state_append.py` carries the rest of the behaviour - the round
+    trip, the sub-bullets, the sections the writer never emits.
+    """
+    folder.update_state(chase=[{"owner": "seth", "ask": "compute consolidation"}])
+    folder.update_state(chase=[{"owner": "jon", "ask": "wave 2 scope"}])
+    assert "seth" in folder.read_state(), "the first loop's item was overwritten"
     assert "jon" in folder.read_state()
 
 
@@ -73,7 +82,7 @@ def test_sensitive_items_never_reach_the_vault(folder):
     """weekly-feedback-scan carry-forward lives only in the log (ARCHITECTURE)."""
     log = EventLog.open(":memory:")
     log.record("carry_forward", subject="seth", body="growth area", sensitivity="private")
-    folder.write_state(chase=log.chase_items())
+    folder.update_state(chase=log.chase_items())
     assert "growth area" not in folder.read_state()
 
 
@@ -183,7 +192,7 @@ def test_a_chase_item_recorded_with_only_a_key_warns_instead_of_a_bare_bullet(fo
     log = EventLog.open(":memory:")
     log.record("loop_opened", sensitivity="normal", key="DATA-812", day=0)
 
-    folder.write_state(chase=log.chase_items())
+    folder.update_state(chase=log.chase_items())
 
     written = folder.read_state()
     assert "- ?" not in written.splitlines(), "the old silent-glitch shape is back"
@@ -193,8 +202,8 @@ def test_a_chase_item_recorded_with_only_a_key_warns_instead_of_a_bare_bullet(fo
 
 def test_a_chase_item_with_only_one_of_owner_or_ask_still_renders_the_other(folder):
     """Half a chase item is not the same failure as none of it - only a total
-    miss on both fields is the case `write_state` has to call out by name."""
-    folder.write_state(chase=[{"key": "DATA-812", "ask": "compute consolidation"}])
+    miss on both fields is the case `update_state` has to call out by name."""
+    folder.update_state(chase=[{"key": "DATA-812", "ask": "compute consolidation"}])
 
     written = folder.read_state()
     assert "compute consolidation" in written
@@ -204,14 +213,14 @@ def test_a_chase_item_with_only_one_of_owner_or_ask_still_renders_the_other(fold
 def test_write_state_still_accepts_a_bare_dict_for_chase(folder):
     """`ChaseItem` is a stricter shape underneath, but no existing caller that
     builds a plain dict by hand should have to change to keep working."""
-    folder.write_state(chase=[{"owner": "VP-Data", "ask": "silver trigger"}])
+    folder.update_state(chase=[{"owner": "VP-Data", "ask": "silver trigger"}])
     assert "silver trigger" in folder.read_state()
 
 
 @pytest.mark.guardrail
 def test_a_private_chase_item_is_filtered_whether_it_arrives_as_a_dict_or_a_chase_item(folder):
     """The filter reads `sensitivity` off either shape the same way."""
-    folder.write_state(
+    folder.update_state(
         chase=[
             ChaseItem(key="a", owner="seth", ask="growth area", sensitivity="private"),
             {"owner": "seth", "ask": "compute consolidation"},
@@ -242,7 +251,7 @@ def test_notes_gap_from_value_reads_a_tagged_dict():
 
 
 def test_a_private_notes_gap_string_mix_still_renders_the_normal_one(folder):
-    folder.write_state(
+    folder.update_state(
         notes_gaps=["Pod Steering", {"title": "comp review", "sensitivity": "private"}]
     )
     written = folder.read_state()
@@ -279,7 +288,7 @@ def test_reading_a_chase_item_out_of_a_hand_written_row_never_raises():
     log = EventLog(sqlite3.connect(":memory:"))
     """`from_payload`'s docstring says "never raises" - a human can hand-edit
     this log, so a row whose payload is valid JSON but not an object must
-    degrade, not take `write_state` down with an AttributeError."""
+    degrade, not take `update_state` down with an AttributeError."""
     log._db.execute(
         "INSERT INTO events (kind, sensitivity, payload) VALUES (?, ?, ?)",
         ("carry_forward", "normal", "null"),
@@ -296,7 +305,7 @@ def test_a_notes_gap_from_a_calendar_shaped_record_is_named_not_blank(tmp_path):
     rendered a bare `- ` bullet - the same shapeless-item failure the chase
     path in this very branch gave a named warning line."""
     folder = StateFolder.create(tmp_path / "DayDAG")
-    folder.write_state(notes_gaps=[{"summary": "Pod Steering", "sensitivity": "normal"}])
+    folder.update_state(notes_gaps=[{"summary": "Pod Steering", "sensitivity": "normal"}])
 
     body = folder.read_state()
 
@@ -332,7 +341,7 @@ def test_the_logs_sensitivity_column_outranks_a_payload_that_claims_otherwise():
 
 
 def test_a_caller_passing_a_plain_dict_still_gets_its_own_sensitivity_honoured():
-    """The other call site has no column to trust - `write_state` is handed a
+    """The other call site has no column to trust - `update_state` is handed a
     dict whose own `sensitivity` is the only source there, so it must win."""
     assert (
         ChaseItem.from_payload({"owner": "o", "sensitivity": "private"}).get("sensitivity")
@@ -409,7 +418,7 @@ def test_an_item_classified_from_a_comp_quote_never_reaches_the_vault(tmp_path):
     )
     folder = StateFolder.create(tmp_path / "vault" / "DayDAG")
 
-    folder.write_state(chase=log.chase_items())
+    folder.update_state(chase=log.chase_items())
 
     assert "relocation" not in folder.state_path.read_text()
 

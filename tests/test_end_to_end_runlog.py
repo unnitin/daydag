@@ -121,7 +121,7 @@ def test_a_morning_run_leaves_its_row_in_the_log_and_nothing_in_the_vault(
             ask="perf-conversation follow-up",
             day=1,
         )
-        folder.write_state(chase=log.chase_items(), watch=[], notes_gaps=[])
+        folder.update_state(chase=log.chase_items(), watch=[], notes_gaps=[])
 
     # -- the row is in the log, stamped, and names what it could not read --
     (payload,) = log.recorded(RUN)

@@ -938,7 +938,7 @@ def _seeded(payloads: Mapping[str, Any]) -> list[Mapping[str, Any]]:
 def _project(folder: StateFolder, log: EventLog, ledger: Ledger, now: datetime) -> None:
     """Rewrite `State.md` from what this run learned.
 
-    Through `write_state`'s own `_visible` gate rather than filtering here:
+    Through `update_state`'s own `_visible` gate rather than filtering here:
     the runner is not a second writer with its own idea of the rules, and the
     filter that a private carry-forward once slipped past is the one that has
     to hold.
@@ -949,7 +949,7 @@ def _project(folder: StateFolder, log: EventLog, ledger: Ledger, now: datetime) 
     so the mark the gate reads is decided here, per title, by the same
     classifier every recorded item goes through. Unmarked would mean visible.
     """
-    folder.write_state(
+    folder.update_state(
         chase=log.chase_items(),
         notes_gaps=[
             NotesGap(title=gap, sensitivity=classify_sensitivity(gap))

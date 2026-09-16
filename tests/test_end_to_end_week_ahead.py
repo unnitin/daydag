@@ -128,7 +128,7 @@ def test_a_sunday_evening_arrives_as_one_assembled_week_ahead(tmp_path, git_env)
         ask="perf-conversation follow-up",
         day=1,
     )
-    folder.write_state(
+    folder.update_state(
         chase=log.chase_items(),
         watch=[{"what": "10k e2e run"}],
     )

@@ -2,7 +2,7 @@
 
 USING IT
     folder = StateFolder.create(root)       # DayDAG/, idempotent
-    folder.write_state(chase=..., watch=..., notes_gaps=...)   # REPLACES
+    folder.update_state(chase=..., watch=..., notes_gaps=...)  # APPENDS
 
     queue = DecisionQueue(folder)
     item = queue.add("draft nudge to VP-Data?")
@@ -19,7 +19,7 @@ USING IT
 CONTRACTS
     1. Anything sensitive goes to the EVENT LOG, never the vault. The vault is
        plaintext on every device it syncs to.
-    2. `write_state` runs `chase`, `watch` AND `notes_gaps` through one
+    2. `update_state` runs `chase`, `watch` AND `notes_gaps` through one
        `_visible` gate before anything is rendered - one filter, so
        `sensitivity == "private"` cannot be wired to two of the three lists and
        forgotten on the third. It was once wired to `chase` and not to its twin
@@ -28,11 +28,17 @@ CONTRACTS
        until `NotesGap` gave it one (#61).
     3. One shape per list, held on BOTH sides of the log/vault seam. A chase
        entry is a `ChaseItem` - `EventLog.chase_items()` returns one and
-       `write_state` coerces whatever it is handed before rendering, so the two
+       `update_state` coerces whatever it is handed before rendering, so the two
        cannot drift apart the way they had (#63). A notes gap is a `NotesGap`.
        Both coercions are idempotent and accept their own type first.
-    4. `State.md` is a PROJECTION, rewritten wholesale every loop. Park nothing
-       there you need kept.
+    4. `State.md` is the RECORD, and `update_state` APPENDS to it. It is
+       parsed, added to, and re-rendered; every line the run did not derive
+       comes back byte-for-byte. A derived item already in the file - under
+       any heading, struck or open - is recognised and not filed twice. This
+       was contract 4 the other way round until #130: the file was a
+       projection rewritten wholesale, and on 2026-09-14 an `eod` run that
+       derived nothing wrote nothing over four hand-written chase items.
+       Nothing re-derives the list now, because nothing can.
     5. `Decisions.md` is APPENDED and never regenerated, so an answer written
        in the margin cannot be overwritten before it is read.
     6. Rendering a decision counts as ASKING it. That is what lets an
@@ -82,7 +88,7 @@ a hand edit is an event, and it wins over anything the agent derived.
 
 | File | Who writes it | Cadence |
 |---|---|---|
-| `State.md` | the agent | rewritten every loop - do not park anything here you need kept |
+| `State.md` | both | appended to, never rewritten. Your edits win; sub-bullets are never reflowed |
 | `Decisions.md` | both | appended, never regenerated. Answer by writing next to a line |
 | `Watchlist.md` | you | config: repos, Jira projects, channels |
 | `Proposals/` | the agent | proposed diffs awaiting a yes |
@@ -205,7 +211,7 @@ _CHASE_FIELDS: tuple[str, ...] = (
 
 @dataclass(frozen=True)
 class ChaseItem(Mapping[str, Any]):
-    """The one chase-item shape `EventLog` and `write_state` are both held to.
+    """The one chase-item shape `EventLog` and `update_state` are both held to.
 
     USING IT
         item = ChaseItem.from_payload(payload, sensitivity=sensitivity)
@@ -216,7 +222,7 @@ class ChaseItem(Mapping[str, Any]):
         1. `key` is the only field every chase item is guaranteed to carry - a
            payload recorded with nothing else still builds one.
         2. Neither `owner` nor `ask` being present does not raise. It is read
-           by `write_state` as `has_owner_or_ask is False`, which renders a
+           by `update_state` as `has_owner_or_ask is False`, which renders a
            named warning line instead of a bare bullet or a crash (guardrail
            6's "degrade visibly" - not the same failure as one of the two
            being present, which still renders).
@@ -226,7 +232,7 @@ class ChaseItem(Mapping[str, Any]):
 
     WHY IT EXISTS
         Issue #63: `EventLog.chase_items()` returned whatever a caller
-        recorded, and `write_state` assumed `owner` and `ask` would be in it.
+        recorded, and `update_state` assumed `owner` and `ask` would be in it.
         A payload recorded with only `key` rendered as a bare `- ?` in
         `State.md` - a formatting glitch standing in for data nobody had
         agreed had to be there. One shape, read the same way on both sides of
@@ -268,7 +274,7 @@ class ChaseItem(Mapping[str, Any]):
         if not isinstance(payload, Mapping):
             # "Never raises" has to hold for a hand-written row too: valid JSON
             # that is not an object (`null`, a list, a scalar) reached here and
-            # took `write_state` down with an AttributeError - the torn-row
+            # took `update_state` down with an AttributeError - the torn-row
             # tolerance `_rows` exists for, undone one layer up.
             return cls(sensitivity=sensitivity)
         kwargs = {name: payload[name] for name in _CHASE_FIELDS if payload.get(name)}
@@ -282,7 +288,7 @@ class ChaseItem(Mapping[str, Any]):
         # whatever was written into the row. Reading the payload first let a
         # hand-edited row carrying `"normal"` override a column saying
         # `"private"` and reach plaintext `State.md`. Omitted means there is no
-        # column to trust - `write_state` is handed a bare dict whose own value
+        # column to trust - `update_state` is handed a bare dict whose own value
         # is the only source there - so the payload wins.
         resolved = sensitivity if sensitivity is not None else payload.get("sensitivity", "normal")
         return cls(sensitivity=str(resolved), extra=extra, **kwargs)
@@ -311,7 +317,7 @@ class ChaseItem(Mapping[str, Any]):
 
 
 def _as_chase_item(raw: ChaseItem | Mapping[str, Any]) -> ChaseItem:
-    """Coerce whatever a caller passed `write_state` into the one shape (#63)."""
+    """Coerce whatever a caller passed `update_state` into the one shape (#63)."""
     return raw if isinstance(raw, ChaseItem) else ChaseItem.from_payload(raw)
 
 
@@ -320,7 +326,7 @@ class NotesGap:
     """One meeting with no note found - `notes_gaps`' shape (#61).
 
     CONTRACTS
-        1. `title` is what `write_state` prints. A meeting's own title can be
+        1. `title` is what `update_state` prints. A meeting's own title can be
            the sensitive fact - a comp conversation, an exit interview - so it
            carries `sensitivity` exactly like `chase` and `watch` already do.
         2. `from_value` also accepts a bare string, read as
@@ -333,7 +339,7 @@ class NotesGap:
         bare strings with no sensitivity tag to read, so a meeting whose own
         title was sensitive had no way to be withheld - its caller had to
         pre-filter, which is exactly the failure direction `chase` and
-        `watch` are filtered inside `write_state` to avoid: "the boundary has
+        `watch` are filtered inside `update_state` to avoid: "the boundary has
         to hold even when a caller forgets."
     """
 
@@ -372,7 +378,7 @@ def _is_private(item: Any) -> bool:
     """Whether ``item`` is tagged ``sensitivity: private``.
 
     The one place every vault-list filter reads from - `_visible` is what
-    calls this, not `write_state`'s three loops individually, which is the
+    calls this, not `update_state`'s three loops individually, which is the
     difference between a check that can be forgotten on a third list and one
     that cannot.
     """
@@ -382,7 +388,7 @@ def _is_private(item: Any) -> bool:
 def _visible(items: Iterable[Any]) -> list[Any]:
     """Every item in ``items`` that is not private.
 
-    `write_state`'s one gate for `chase`, `watch` and `notes_gaps` alike - the
+    `update_state`'s one gate for `chase`, `watch` and `notes_gaps` alike - the
     filter that a private carry-forward once slipped past because `watch` had
     no version of it while `chase` already did (and, before #61, `notes_gaps`
     had no `sensitivity` field to check at all). One function, applied the
@@ -390,6 +396,293 @@ def _visible(items: Iterable[Any]) -> list[Any]:
     contradiction rather than a recurring incident.
     """
     return [item for item in items if not _is_private(item)]
+
+
+# --------------------------------------------------------------------------
+# State.md as a document - parsed, appended to, re-rendered (#130)
+#
+# The writer used to render the file from what one run derived. It is the
+# record now, so everything here is built around one property: parse then
+# render returns the input byte-for-byte, whatever is in it.
+# --------------------------------------------------------------------------
+
+#: A bullet at column zero - the start of a new item. Indented bullets are the
+#: human's sub-bullets and belong to the item above them; `> - ...` inside the
+#: conventions blockquote is not a bullet at all.
+_TOP_BULLET = re.compile(r"^[-*]\s+\S")
+
+#: Emphasis and strike markers, dropped before two lines are compared. He
+#: writes `- **gov-lead** · ...`; the log records `gov-lead`.
+_DECORATION = re.compile(r"[*_`~]+")
+
+
+class StateNotWritable(Exception):
+    """`State.md` could not be reproduced from its own parse, so it was not
+    written. Raised instead of writing a best-effort version of a file shape
+    nobody anticipated - #130 is what a best-effort rewrite costs."""
+
+
+def _flatten(text: str) -> str:
+    """``text`` reduced to what two versions of the same item share.
+
+    Decoration, the bullet marker and run of whitespace all vary between the
+    way he writes a row and the way the log records it. What survives is the
+    words.
+    """
+    return " ".join(_DECORATION.sub("", text).casefold().split()).strip(" -·")
+
+
+@dataclass(frozen=True)
+class Block:
+    """One top-level bullet and every line indented under it, verbatim.
+
+    CONTRACTS
+        1. `lines` is exactly what was read, including trailing blank lines.
+           Rendering a block is `"\\n".join(lines)` and nothing else - that is
+           what makes his sub-bullets un-reflowable rather than merely
+           un-reflowed.
+        2. `matches` reads the FIRST line only. A sub-bullet quoting an ask is
+           context, not a second copy of it.
+    """
+
+    lines: tuple[str, ...]
+
+    @property
+    def head(self) -> str:
+        return self.lines[0] if self.lines else ""
+
+    @property
+    def is_closed(self) -> bool:
+        """Whether he has already crossed this one off.
+
+        `~~struck~~` is the convention the file documents; `status done` is
+        what a row carries if it was closed by the loop instead.
+        """
+        head = self.head
+        return "~~" in head or "status done" in _flatten(head) or "status: done" in head.casefold()
+
+    def matches(self, *needles: str) -> bool:
+        """Whether the bullet line contains any of ``needles``.
+
+        Substring, after flattening. The two failure directions are not equal:
+        a missed match files a duplicate, which he can see and delete, while a
+        false match silently drops a real ask. Loose matching is the wrong
+        error here, so a needle has to be a phrase - `_needles_for` supplies
+        the ask and the key, never the owner alone.
+        """
+        flat = _flatten(self.head)
+        return any(n and _flatten(n) in flat for n in needles)
+
+
+@dataclass(frozen=True)
+class StateSection:
+    """A heading and its blocks. ``heading`` is ``None`` for the preamble -
+    everything above the first heading, which in practice is the title line
+    and the conventions blockquote."""
+
+    heading: str | None
+    prologue: tuple[str, ...]
+    blocks: tuple[Block, ...]
+
+    @property
+    def name(self) -> str:
+        match = _HEADING.match(self.heading or "")
+        return match["name"] if match else ""
+
+    @property
+    def lines(self) -> list[str]:
+        out = [self.heading] if self.heading is not None else []
+        out += list(self.prologue)
+        for block in self.blocks:
+            out += list(block.lines)
+        return out
+
+
+@dataclass
+class StateDoc:
+    """``State.md``, parsed into sections of verbatim blocks.
+
+    USING IT
+        doc = StateDoc.parse(path.read_text())
+        doc.render() == path.read_text()        # always
+        doc.contains("the compute plan")        # anywhere, any heading
+        doc.append("Chase list", ["- vp-data · the compute plan", ""])
+
+    CONTRACTS
+        1. `parse` is TOTAL and `render` is its exact inverse. A line the
+           parser has no model for is carried in whichever block or prologue
+           it landed in, so it comes back unchanged. Nothing is dropped and
+           nothing is normalised - not indentation, not blank runs, not the
+           trailing newline.
+        2. `append` only ever adds lines. There is no method that removes or
+           edits a block, which is the structural half of house rule 3: a
+           caller cannot clobber what it did not derive, because no call does.
+        3. `contains` searches EVERY section. An item he has struck under
+           `Done` is still present, so re-deriving it appends nothing.
+
+    KNOWN LIMIT
+        A `- ` line inside a fenced code block reads as a new block. The file
+        has never held one, the round trip is unaffected either way, and the
+        only consequence is where an appended item lands relative to the
+        fence.
+    """
+
+    sections: list[StateSection]
+    final_newline: bool = True
+
+    @classmethod
+    def parse(cls, text: str) -> StateDoc:
+        sections: list[StateSection] = []
+        heading: str | None = None
+        prologue: list[str] = []
+        blocks: list[Block] = []
+        block: list[str] | None = None
+
+        def close_block() -> None:
+            nonlocal block
+            if block is not None:
+                blocks.append(Block(tuple(block)))
+                block = None
+
+        def close_section() -> None:
+            nonlocal prologue, blocks
+            close_block()
+            if heading is not None or prologue or blocks:
+                sections.append(StateSection(heading, tuple(prologue), tuple(blocks)))
+            prologue, blocks = [], []
+
+        for line in text.splitlines():
+            if _HEADING.match(line):
+                close_section()
+                heading = line
+                continue
+            if _TOP_BULLET.match(line):
+                close_block()
+                block = [line]
+                continue
+            if block is not None:
+                block.append(line)
+            else:
+                prologue.append(line)
+        close_section()
+        return cls(sections, final_newline=text.endswith("\n"))
+
+    def render(self) -> str:
+        lines: list[str] = []
+        for section in self.sections:
+            lines += section.lines
+        text = "\n".join(lines)
+        return text + "\n" if self.final_newline and text else text
+
+    def section(self, name: str) -> StateSection | None:
+        wanted = name.casefold()
+        for section in self.sections:
+            if section.name.casefold() == wanted:
+                return section
+        return None
+
+    def contains(self, *needles: str) -> bool:
+        """Whether any block in any section is already about this.
+
+        Any section on purpose (contract 3). A struck row under `Done` and an
+        open one under `Chase list` both mean "he knows about it", and
+        re-filing either is the same wrong answer.
+        """
+        return any(block.matches(*needles) for section in self.sections for block in section.blocks)
+
+    def append(self, name: str, lines: list[str]) -> None:
+        """Add ``lines`` as a new block at the end of the section ``name``.
+
+        The section is created if it is missing - after `Watch items` if that
+        exists, so a generated section does not land under his run log.
+        """
+        section = self.section(name)
+        if section is None:
+            section = StateSection(f"## {name}", ("",), ())
+            anchor = self.section("Watch items")
+            at = self.sections.index(anchor) + 1 if anchor is not None else len(self.sections)
+            self.sections.insert(at, section)
+        tail = section.blocks[-1].lines[-1] if section.blocks else (section.prologue or ("",))[-1]
+        # A blank line between items, but only if there is not one already:
+        # blocks carry their own trailing blanks, so the common case needs
+        # nothing and the end-of-file case needs one.
+        body = lines if tail.strip() == "" else ["", *lines]
+        at = self.sections.index(section)
+        self.sections[at] = StateSection(
+            section.heading, section.prologue, (*section.blocks, Block(tuple(body)))
+        )
+
+
+#: A fresh `State.md`. The conventions block is his, taken verbatim from how
+#: he used the file on 2026-09-15 - it is the contract between him and the
+#: writer, so a new install starts with it rather than learning it twice.
+_EMPTY_STATE = """# State
+
+> **How to talk back to me in this file.** Your words win over anything I
+> derived, and I read this before every loop.
+>
+> - **Comments go in sub-bullets** under the item, indented one tab. I never
+>   rewrite or reflow them.
+> - **`@claude:` means act on it.** A bare sub-bullet is context I read and
+>   leave alone.
+> - **Cross something off by striking it** - `~~…~~ ✓`. Never delete the line;
+>   the strike is the audit trail, and it is also what stops me re-deriving
+>   the item tomorrow.
+
+## Chase list
+
+## Watch items
+"""
+
+#: Shortest needle worth matching on. Below this a substring test stops
+#: identifying an item and starts colliding with unrelated ones - and a false
+#: match silently drops a real ask, which is the expensive direction.
+_MIN_ASK = 8
+_MIN_KEY = 4
+
+
+def _needles_for(item: ChaseItem) -> tuple[str, ...]:
+    """What to look for in the file before filing ``item`` as new.
+
+    The ask and the key, never the owner alone: he has four open items with
+    one owner, and matching on the owner would read every one of them as
+    already filed.
+    """
+    return tuple(
+        n
+        for n, floor in ((item.ask, _MIN_ASK), (item.key, _MIN_KEY))
+        if n and len(_flatten(n)) >= floor
+    )
+
+
+def _render_chase(item: ChaseItem) -> list[str]:
+    """``item`` as the block that gets appended, plus its trailing blank.
+
+    Every field `ChaseItem` carries, not the two the old renderer printed.
+    House rule 1 wants the verbatim quote and the permalink on the row, and
+    the soak's second edit asked for the link by name: "for each item please
+    link it back to either slack or email or notes to provide broader context
+    for what i am chasing".
+    """
+    if not item.has_owner_or_ask:
+        return [f"- {WARN} chase item {item.key} has no owner or ask recorded", ""]
+    head = " · ".join(
+        part
+        for part in (
+            item.owner or "?",
+            item.ask,
+            f"asked-on {item.asked_on}" if item.asked_on else "",
+            f"last-activity {item.last_activity}" if item.last_activity else "",
+            f"status {item.status}" if item.status else "",
+        )
+        if part
+    )
+    lines = [f"- {head}"]
+    if item.quote:
+        lines.append(f'\t- *"{item.quote}"*')
+    if item.permalink:
+        lines.append(f"\t- [source]({item.permalink})")
+    return [*lines, ""]
 
 
 class StateFolder:
@@ -419,7 +712,7 @@ class StateFolder:
         (folder.root / "Archive").mkdir(exist_ok=True)
         for path, body in (
             (folder.root / "README.md", README),
-            (folder.state_path, "# State\n\n## Chase list\n\n## Watch items\n"),
+            (folder.state_path, _EMPTY_STATE),
             (folder.decisions_path, "# Pending decisions\n\n"),
             (folder.watchlist_path, "# Watchlist\n\n## repos\n\n## jira\n\n## channels\n"),
         ):
@@ -427,57 +720,69 @@ class StateFolder:
                 path.write_text(body, encoding="utf-8")
         return folder
 
-    # -- State.md is a projection ----------------------------------------
+    # -- State.md is the record; the writer appends to it (#130) ----------
 
-    def write_state(
+    def update_state(
         self,
         chase: Iterable[ChaseItem | Mapping[str, Any]] = (),
         watch: Iterable[Mapping[str, Any]] = (),
         notes_gaps: Iterable[str | Mapping[str, Any]] = (),
     ) -> None:
-        """Rewrite ``State.md`` wholesale. It is derived, so it is replaced.
+        """Append anything derived that is not already in ``State.md``.
 
-        ``chase``, ``watch`` and ``notes_gaps`` all pass through ``_visible``
-        before anything is rendered - one filter, applied the same way to all
-        three, so ``sensitivity == "private"`` cannot be wired to two of them
-        and forgotten on the third. That is exactly how a private
-        carry-forward once reached plaintext ``State.md``: ``chase`` was
-        filtered and ``watch`` was not.
+        Nothing is removed, reordered or reflowed. A run that derived nothing
+        writes nothing at all - which is the whole of #130: on 2026-09-14 an
+        `eod` run that derived nothing rendered exactly that over four
+        hand-written chase items and six run-log lines.
 
-        ``chase`` is coerced to :class:`ChaseItem` whether a caller passes one
-        already or a bare dict such as ``{"owner": ..., "ask": ...}`` - both
-        sides of the log/vault seam are held to the one shape now (#63). An
-        item with neither ``owner`` nor ``ask`` degrades to a named warning
-        line rather than the ``- ?`` it used to render silently.
+        ``chase``, ``watch`` and ``notes_gaps`` still pass through ``_visible``
+        first - one filter, applied the same way to all three, so
+        ``sensitivity == "private"`` cannot be wired to two of them and
+        forgotten on the third. Appending rather than replacing must not route
+        around the gate a private carry-forward once slipped past.
 
-        ``notes_gaps`` is coerced to :class:`NotesGap`, which gives a
-        meeting's own title the same sensitivity channel ``chase`` and
-        ``watch`` already had (#61) - a plain string is still accepted, read
-        as ``sensitivity="normal"``.
+        ``chase`` is coerced to :class:`ChaseItem` and ``notes_gaps`` to
+        :class:`NotesGap` whether a caller passes one already or a bare dict
+        (#63, #61). An item with neither ``owner`` nor ``ask`` degrades to a
+        named warning line rather than the ``- ?`` it used to render silently.
+
+        Raises:
+            StateNotWritable: the file could not be reproduced from its own
+                parse. Nothing is written. A shape the parser cannot model is
+                worth a skipped update and a complaint; it is not worth a
+                best-effort rewrite of the file this method exists to protect.
         """
-        lines = ["# State", "", "## Chase list", ""]
+        before = self.read_state() if self.state_path.exists() else _EMPTY_STATE
+        doc = StateDoc.parse(before)
+        if doc.render() != before:
+            raise StateNotWritable(
+                f"{self.state_path} does not survive its own parse, so it was left alone. "
+                "Nothing was written."
+            )
+
         for item in _visible(_as_chase_item(raw) for raw in chase):
-            if not item.has_owner_or_ask:
-                lines.append(f"- {WARN} chase item {item.key} has no owner or ask recorded")
+            if doc.contains(*_needles_for(item)):
                 continue
-            lines.append(f"- {item.owner or '?'} · {item.ask}".rstrip(" ·"))
-        lines += ["", "## Watch items", ""]
+            doc.append("Chase list", _render_chase(item))
         for item in _visible(watch):
-            lines.append(f"- {item.get('what', '')}")
-        gaps = _visible(NotesGap.from_value(gap) for gap in notes_gaps)
-        if gaps:
-            # A titleless gap gets a named warning, not a bare `- `. The chase
-            # path one section up already degrades that way, and a blank bullet
-            # is the same formatting-glitch-standing-in-for-data that #63 was
-            # about. Reachable: a calendar-shaped record keyed `summary` rather
-            # than `title` coerces to an empty title.
-            lines += ["", "## Notes gaps", ""] + [
-                f"- {gap.title}"
-                if gap.title
-                else f"- {WARN} a notes gap arrived with no title recorded"
-                for gap in gaps
-            ]
-        self.state_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            what = str(item.get("what", ""))
+            if not what or doc.contains(what):
+                continue
+            doc.append("Watch items", [f"- {what}", ""])
+        for gap in _visible(NotesGap.from_value(raw) for raw in notes_gaps):
+            if not gap.title or doc.contains(gap.title):
+                continue
+            doc.append("Notes gaps", [f"- {gap.title}", ""])
+
+        after = doc.render()
+        if after == before:
+            # A no-op run must not churn the file, the archive, or the iCloud
+            # sync that carries both to his other devices.
+            return
+        if self.state_path.exists():
+            (self.root / "Archive").mkdir(exist_ok=True)
+            (self.root / "Archive" / "State.md.bak").write_text(before, encoding="utf-8")
+        self.state_path.write_text(after, encoding="utf-8")
 
     def read_state(self) -> str:
         return self.state_path.read_text(encoding="utf-8")
@@ -694,7 +999,7 @@ class EventLog:
         """Decoded events, skipping any row whose payload will not parse.
 
         Skipped rather than raised. This feeds `chase_items`, which feeds
-        `write_state` - so one torn or hand-repaired row would otherwise take
+        `update_state` - so one torn or hand-repaired row would otherwise take
         `State.md` down wholesale. The run log is now by far the highest-volume
         writer into this table, and a damaged row of *its* would have blanked
         the chase list. A row that cannot be decoded carries nothing a chase
@@ -806,7 +1111,7 @@ class EventLog:
         with only `key` rendered as `- ?` in `State.md`, a formatting glitch
         standing in for data nobody had agreed had to be there.
         `ChaseItem.from_payload` is where that agreement now lives, and
-        `write_state` is held to the same shape on its side of the seam.
+        `update_state` is held to the same shape on its side of the seam.
         """
         return [
             ChaseItem.from_payload(payload, sensitivity=sensitivity)

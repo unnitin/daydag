@@ -76,7 +76,7 @@ GAPS - not covered here, and not pretended to be
     (#69, see "Was GAP 1" below) and the undated stale mirror (#60, "was
     GAP 2") - so the numbers are retired in order rather than reused.
 
-    #63's `chase`/`write_state` shape disagreement was never a numbered gap
+    #63's `chase`/`update_state` shape disagreement was never a numbered gap
     here at all: it surfaced as a runtime warning rather than an unguarded
     invariant. `tests/test_state_store.py` carries its coverage.
 """
@@ -409,15 +409,19 @@ def test_decisions_grow_by_append_only(folder: StateFolder):
 
 
 @pytest.mark.guardrail
-def test_the_only_truncating_vault_write_is_the_derived_projection(
+def test_a_loop_rewrites_no_vault_file_but_state_md_and_only_with_its_old_text_kept(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    """BEHAVIOURAL. A whole loop may truncate State.md and nothing else.
+    """BEHAVIOURAL. A whole loop may re-write State.md and nothing else.
 
-    State.md is a projection and is documented as replaced every run. Decisions
-    and Watchlist are not, so a truncating write to either is a lost hand edit.
-    This watches the filesystem calls rather than the resulting text, because
-    the corrupting version is the one that writes back identical-looking content.
+    `update_state` re-writes State.md in place because it renders the whole
+    parsed document back - but what it renders is the old text plus whatever
+    was appended (#130), which the tests in `test_state_append.py` pin. Two
+    things are checked here that those cannot see: that Decisions and Watchlist
+    are never touched by the same call, and that the previous text is archived
+    first. This watches the filesystem calls rather than the resulting text,
+    because the corrupting version is the one that writes back
+    identical-looking content.
     """
     truncated: list[Path] = []
     real_write_text = Path.write_text
@@ -439,7 +443,7 @@ def test_the_only_truncating_vault_write_is_the_derived_projection(
     queue = DecisionQueue(folder)
     queue.add("draft nudge to the VP?")
     queue.render()
-    folder.write_state(
+    folder.update_state(
         chase=[{"owner": "vp-data", "ask": "compute consolidation"}],
         watch=[{"what": "nightly ingest job"}],
         notes_gaps=["1:1 with no notes"],
@@ -452,6 +456,11 @@ def test_the_only_truncating_vault_write_is_the_derived_projection(
     assert folder.decisions_path not in truncated, "Decisions.md was truncated"
     assert folder.watchlist_path not in truncated, "Watchlist.md was truncated"
     assert (folder.root / "README.md") not in truncated
+    backup = folder.root / "Archive" / "State.md.bak"
+    assert backup in truncated, (
+        "State.md was re-written with no archived copy of what it said before - "
+        "the missing backup path #130 was restored by hand from a transcript"
+    )
 
 
 @pytest.mark.guardrail
@@ -680,7 +689,7 @@ def test_no_private_item_reaches_any_file_in_the_vault(folder: StateFolder):
         "loop_opened", sensitivity="normal", key="DATA-812", ask="compute consolidation", day=0
     )
 
-    folder.write_state(
+    folder.update_state(
         chase=log.chase_items(),
         watch=[{"what": marker, "sensitivity": "private"}, {"what": "nightly ingest job"}],
     )
@@ -704,14 +713,14 @@ def test_a_sensitive_meeting_title_never_reaches_the_vault_as_a_notes_gap(folder
     bare strings with nothing to tag "private" onto; the caller had to
     pre-filter, and every other list in this file is filtered right here
     because a caller cannot be trusted to remember. `NotesGap` gives it the
-    same shape `chase` and `watch` already had, so `write_state` closes the
+    same shape `chase` and `watch` already had, so `update_state` closes the
     gap structurally instead of asking `notes_gaps`' one caller to.
 
     Walks the whole folder, like its `chase`/`watch` sibling above: the
     guarantee is about the vault, not about one section of one file.
     """
     marker = "exit interview follow-up"
-    folder.write_state(notes_gaps=[{"title": marker, "sensitivity": "private"}, "Pod Steering"])
+    folder.update_state(notes_gaps=[{"title": marker, "sensitivity": "private"}, "Pod Steering"])
 
     leaked = [
         path.relative_to(folder.root)
@@ -740,7 +749,7 @@ def test_a_sensitive_notes_gap_is_withheld_whichever_shape_it_arrives_in(
     class this whole branch exists to close, reproduced inside the closing.
     """
     marker = "exit interview follow-up"
-    folder.write_state(notes_gaps=[NotesGap(title=marker, sensitivity="private")])
+    folder.update_state(notes_gaps=[NotesGap(title=marker, sensitivity="private")])
 
     leaked = [
         path.relative_to(folder.root)
@@ -751,7 +760,7 @@ def test_a_sensitive_notes_gap_is_withheld_whichever_shape_it_arrives_in(
 
 
 def test_coercing_a_notes_gap_twice_changes_nothing(folder: StateFolder):
-    """`from_value` has to be idempotent, because `write_state` calls it on
+    """`from_value` has to be idempotent, because `update_state` calls it on
     whatever it is handed - including something already coerced upstream."""
     once = NotesGap.from_value({"title": "Pod Steering", "sensitivity": "private"})
     twice = NotesGap.from_value(once)
