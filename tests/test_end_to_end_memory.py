@@ -328,14 +328,17 @@ def test_absence_from_a_day_that_was_not_fetched_is_not_evidence(home):
 
 
 def test_an_overnight_event_from_tomorrows_fetch_does_not_prove_today_was_fetched(home):
-    """eod fetches tomorrow. An event that starts tonight and runs past
-    midnight comes back in that window - it must not tombstone today."""
-    _render(home, "morning", MONDAY, [_at(MONDAY, 9, "Pod Steering", "e1")])
+    """An event that starts tonight and runs past midnight also comes back in
+    the next day's window. It must not be what decides today was fetched.
+    eod now fetches today as well (#167), so its payload carries today's
+    meetings - the overnight event must not tombstone them either way."""
+    pod = _at(MONDAY, 9, "Pod Steering", "e1")
+    _render(home, "morning", MONDAY, [pod])
     red_eye = {
         **_at(MONDAY, 23, "Red-eye", "flight"),
         "end": TUESDAY.replace(hour=2, minute=0).isoformat(),
     }
-    _render(home, "eod", MONDAY.replace(hour=18), [red_eye])
+    _render(home, "eod", MONDAY.replace(hour=18), [pod, red_eye])
     assert "Pod Steering" in _render(home, "morning", TUESDAY)
 
 

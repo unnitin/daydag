@@ -80,16 +80,52 @@ _MIN_TERM = 4
 _MIN_OVERLAP = 2
 
 _WORD = re.compile(r"[a-z0-9][a-z0-9'-]*")
-#: Triage glyphs, checkbox syntax, emphasis and the `(mine)` / `(tracking: x)`
-#: tags the weekly note carries - none of them part of what an item IS.
-_NOISE = re.compile(r"\[[ xX]\]|\*\(?[^)]*\)?\*|[*_`~]|\((mine|tracking:[^)]*|x-team)\)")
+
+#: Checkbox syntax and the weekly note's ownership tags. `[^)]*` after the
+#: keyword because they are written freehand: `(mine)`, `(mine w/ Gov-Lead)`,
+#: `(tracking: VP-Data)`.
+_TAGS = re.compile(r"\[[ xX]\]|\((?:mine|x-team|tracking)[^)]*\)", re.IGNORECASE)
+
+#: Emphasis, stripped as CHARACTERS and never as a span.
+#:
+#: Deleting `*...*` as a span was greedy: on `**Deal Modeler** cutover *(mine)*`
+#: it ate from the first asterisk to the last and returned the empty set, so a
+#: bold-titled red item could never reach `_MIN_OVERLAP` and never produced a
+#: proposal - silently. The live weekly note bolds every item title, which is
+#: `weekly-planning`'s house format, so the detector was blind to precisely the
+#: items it exists to track. It also ran over Slack evidence, where `*bold*` is
+#: Slack's own markup.
+_EMPHASIS = re.compile(r"[*_`~]+")
+
+#: A bare date or number. `2026-09-10` survives `_WORD` as one token and is
+#: shared by every item filed on the same day.
+_NUMERIC = re.compile(r"^[\d-]+$")
+
+#: The chase row's own bookkeeping. `- owner · ask · asked-on DATE · status
+#: open` puts `asked-on`, `status` and `open` in EVERY row, which is two shared
+#: terms before a single word of the ask is read - so one message saying
+#: "status on that, still open" matched all four live chase items at once.
+#: Stripped from the matching text; `OpenItem.text` keeps the whole row for
+#: display, because what he reads should be the row he wrote.
+_BOOKKEEPING = re.compile(
+    r"·\s*(?:asked-on|due|last-activity|status|waiting since|snoozed-until)\b[^·]*",
+    re.IGNORECASE,
+)
 
 
 def _terms(text: str) -> frozenset[str]:
-    """The distinctive words in ``text``, lowercased."""
-    cleaned = _NOISE.sub(" ", str(text)).casefold()
+    """The distinctive words in ``text``, lowercased.
+
+    Tags come off before emphasis, so `*(mine w/ Gov-Lead)*` loses the tag
+    while its parens are still there to bound it and the orphaned asterisks go
+    with the emphasis pass.
+    """
+    cleaned = _BOOKKEEPING.sub(" ", str(text))
+    cleaned = _EMPHASIS.sub("", _TAGS.sub(" ", cleaned)).casefold()
     return frozenset(
-        word for word in _WORD.findall(cleaned) if len(word) >= _MIN_TERM and word not in _STOPWORDS
+        word
+        for word in _WORD.findall(cleaned)
+        if len(word) >= _MIN_TERM and word not in _STOPWORDS and not _NUMERIC.match(word)
     )
 
 
@@ -131,8 +167,28 @@ class Movement:
     proposed: str
 
 
+#: A loop he has deliberately paused. `State.md` documents the convention
+#: ("To pause instead, write `status: snoozed-until YYYY-MM-DD`"), and parked
+#: is the chase list's own third state. Re-proposing either is re-asking a
+#: question he has already answered.
+_PAUSED = re.compile(r"snoozed-until|status:?\s*(?:parked|snoozed)", re.IGNORECASE)
+
+
 def _key(text: str) -> str:
-    return " ".join(str(text).split())[:60].casefold()
+    """The identity of an item, for deduping it across the two stores.
+
+    Built from `_terms` rather than from the raw line, because the same loop is
+    written differently in each: `- eddie · fruits metadata list · asked-on …`
+    in the chase list and `- [ ] 🔴 fruits metadata list` in the weekly note.
+    Keying on the raw head made those two different items and the wrap asked
+    him to confirm one thing twice.
+
+    Two rows still survive when the wordings genuinely differ - an owner named
+    in one and not the other is a real difference in the words. That is the
+    cheap failure of the two: he can see a duplicate.
+    """
+    terms = _terms(text)
+    return " ".join(sorted(terms)) if terms else " ".join(str(text).split())[:60].casefold()
 
 
 def open_items(*, state: str, note: str, note_path: str) -> list[OpenItem]:
@@ -150,7 +206,7 @@ def open_items(*, state: str, note: str, note_path: str) -> list[OpenItem]:
     """
     items: list[OpenItem] = []
     for body in read_section(str(state or ""), "Chase list", top_level=True):
-        if "~~" in body:
+        if "~~" in body or _PAUSED.search(body):
             continue
         owner = body.split("·")[0] if "·" in body else ""
         items.append(
@@ -165,7 +221,30 @@ def open_items(*, state: str, note: str, note_path: str) -> list[OpenItem]:
     # reads the note's own layout rather than a template (invariant 6).
     for _lineno, text in red_items(str(note or "")):
         items.append(OpenItem(key=_key(text), text=text, owner="", source=note_path))
-    return items
+    return _deduped(items)
+
+
+def _deduped(items: list[OpenItem]) -> list[OpenItem]:
+    """One row per loop, first store wins.
+
+    He tracks the same loop in both stores routinely - a red item in the week's
+    priorities and a chase row for the person who owes it - and reading both is
+    deliberate, because neither is complete. Without this the wrap prints the
+    same thing twice under `looks moved - confirm` and counts it twice in the
+    header.
+
+    Keyed on `_key`, which is the flattened head of the row, so the two
+    wordings have to actually agree. They often will not, and a duplicate is
+    the cheap failure here: he can see it.
+    """
+    seen: set[str] = set()
+    out: list[OpenItem] = []
+    for item in items:
+        if item.key in seen:
+            continue
+        seen.add(item.key)
+        out.append(item)
+    return out
 
 
 def _records(raw: Any) -> list[Mapping[str, Any]]:
@@ -181,6 +260,19 @@ def _text(record: Mapping[str, Any], *fields: str) -> str:
     return " ".join(str(record.get(f) or "") for f in fields).strip()
 
 
+#: Per source: the field QUOTED, the fields matched on, where the link is, and
+#: where the timestamp is. Quote and match are separate columns because they
+#: answer different questions - a Gemini note matches on its subject and its
+#: snippet together, but quoting the two concatenated produces a sentence that
+#: appears nowhere in the message he is being sent to go and read, which is
+#: contract 3 and house rule 1 broken in the one place they are load-bearing.
+_SHAPES: tuple[tuple[str, str, tuple[str, ...], tuple[str, ...], str], ...] = (
+    ("calendar", "summary", ("summary",), ("htmlLink", "permalink"), "start"),
+    ("slack", "text", ("text",), ("permalink",), "ts"),
+    ("gmail", "subject", ("subject", "snippet"), ("permalink", "link"), "date"),
+)
+
+
 def _candidates(
     calendar: Any, slack: Any, gmail: Any
 ) -> list[tuple[str, Evidence, frozenset[str]]]:
@@ -188,39 +280,27 @@ def _candidates(
 
     One pass over each payload rather than one per open item: the terms are
     the expensive part and they do not depend on which item is being matched.
+
+    A record with no permalink is DROPPED, which is what `run._prep` already
+    does to a linkless message and for the same reason. The alternative was
+    keeping it and letting the wrap cite the vault path the item came from
+    instead, which renders a Slack quote as though `DayDAG/State.md` said it -
+    a citation that points at the wrong document is worse than no row.
     """
     out: list[tuple[str, Evidence, frozenset[str]]] = []
-    for record in _records(calendar):
-        quote = _text(record, "summary")
-        if quote:
-            link = str(record.get("htmlLink") or record.get("permalink") or "")
+    for payload, (source, quote_field, match_fields, link_fields, at_field) in zip(
+        (calendar, slack, gmail), _SHAPES, strict=True
+    ):
+        for record in _records(payload):
+            quote = _text(record, quote_field)
+            link = next((str(record[f]) for f in link_fields if record.get(f)), "")
+            if not quote or not link:
+                continue
             out.append(
                 (
-                    "calendar",
-                    Evidence("calendar", quote, link, str(record.get("start") or "")),
-                    _terms(quote),
-                )
-            )
-    for record in _records(slack):
-        quote = _text(record, "text")
-        if quote:
-            link = str(record.get("permalink") or "")
-            out.append(
-                (
-                    "slack",
-                    Evidence("slack", quote, link, str(record.get("ts") or "")),
-                    _terms(quote),
-                )
-            )
-    for record in _records(gmail):
-        quote = _text(record, "subject", "snippet")
-        if quote:
-            link = str(record.get("permalink") or "")
-            out.append(
-                (
-                    "gmail",
-                    Evidence("gmail", quote, link, str(record.get("date") or "")),
-                    _terms(quote),
+                    source,
+                    Evidence(source, quote, link, str(record.get(at_field) or "")),
+                    _terms(_text(record, *match_fields)),
                 )
             )
     return out

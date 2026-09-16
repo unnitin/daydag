@@ -347,11 +347,16 @@ def _calendar_windows(
         # this same arithmetic, so fetch and match are one set.
         return recipes.calendar_days(day, day + timedelta(days=HORIZON_DAYS - 1), tz=tz)
     if loop == "eod":
-        # `eod_wrap` reads exactly one window, and it is the next WORKING
-        # day's: the wrap reports the day that just ended and previews the
-        # first meeting of the next one he works - Monday from a Friday, not
-        # an empty Saturday (#170).
-        return [recipes.calendar_day(recipes.next_working_day(day))]
+        # TWO windows, and they have different consumers. `eod_wrap` reads the
+        # next WORKING day's, to preview the first meeting of the next day he
+        # works - Monday from a Friday, not an empty Saturday (#170).
+        # `daydag.movement` reads today's, because a room that was asked for
+        # and has now HAPPENED is the cheapest evidence there is that a loop
+        # moved - his own example for #134 was "drokit meeting w/ chris has
+        # been scheduled, you can confirm that yourself through calendar".
+        # `_Payloads.calendar` filters by window, so the wrap still sees only
+        # the day it previews.
+        return [recipes.calendar_day(day), recipes.calendar_day(recipes.next_working_day(day))]
     if loop == "week-ahead":
         this_monday, _ = recipes.week_range(day)
         next_monday = this_monday + timedelta(days=7)
