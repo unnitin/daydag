@@ -220,7 +220,12 @@ def assemble(
     # are PROPOSALS. #18's critical rule is that evidence of movement surfaces
     # for confirmation and never auto-closes, and #134 is that the rule is the
     # system's rather than the chaser's. Nothing here adds to `closed`.
-    proposals = [row for row in movement if isinstance(row, Movement)]
+    # Filtered on `evidence` HERE, so the count and the lines cannot disagree.
+    # They did: the heading and the header both read `len(proposals)` while the
+    # line tuple dropped evidence-less rows, so one such row rendered
+    # "1 to confirm" above a section that `render_push` then omitted for being
+    # empty. `assemble` is public and takes any Sequence[Movement].
+    proposals = [row for row in movement if isinstance(row, Movement) and row.evidence]
     if proposals:
         sections.append(
             Section(
@@ -229,11 +234,9 @@ def assemble(
                     claim(
                         f"{row.item.text} - {row.proposed} per {row.evidence[0].source}",
                         row.evidence[0].permalink,
-                        row.item.source,
                         quote=row.evidence[0].quote,
                     )
                     for row in proposals
-                    if row.evidence
                 ),
             )
         )

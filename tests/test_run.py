@@ -336,21 +336,26 @@ def test_the_gmail_step_covers_the_window_the_brief_will_actually_ask_for(identi
 # --------------------------------------------------------------------------
 
 
-def test_the_eod_plan_fetches_tomorrow_not_today(identities):
-    """`eod_wrap` reads exactly one calendar window and it is TOMORROW's.
+def test_the_eod_plan_fetches_today_and_tomorrow_for_its_two_consumers(identities):
+    """Tomorrow for `eod_wrap`, today for `daydag.movement`.
 
     The plan fetched today for every loop, because it never looked at `loop`
     at all - and `_Payloads.calendar` then answered the tomorrow request from
     the today bucket. The wrap printed this morning's 8:15 standup as
     tomorrow's first meeting, and nothing failed.
+
+    Fixed to tomorrow-only, which was right while the wrap was the one
+    consumer. #134 added a second: a room that was asked for and has now
+    happened is evidence a loop moved, and that room is TODAY's. The wrap
+    still sees only tomorrow, because `_Payloads.calendar` filters by window.
     """
-    (calendar,) = [
-        s
+    days = [
+        s.detail["day"]
         for s in run.plan("eod", now=MONDAY_PT, identities=identities).steps
         if s.source == "calendar"
     ]
 
-    assert calendar.detail["day"] == "2026-09-08", "the wrap previews tomorrow, not today"
+    assert days == ["2026-09-07", "2026-09-08"], "the wrap previews tomorrow; movement reads today"
 
 
 def test_the_week_ahead_plan_fetches_seven_days_of_next_week(identities):

@@ -523,3 +523,22 @@ def test_no_evidence_means_no_section_at_all():
     text = _assemble(sources).render()
 
     assert "looks moved" not in text, text
+
+
+def test_an_evidence_less_row_is_not_counted_as_something_to_confirm():
+    """The heading and the push header both read `len(proposals)` while the
+    line tuple filtered on `row.evidence`, so one such row said "1 to confirm"
+    above a section `render_push` then dropped for being empty. `assemble` is
+    public and takes any Sequence[Movement]."""
+    from daydag.movement import Movement, OpenItem
+
+    empty = Movement(
+        item=OpenItem(key="k", text="an item", owner="", source="DayDAG/State.md"),
+        evidence=(),
+        proposed="discussed",
+    )
+
+    text = _assemble(FakeSources(), movement=[empty]).render()
+
+    assert "0 to confirm" in text, text
+    assert "looks moved" not in text, text

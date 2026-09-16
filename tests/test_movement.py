@@ -273,3 +273,92 @@ def test_his_sub_bullets_are_comments_on_an_item_not_more_items():
     items = open_items(state=state, note="", note_path="p.md")
 
     assert [item.text for item in items] == ["vp-data · fruits metadata list · status open"]
+
+
+# --------------------------------------------------------------------------
+# what the review of this branch found. Every one of these was a way the
+# detector was blind or noisy on the REAL files while the suite stayed green.
+# --------------------------------------------------------------------------
+
+
+def test_a_bold_item_title_survives_the_noise_stripping():
+    """The weekly note bolds every item title - it is `weekly-planning`'s house
+    format - and the tag `*(mine)*` follows it. Deleting `*...*` as a span ate
+    everything between the first asterisk and the last, so a bold-titled red
+    item reduced to the empty set and could never match anything. Silently: no
+    row, no warning, and a green suite, because the fixtures used a bare
+    trailing tag with no bold title before it.
+    """
+    from daydag.movement import _terms
+
+    bold = "- [ ] 🔴 **Deal Modeler cutover date** *(mine w/ Gov-Lead)*"
+
+    assert {"modeler", "cutover"} <= _terms(bold), sorted(_terms(bold))
+
+
+def test_the_chase_rows_own_bookkeeping_is_not_a_distinctive_term():
+    """`- owner · ask · asked-on DATE · status open` puts `asked-on`, `status`
+    and `open` in every row, which is two shared terms before a word of the ask
+    is read. One message saying "status on that, still open" matched all four
+    live chase items at once - the false-positive class contract 4 calls the
+    expensive one."""
+    items = open_items(state=STATE, note="", note_path="p.md")
+    slack = [_slack("quick status on the luminate contract - still open, will chase legal")]
+
+    assert detect(open_items=items, calendar=[], slack=slack, gmail=[], now=NOW) == []
+
+
+def test_evidence_with_no_permalink_is_dropped_not_cited_to_the_item():
+    """House rule 1. The wrap used to fall back to the item's own vault path,
+    so a Slack quote rendered as though `DayDAG/State.md` had said it. A
+    citation pointing at the wrong document is worse than no row - `run._prep`
+    already drops a linkless message for the same reason."""
+    items = open_items(state=STATE, note="", note_path="p.md")
+    linkless = {"text": "fruits metadata list is with finance now", "ts": "1789000000.1"}
+
+    assert detect(open_items=items, calendar=[], slack=[linkless], gmail=[], now=NOW) == []
+
+
+def test_a_loop_tracked_in_both_stores_is_one_row_not_two():
+    """He keeps the same loop in both - a red item for the week and a chase row
+    for whoever owes it - and reading both is deliberate. Two rows means the
+    wrap asks him to confirm the same thing twice and counts it twice."""
+    same = "fruits metadata list for the finance reconciliation"
+    items = open_items(
+        state=f"# State\n\n## Chase list\n\n- {same}\n",
+        note=f"# w\n\n- [ ] 🔴 {same}\n",
+        note_path="p.md",
+    )
+
+    assert len(items) == 1, [item.text for item in items]
+
+
+def test_an_item_he_has_snoozed_is_not_re_proposed():
+    """State.md documents the convention: "To pause instead, write
+    `status: snoozed-until YYYY-MM-DD`". Re-proposing it re-asks a question he
+    has already answered."""
+    state = (
+        "# State\n\n## Chase list\n\n"
+        "- vp-data · fruits metadata list · status: snoozed-until 2026-10-01\n"
+    )
+
+    assert open_items(state=state, note="", note_path="p.md") == []
+
+
+def test_a_gemini_note_is_quoted_by_its_subject_not_by_subject_plus_snippet():
+    """Contract 3. Concatenating the two produced a sentence appearing nowhere
+    in the message he is being sent to go and read. Matching on both is fine;
+    quoting the join is not."""
+    items = open_items(state=STATE, note="", note_path="p.md")
+    gmail = [
+        {
+            "subject": 'Notes: "Finance x Data" 2026-09-15',
+            "snippet": "the fruits metadata list is with finance; reconciliation next week",
+            "permalink": "https://example.com/mail/m1",
+        }
+    ]
+
+    (row,) = detect(open_items=items, calendar=[], slack=[], gmail=gmail, now=NOW)
+
+    assert row.evidence[0].quote == 'Notes: "Finance x Data" 2026-09-15'
+    assert "reconciliation" not in row.evidence[0].quote
