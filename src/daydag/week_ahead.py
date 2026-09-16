@@ -50,11 +50,12 @@ WHY IT EXISTS
     right.
 
 KNOWN LIMIT
-    The chase list's clock is not yet dated. ``state.write_state`` renders
-    ``owner · ask`` with no asked-on date, because the open-loop chaser (SPEC
-    3.4) that would stamp one has not shipped - so ``carrying_in`` lists the
-    WHOLE chase list rather than only the loops whose clock expires
-    Monday-Wednesday, which is what rule 1 literally asks for. That is the
+    The chase list's clock is not yet ACTED on. ``state.update_state`` does
+    render ``asked-on`` now (#130), but the open-loop chaser (SPEC 3.4) that
+    would compare it against today has not shipped, and most rows are his own
+    and carry whatever he typed - so ``carrying_in`` lists the WHOLE chase
+    list rather than only the loops whose clock expires Monday-Wednesday,
+    which is what rule 1 literally asks for. That is the
     honest degrade available today: a narrower cut would be inventing a date
     this module does not have, and CLAUDE.md's "surface, don't resolve"
     applies to a gap in the agent's own data the same as to anyone else's.
@@ -478,8 +479,12 @@ def assemble(
     watch_lines: list[str] = []
     if state is not None:
         written = read("the chase list", state.read_state, "")
-        carrying += [_line_from_state(body) for body in read_section(written, "Chase list")]
-        watch_lines = [_line_from_state(body) for body in read_section(written, "Watch items")]
+        carrying += [
+            _line_from_state(body) for body in read_section(written, "Chase list", top_level=True)
+        ]
+        watch_lines = [
+            _line_from_state(body) for body in read_section(written, "Watch items", top_level=True)
+        ]
 
     if carrying:
         sections.append(Section(f"carrying in ({len(carrying)})", tuple(carrying)))

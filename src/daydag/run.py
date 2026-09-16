@@ -76,7 +76,14 @@ from daydag.prep import Audience, Reason, build, point, prep_worthy
 from daydag.prep_selector import HORIZON_DAYS, select
 from daydag.runlog import RunLog
 from daydag.smoke import REACHED
-from daydag.state import EventLog, NotesGap, StateFolder, classify_sensitivity, read_section
+from daydag.state import (
+    EventLog,
+    NotesGap,
+    StateFolder,
+    StateNotWritable,
+    classify_sensitivity,
+    read_section,
+)
 
 __all__ = ["LOOPS", "Plan", "RunError", "Step", "main", "plan", "render"]
 
@@ -561,7 +568,7 @@ def _chase(folder: StateFolder | None, log: EventLog | None) -> str:
     except Exception:
         return "owed to you: couldn't read State.md"
 
-    lines = read_section(written, "Chase list")
+    lines = read_section(written, "Chase list", top_level=True)
     if not lines:
         return "owed to you: nothing open"
 
@@ -845,12 +852,23 @@ def render(
         # reported as a permanent "meeting w/ no notes", and a rescheduled one
         # became two rows - a phantom gap beside the real meeting.
         _remember(events, _seeded(payloads))
-    # `_project` writes the notes-gaps section FROM the ledger, so a loop that
-    # was handed an empty one must not project - it would replace what the
-    # morning run recorded with nothing, silently, under a flag main() accepts
-    # for every loop.
+    # Only the ledger-carrying loops project. The original reason - that a loop
+    # handed an empty ledger would REPLACE the notes-gaps section with nothing -
+    # stopped applying when `update_state` became an append (#130): projecting
+    # from an empty ledger now adds nothing and harms nothing. What the gate
+    # still does is keep `chase`, `ingest`, `ship` and `week-ahead` from filing
+    # their derived items, and whether it should is a separate decision from
+    # this one, so it stays as it is rather than being widened in passing.
     if write_state and loop in _NEEDS_LEDGER and folder is not None and events is not None:
-        _project(folder, events, ledger, now)
+        try:
+            _project(folder, events, ledger, now)
+        except StateNotWritable as unwritable:
+            # Guardrail 6: one line, never a dead push. The brief is already
+            # assembled at this point and `main` prints the RETURN VALUE, so
+            # letting this propagate threw away a complete brief over a file
+            # the writer declined to touch - the loudest possible failure for
+            # the most conservative possible refusal.
+            text += f"\n\n- couldn't update State.md: {unwritable}"
     return text
 
 
@@ -936,7 +954,7 @@ def _seeded(payloads: Mapping[str, Any]) -> list[Mapping[str, Any]]:
 
 
 def _project(folder: StateFolder, log: EventLog, ledger: Ledger, now: datetime) -> None:
-    """Rewrite `State.md` from what this run learned.
+    """Add what this run learned to `State.md`, leaving the rest alone.
 
     Through `update_state`'s own `_visible` gate rather than filtering here:
     the runner is not a second writer with its own idea of the rules, and the

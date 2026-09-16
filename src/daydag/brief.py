@@ -648,8 +648,12 @@ def assemble(
     # -- chase and watch, read out of the file he corrects by hand --------
     if state is not None:
         written = read("the chase list", state.read_state, "")
-        chase = [_line_from_state(body) for body in read_section(written, "Chase list")]
-        watch = [_line_from_state(body) for body in read_section(written, "Watch items")]
+        chase = [
+            _line_from_state(body) for body in read_section(written, "Chase list", top_level=True)
+        ]
+        watch = [
+            _line_from_state(body) for body in read_section(written, "Watch items", top_level=True)
+        ]
         if chase:
             sections.append(Section(f"owed to you ({len(chase)})", tuple(chase)))
 

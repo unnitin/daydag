@@ -129,13 +129,23 @@ _MD_LINK = re.compile(r"\[(?P<label>[^\]]*)\]\((?P<url>[^)\s]+)\)")
 _BARE_URL = re.compile(r"<?(?P<url>https?://[^\s>)]+)>?")
 
 
-def read_section(text: str, name: str) -> list[str]:
+def read_section(text: str, name: str, *, top_level: bool = False) -> list[str]:
     """Bullet bodies under the heading called ``name``, whatever its level.
 
     Shared by every reader of ``State.md`` - the brief's chase/watch sections
     and the week-ahead's carrying-in section both walk the same hand-edited
     file, and a second regex here is a second set of bugs that agree only on
     the easy cases.
+
+    Args:
+        top_level: return only bullets at column zero. An indented bullet is
+            HIS COMMENT on the item above it - "expect comments from me in
+            sub-bullets" (2026-09-15) - and since #130 it is also the quote
+            and the permalink `_render_chase` writes under each row. Without
+            this, one appended chase item reads back as three, and the brief
+            announced "owed to you (3)" with two of the three being a quote
+            and a bare link. The live file's 4 chase items read back as 22
+            bodies. Default off: nothing else has been audited for it.
     """
     wanted = name.casefold()
     collecting = False
@@ -153,7 +163,7 @@ def read_section(text: str, name: str) -> list[str]:
                 collecting = False
             continue
         bullet = _BULLET.match(line)
-        if collecting and bullet:
+        if collecting and bullet and not (top_level and line[:1].isspace()):
             bodies.append(bullet["body"])
     return bodies
 
@@ -422,6 +432,29 @@ class StateNotWritable(Exception):
     nobody anticipated - #130 is what a best-effort rewrite costs."""
 
 
+#: The character classes an identifier runs on. `CDI-91` is one token, so
+#: finding `CDI-9` inside it is not finding `CDI-9`.
+_IDENT_TAIL = re.compile(r"[0-9a-z-]$")
+
+
+def _found(needle: str, haystack: str) -> bool:
+    """``needle`` in ``haystack``, at a token boundary if it ends like an id.
+
+    Plain `in` is right for a phrase - he rewords "the compute plan" freely -
+    and wrong for a key, because ticket keys are prefixes of each other and a
+    false match drops a real ask silently.
+    """
+    if not _IDENT_TAIL.search(needle):
+        return needle in haystack
+    at = haystack.find(needle)
+    while at != -1:
+        after = haystack[at + len(needle) : at + len(needle) + 1]
+        if not after or not _IDENT_TAIL.match(after):
+            return True
+        at = haystack.find(needle, at + 1)
+    return False
+
+
 def _flatten(text: str) -> str:
     """``text`` reduced to what two versions of the same item share.
 
@@ -449,29 +482,41 @@ class Block:
 
     @property
     def head(self) -> str:
-        return self.lines[0] if self.lines else ""
+        """The bullet line itself - the first line with anything on it.
 
-    @property
-    def is_closed(self) -> bool:
-        """Whether he has already crossed this one off.
-
-        `~~struck~~` is the convention the file documents; `status done` is
-        what a row carries if it was closed by the loop instead.
+        Not `lines[0]`: `append` prepends a blank separator when the previous
+        block does not end in one, so `lines[0]` was `""` for exactly those
+        blocks and `matches` never saw the bullet. Two chase items recorded on
+        different days arrive in one `chase_items()` call, so the same ask was
+        filed twice within a single run.
         """
-        head = self.head
-        return "~~" in head or "status done" in _flatten(head) or "status: done" in head.casefold()
+        return next((line for line in self.lines if line.strip()), "")
 
     def matches(self, *needles: str) -> bool:
         """Whether the bullet line contains any of ``needles``.
 
-        Substring, after flattening. The two failure directions are not equal:
-        a missed match files a duplicate, which he can see and delete, while a
-        false match silently drops a real ask. Loose matching is the wrong
-        error here, so a needle has to be a phrase - `_needles_for` supplies
-        the ask and the key, never the owner alone.
+        Substring, after flattening, because he rewords a row when he files it
+        by hand. The two failure directions are not equal: a missed match
+        files a duplicate, which he can see and delete, while a false match
+        silently drops a real ask.
+
+        A needle ending in something identifier-shaped is matched at a
+        BOUNDARY rather than as a bare substring - ticket keys nest, and
+        `CDI-9` inside an existing `CDI-91` line read as already-filed and
+        dropped the ask.
         """
         flat = _flatten(self.head)
-        return any(n and _flatten(n) in flat for n in needles)
+        return any(n and _found(_flatten(n), flat) for n in needles)
+
+    def equals(self, text: str) -> bool:
+        """Whether the bullet IS ``text``, rather than containing it.
+
+        For the lists whose entries are short proper nouns - a watch item, a
+        notes gap titled `1:1` or `Standup`. A substring test there is dropped
+        by any line anywhere in the file that happens to contain the word, and
+        the gap is then silently never reported.
+        """
+        return _flatten(self.head).strip(" -·") == _flatten(text).strip(" -·")
 
 
 @dataclass(frozen=True)
@@ -509,11 +554,20 @@ class StateDoc:
         doc.append("Chase list", ["- vp-data · the compute plan", ""])
 
     CONTRACTS
-        1. `parse` is TOTAL and `render` is its exact inverse. A line the
-           parser has no model for is carried in whichever block or prologue
-           it landed in, so it comes back unchanged. Nothing is dropped and
-           nothing is normalised - not indentation, not blank runs, not the
-           trailing newline.
+        1. `parse` is TOTAL and `render` is its exact inverse, for ANY string.
+           A line the parser has no model for is carried in whichever block or
+           prologue it landed in, so it comes back unchanged. Nothing is
+           dropped and nothing is normalised - not indentation, not blank
+           runs, not the trailing newline.
+
+           Split on `"\\n"` and nothing else. `str.splitlines()` also breaks on
+           `\\r`, `\\x0b`, `\\x0c`, `\\x1c`, `\\x85`, `\\u2028` and `\\u2029`,
+           all of which paste in from a browser or a Slack copy - and `render`
+           rejoined with `\\n`, so a file carrying one did not survive its own
+           parse and every loop then refused to write it. Worse, house rule 1
+           makes a verbatim quote mandatory, so ONE quoted line separator
+           written into `State.md` froze the file permanently and raised on
+           every run afterwards.
         2. `append` only ever adds lines. There is no method that removes or
            edits a block, which is the structural half of house rule 3: a
            caller cannot clobber what it did not derive, because no call does.
@@ -528,7 +582,6 @@ class StateDoc:
     """
 
     sections: list[StateSection]
-    final_newline: bool = True
 
     @classmethod
     def parse(cls, text: str) -> StateDoc:
@@ -551,7 +604,7 @@ class StateDoc:
                 sections.append(StateSection(heading, tuple(prologue), tuple(blocks)))
             prologue, blocks = [], []
 
-        for line in text.splitlines():
+        for line in text.split("\n"):
             if _HEADING.match(line):
                 close_section()
                 heading = line
@@ -565,14 +618,19 @@ class StateDoc:
             else:
                 prologue.append(line)
         close_section()
-        return cls(sections, final_newline=text.endswith("\n"))
+        return cls(sections)
 
     def render(self) -> str:
+        """The document, byte for byte as it was parsed.
+
+        `"\\n".join` is the exact inverse of `split("\\n")`, including the
+        empty final element a trailing newline produces - which is why there
+        is no `final_newline` flag to get wrong.
+        """
         lines: list[str] = []
         for section in self.sections:
             lines += section.lines
-        text = "\n".join(lines)
-        return text + "\n" if self.final_newline and text else text
+        return "\n".join(lines)
 
     def section(self, name: str) -> StateSection | None:
         wanted = name.casefold()
@@ -589,6 +647,22 @@ class StateDoc:
         re-filing either is the same wrong answer.
         """
         return any(block.matches(*needles) for section in self.sections for block in section.blocks)
+
+    def is_line(self, text: str, *, section: str) -> bool:
+        """Whether a bullet in ``section`` IS ``text``, not merely contains it.
+
+        Two narrowings from `contains`, and both matter for the short-phrase
+        lists:
+
+        * whole line, because `contains("1:1")` is true of almost any file -
+          "prep for the 1:1 with the CFO" is not a duplicate of the gap `1:1`;
+        * one section, because `contains` searches all of them by design
+          (contract 3) and a watch item named `1:1` is not the same fact as a
+          notes gap named `1:1`. Cross-section suppression there would drop
+          whichever of the two was written second.
+        """
+        found = self.section(section)
+        return any(block.equals(text) for block in found.blocks) if found else False
 
     def append(self, name: str, lines: list[str]) -> None:
         """Add ``lines`` as a new block at the end of the section ``name``.
@@ -647,6 +721,11 @@ def _needles_for(item: ChaseItem) -> tuple[str, ...]:
     The ask and the key, never the owner alone: he has four open items with
     one owner, and matching on the owner would read every one of them as
     already filed.
+
+    Returns ``()`` when neither clears its floor. The caller then falls back to
+    the rendered bullet itself - without that, `contains(*())` is vacuously
+    False and the item is appended on EVERY run: four loops a day, four copies
+    a day, unbounded, in the one file this whole change exists to protect.
     """
     return tuple(
         n
@@ -761,16 +840,28 @@ class StateFolder:
             )
 
         for item in _visible(_as_chase_item(raw) for raw in chase):
-            if doc.contains(*_needles_for(item)):
+            lines = _render_chase(item)
+            # The rendered bullet is the LAST-RESORT needle, for an ask too
+            # short to identify and a degraded row that is only a warning: run
+            # two renders the same line, so run two recognises it. Without it
+            # `contains()` on an empty tuple is vacuously False and the row is
+            # appended again every loop, forever.
+            if doc.contains(*(_needles_for(item) or (lines[0],))):
                 continue
-            doc.append("Chase list", _render_chase(item))
+            doc.append("Chase list", lines)
         for item in _visible(watch):
             what = str(item.get("what", ""))
-            if not what or doc.contains(what):
+            # `is_line` and not `contains`: a watch item is a short phrase, and
+            # a substring test is satisfied by any line anywhere in the file -
+            # the run log, a sub-bullet, a struck row - which drops the item
+            # silently.
+            if not what or doc.is_line(what, section="Watch items"):
                 continue
             doc.append("Watch items", [f"- {what}", ""])
         for gap in _visible(NotesGap.from_value(raw) for raw in notes_gaps):
-            if not gap.title or doc.contains(gap.title):
+            # Same as `watch`, and more exposed: a meeting title is routinely
+            # `1:1` or `Standup`, which a substring test finds everywhere.
+            if not gap.title or doc.is_line(gap.title, section="Notes gaps"):
                 continue
             doc.append("Notes gaps", [f"- {gap.title}", ""])
 

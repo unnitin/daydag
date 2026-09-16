@@ -11,6 +11,7 @@ actually grew into - a conventions preamble, sub-bullets under each item, an
 run log - none of which any version of the writer has ever emitted.
 """
 
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -257,3 +258,169 @@ def test_a_file_that_fails_its_own_round_trip_is_refused_not_rewritten(folder, m
         folder.update_state(chase=[{"key": "NEW-1", "owner": "vp-ai", "ask": "wave 2 scope"}])
 
     assert folder.read_state() == before, "the file was written despite the refusal"
+
+
+# --------------------------------------------------------------------------
+# what the review of this branch found. Every one of these was reproducible
+# against a real file while the suite above stayed green.
+# --------------------------------------------------------------------------
+
+
+LINE_SEPARATOR = chr(0x2028)
+NEXT_LINE = chr(0x85)
+FORM_FEED = chr(0x0C)
+
+
+@pytest.mark.parametrize(
+    "name,text",
+    [
+        ("line separator", "# State" + LINE_SEPARATOR + "x\n"),
+        ("next line", "# State" + NEXT_LINE + "x\n"),
+        ("form feed", "# State" + FORM_FEED + "x\n"),
+        ("a bare newline", "\n"),
+        ("nothing at all", ""),
+        ("no trailing newline", "# State\n\n## Chase list\n\n- a thing"),
+    ],
+)
+def test_the_round_trip_holds_for_any_string_at_all(name, text):
+    """`str.splitlines()` also breaks on \\r, \\x0b, \\x0c, \\x1c, \\x85,
+    \\u2028 and \\u2029, and `render` rejoined with \\n - so a file carrying
+    any of them did not survive its own parse and every loop refused to write
+    it. They arrive by pasting from a browser or copying out of Slack."""
+    from daydag.state import StateDoc
+
+    assert StateDoc.parse(text).render() == text, name
+
+
+@pytest.mark.guardrail
+def test_a_quoted_line_separator_cannot_freeze_the_file(folder):
+    """House rule 1 makes the verbatim quote mandatory, so this was on the main
+    path: one quoted separator written in, and every subsequent run - including
+    a no-op - raised, permanently."""
+    folder.update_state(
+        chase=[
+            {
+                "key": "K1",
+                "owner": "vp-data",
+                "ask": "the compute consolidation plan",
+                "quote": "we agreed" + LINE_SEPARATOR + "on friday",
+            }
+        ]
+    )
+
+    folder.update_state()  # must not raise
+
+    assert "compute consolidation" in folder.read_state()
+
+
+def test_a_run_that_cannot_write_state_costs_one_line_not_the_whole_push(tmp_path, monkeypatch):
+    """Guardrail 6. `main` prints the RETURN VALUE, so letting `StateNotWritable`
+    propagate threw away a fully assembled brief over a file the writer had
+    just declined to touch."""
+    from daydag import run
+    from daydag.config import Identities
+    from daydag.state import StateDoc
+
+    env = tmp_path / ".env"
+    env.write_text(
+        f"SLACK_USER_PRINCIPAL=UPRINCIPAL1\nEMAIL_PRINCIPAL=principal@x.com\n"
+        f"VAULT_ROOT={tmp_path / 'vault'}\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "vault" / "Weekly Notes").mkdir(parents=True)
+    monkeypatch.setattr(StateDoc, "render", lambda self: "# State\n")
+
+    text = run.render(
+        "morning",
+        now=datetime(2026, 9, 7, 13, 40, tzinfo=UTC),
+        identities=Identities.from_file(env),
+        payloads={"calendar": [], "slack": [], "gmail": [], "vault": ""},
+        log=tmp_path / "events.db",
+        write_state=True,
+    )
+
+    assert text.strip(), "the whole push was lost"
+    assert "couldn't update State.md" in text, text
+
+
+def test_a_key_that_is_a_prefix_of_another_is_not_read_as_already_filed(folder):
+    """Ticket keys nest. `CDI-9` found inside an existing `CDI-91` line read as
+    already-filed and dropped the ask - the silent direction."""
+    folder.state_path.write_text(
+        "# State\n\n## Chase list\n\n- CDI-91 the ingestion backfill\n", encoding="utf-8"
+    )
+
+    folder.update_state(chase=[{"key": "CDI-9", "owner": "vp-data", "ask": "the schema migration"}])
+
+    assert "the schema migration" in folder.read_state()
+
+
+def test_an_ask_too_short_to_identify_is_still_filed_only_once(folder):
+    """`_needles_for` returns () below its floors, and `contains()` on an empty
+    tuple is vacuously False - so the row was appended on every run, four loops
+    a day, unbounded, in the file this whole change exists to protect."""
+    for _ in range(4):
+        folder.update_state(chase=[{"owner": "vp-ai", "ask": "scope"}])
+
+    assert folder.read_state().count("· scope") == 1, folder.read_state()
+
+
+def test_a_degraded_row_with_only_a_key_is_also_filed_only_once(folder):
+    for _ in range(3):
+        folder.update_state(chase=[{"key": "x"}])
+
+    assert folder.read_state().count("has no owner or ask recorded") == 1
+
+
+def test_two_identical_items_in_one_call_are_filed_once(folder):
+    """`append` prepends a blank separator when the previous block does not end
+    in one, so `lines[0]` was "" and `matches` never saw the bullet. Reachable:
+    `EventLog.chase_items()` returns one row per recorded event, so the same ask
+    recorded on two days arrives twice in a single call."""
+    folder.state_path.write_text(
+        "# State\n\n## Chase list\n\n- an existing row with no trailing blank", encoding="utf-8"
+    )
+    item = {"key": "K1", "owner": "vp-data", "ask": "the compute consolidation plan"}
+
+    folder.update_state(chase=[item, item])
+
+    assert folder.read_state().count("compute consolidation") == 1
+
+
+def test_a_short_watch_item_is_matched_as_a_whole_line_not_a_substring(folder):
+    """A notes gap titled `1:1` or `Standup` is an ordinary calendar summary. A
+    substring test is satisfied by any line anywhere in the file - the run log,
+    a sub-bullet, a struck row - and the gap is then silently never reported."""
+    folder.state_path.write_text(
+        "# State\n\n## Chase list\n\n- prep for the 1:1 with the CFO\n\n## Watch items\n",
+        encoding="utf-8",
+    )
+
+    folder.update_state(notes_gaps=["1:1"], watch=[{"what": "1:1"}])
+
+    assert folder.read_state().count("- 1:1") == 2, folder.read_state()
+
+
+def test_an_appended_item_reads_back_as_one_item_not_three(folder):
+    """THE READER SIDE. `_render_chase` writes the quote and the permalink as
+    sub-bullets, and `read_section` matched indented bullets - so the brief
+    announced "owed to you (3)" for one item, two of them being a quote and a
+    bare link. The live file's 4 chase items read back as 22 bodies."""
+    from daydag.state import read_section
+
+    folder.state_path.write_text("# State\n\n## Chase list\n\n## Watch items\n", encoding="utf-8")
+    folder.update_state(
+        chase=[
+            {
+                "key": "K1",
+                "owner": "vp-ai",
+                "ask": "the wave 2 rollout date",
+                "quote": "scoped by Friday",
+                "permalink": "https://example.com/p1",
+            }
+        ]
+    )
+
+    bodies = read_section(folder.read_state(), "Chase list", top_level=True)
+
+    assert bodies == ["vp-ai · the wave 2 rollout date · status open"], bodies
