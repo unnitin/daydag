@@ -256,3 +256,20 @@ def test_evidence_carries_its_own_source_name_and_nothing_invented():
     assert isinstance(row.evidence[0], Evidence)
     assert row.evidence[0].source == "gmail"
     assert row.evidence[0].permalink == "https://example.com/mail/m1"
+
+
+def test_his_sub_bullets_are_comments_on_an_item_not_more_items():
+    """The file's own convention: "expect comments from me in sub-bullets"
+    (2026-09-15). Reading them as open loops proposed movement against his own
+    annotations - the live State.md has 4 chase items under 22 bullets."""
+    state = (
+        "# State\n\n## Chase list\n\n"
+        "- vp-data · fruits metadata list · status open\n"
+        "\t- he has this working in the metadata workhorse already\n"
+        '\t- his words: *"I will have the list by tomorrow"*\n'
+        "\t- [slack · thread](https://example.com/p1)\n"
+    )
+
+    items = open_items(state=state, note="", note_path="p.md")
+
+    assert [item.text for item in items] == ["vp-data · fruits metadata list · status open"]
