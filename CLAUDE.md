@@ -109,6 +109,7 @@ Lowercase openers, casual capitalization. Short direct sentences. Numbered lists
 5. **Surface discrepancies, don't resolve them:** conflicting dates, duplicate meeting slots, defunct invites from departed people, unverified "done" claims.
 6. **Degrade gracefully:** a down connector gets one line ("couldn't check X") — never block or guess.
 7. Personnel/comp/M&A content: Nitin's DM only, minimal quoting.
+8. **The vault is a lagging indicator - never read it as status.** Obsidian records what he had time to write down, which on a day with seventeen meetings is nothing: *"dont just look at weekly note, actually look at calendar, slack and email to see how much things have moved, i dont always get the time to move things in obsidian"* (2026-09-15). A ticked checkbox is evidence something closed; an unticked one is evidence of nothing. Derive what moved from the live sources, render it as `evidence -> proposed status` with the verbatim quote and permalink, let him confirm, and only then write the vault. **Nothing auto-closes** - a merged PR is not the thing that was asked for and a scheduled meeting is not a held one (#18's critical rule, generalised in #134).
 
 ## 7. Reuse, don't rebuild
 

@@ -63,7 +63,7 @@ _EMOJI = re.compile("[\U0001f300-\U0001faff\U00002600-\U000027bf\u2b00-\u2bff]")
 #: fixtures exercise the interpolated form and not just the stripped skeleton.
 SAMPLE_DATA: dict[str, dict[str, object]] = {
     "morning_brief": {"day": "tue", "count": 4},
-    "eod_wrap": {"closed": 2, "moved": 3},
+    "eod_wrap": {"closed": 2, "moved": 3, "confirm": 1},
     "week_ahead": {},
     "ingest_digest": {"meeting": "the 2pm call", "summary": "2 commitments"},
     "prep_ping": {"meeting": "pod steering"},
@@ -156,7 +156,7 @@ def voice_violations(text: str) -> list[str]:
 # fixtures first and output second, and a diff on them should be readable.
 _TEMPLATES: dict[Push, str] = {
     Push.MORNING_BRIEF: "morning. {day} - {count} meetings",
-    Push.EOD_WRAP: "wrap: {closed} closed, {moved} moved",
+    Push.EOD_WRAP: "wrap: {closed} closed, {moved} moved, {confirm} to confirm",
     Push.WEEK_AHEAD: "week ahead - shape of it below",
     Push.INGEST_DIGEST: "logged from {meeting}: {summary}. anything wrong, lmk",
     Push.PREP_PING: "{meeting} in 30 - talking points in thread",

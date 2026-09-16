@@ -432,3 +432,94 @@ def test_the_moved_count_counts_movement_not_failure_notices(tmp_path):
 
     assert "could not fetch" in text, "the degrade line still ships"
     assert "moved (1)" not in text, f"a failure notice was counted as movement:\n{text}"
+
+
+# --------------------------------------------------------------------------
+# what the LIVE sources say moved (#134) - proposed, never asserted
+#
+# "dont just look at weekly note, actually look at calendar, slack and email
+# to see how much things have moved, i dont always get the time to move things
+# in obsidian" - 2026-09-15
+# --------------------------------------------------------------------------
+
+
+def _movement(proposed="discussed", quote="sending the list to finance now", link="https://x/1"):
+    from daydag.movement import Evidence, Movement, OpenItem
+
+    return Movement(
+        item=OpenItem(
+            key="fruits",
+            text="vp-data · fruits metadata list",
+            owner="vp-data",
+            source="DayDAG/State.md",
+        ),
+        evidence=(Evidence("slack", quote, link, "1789000000.0001"),),
+        proposed=proposed,
+    )
+
+
+def test_a_day_he_ticked_nothing_on_is_not_reported_as_a_quiet_day():
+    """The wrap read `closed_red_items` and nothing else, so a day with
+    seventeen meetings and no bookkeeping rendered `0 closed, 0 moved`."""
+    wrap = _assemble(FakeSources(notes={}), movement=[_movement()])
+
+    text = wrap.render()
+    assert "fruits metadata list" in text, f"the evidence never reached the wrap:\n{text}"
+    assert "sending the list to finance now" in text, "the verbatim quote was dropped"
+
+
+def test_the_proposal_is_rendered_as_a_question_not_as_a_fact():
+    text = _assemble(FakeSources(), movement=[_movement()]).render()
+
+    heading = [line for line in text.splitlines() if "confirm" in line]
+    assert heading, f"nothing asks him to confirm:\n{text}"
+
+
+@pytest.mark.guardrail
+def test_the_wrap_never_states_live_source_evidence_as_a_closure():
+    """#18's critical rule, which #134 lifts out of the chaser: evidence of
+    movement surfaces for confirmation and never auto-closes. A merged PR is
+    not the thing that was asked for; a scheduled meeting is not a held one."""
+    text = _assemble(
+        FakeSources(),
+        movement=[_movement(proposed="scheduled"), _movement(proposed="discussed")],
+    ).render()
+
+    closed_section = [line for line in text.splitlines() if line.startswith("closed today")]
+    assert not closed_section, f"live-source evidence was counted as closed:\n{text}"
+    for word in ("closed", "done", "resolved"):
+        assert f"- {word}" not in text.lower(), f"{word} asserted from evidence:\n{text}"
+
+
+@pytest.mark.guardrail
+def test_every_proposal_carries_a_permalink_or_the_path_it_came_from():
+    """Guardrail 3, checked with the same scanner the rest of the wrap is."""
+    from daydag.brief import unsourced_claims
+
+    text = _assemble(
+        FakeSources(),
+        movement=[_movement(link=""), _movement(link="https://x/2")],
+    ).render()
+
+    assert unsourced_claims(text) == [], text
+
+
+def test_the_header_says_how_many_are_waiting_on_him():
+    sources = FakeSources(notes={"Create Music Group/Weekly Notes/0907-0911.md": NOTE_WITH_CLOSED})
+    text = _assemble(sources, movement=[_movement()]).render()
+
+    assert text.startswith("wrap: 1 closed, 0 moved, 1 to confirm"), text
+
+
+def test_no_evidence_means_no_section_at_all():
+    """Contract 1. Silence is information; an empty "nothing to confirm"
+    heading is noise that teaches him to skim the wrap.
+
+    The header still says `0 to confirm`, like it says `0 closed` - it is one
+    fixed-shape line and a count that appears only sometimes is harder to read
+    than a zero.
+    """
+    sources = FakeSources(notes={"Create Music Group/Weekly Notes/0907-0911.md": NOTE_WITH_CLOSED})
+    text = _assemble(sources).render()
+
+    assert "looks moved" not in text, text
