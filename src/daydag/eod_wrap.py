@@ -5,8 +5,11 @@ USING IT
         def calendar(self, window):
             return []            # events in one local day
 
+        def weekly_note(self, path):
+            return "# 0914-0918"            # THIS week's plan of record
+
         def vault_note(self, path):
-            raise FileNotFoundError(path)   # nobody has written it yet
+            raise FileNotFoundError(path)   # any other path; nobody wrote it
 
     wrap = assemble(now=now, sources=Connectors(), ledger=ledger, pulse=pulse)
     wrap.render()
@@ -31,10 +34,16 @@ CONTRACTS
        already ran at 1pm and asking again at 4:30pm would be stale, not
        helpful (SPEC 3.5). This holds on every day, by construction, rather
        than by a Friday-only suppression: the offer is simply never built.
-    6. Reads exactly two sources of its own - `Sources.calendar` for tomorrow,
-       `Sources.vault_note` for a vault path. Everything else it reports comes
-       from a `Ledger` or `Pulse` the caller already built and owns; this
-       module never queries either directly.
+    6. Reads exactly three of its own - `Sources.calendar` for tomorrow,
+       `Sources.weekly_note` for THIS week's plan of record, and
+       `Sources.vault_note` for any other vault path. The first two are one
+       method fewer than they look: `weekly_note` exists because `run.plan`
+       emits this week's note under `vault` and every other note under
+       `vault_notes`, and the wrap read the wrong one of the two for its whole
+       life (#131) - the payload was there, and the wrap said "no weekly note"
+       over a 17,703-character file. Everything else it reports comes from a
+       `Ledger` or `Pulse` the caller already built and owns; this module
+       never queries either directly.
 
 WHY IT EXISTS
     It owns no source and no query, same as `daydag.brief`. Tomorrow's window
@@ -121,13 +130,21 @@ class Sources(Protocol):
     def calendar(self, window: recipes.DayWindow) -> Iterable[Mapping[str, Any]]:
         """Events in one local day."""
 
-    def vault_note(self, path: str) -> str:
-        """A vault note's text. ``FileNotFoundError`` means nobody wrote it.
+    def weekly_note(self, path: str) -> str:
+        """THIS week's plan of record. ``FileNotFoundError`` means no note.
 
-        One method for every vault-relative path the wrap reads - today's
-        weekly note, and on a Friday the coming week's plan and meeting prep
-        file. All three are "read whatever is at this path", not three
-        different kinds of read.
+        Separate from `vault_note` because the runner keys the two payloads
+        separately, not because the read is different: `run.plan` puts this
+        one under `vault` and every other path under `vault_notes`, and
+        `run.py`'s own comment says `vault` already means this note. The wrap
+        asked for it through the other method and so never saw it (#131).
+        """
+
+    def vault_note(self, path: str) -> str:
+        """Any OTHER vault path. ``FileNotFoundError`` means nobody wrote it.
+
+        On a Friday: the coming week's plan and its meeting prep file, which
+        the wrap reports on per contract 5.
         """
 
 
@@ -173,7 +190,7 @@ def assemble(
     # -- what closed today: the weekly note's own ticked red items --------
     note_path = recipes.weekly_note(day)
     note, missing_note = read_vault_note(
-        read, lambda: sources.vault_note(note_path), label="the weekly note"
+        read, lambda: sources.weekly_note(note_path), label="the weekly note"
     )
     if missing_note:
         sections.append(

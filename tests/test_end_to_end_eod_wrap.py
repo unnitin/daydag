@@ -43,7 +43,7 @@ triage: 🔴 high · 🟡 medium · 🟢 low
 
 
 class Connectors:
-    """The two reads the wrap performs, answered from fixtures."""
+    """The three reads the wrap performs, answered from fixtures."""
 
     def __init__(self, events=(), notes=None):
         self._events = list(events)
@@ -54,6 +54,9 @@ class Connectors:
     def calendar(self, window):
         self.windows.append(window)
         return list(self._events)
+
+    def weekly_note(self, path):
+        return self.vault_note(path)
 
     def vault_note(self, path):
         self.note_paths.append(path)
