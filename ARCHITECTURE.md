@@ -171,7 +171,7 @@ Create Music Group/
 
 Four files rather than one, because they have genuinely different edit patterns and lumping them makes each one worse:
 
-- **`State.md`** is a projection. DayDAG rewrites it every loop; Nitin's corrections to it are events that win over derived state.
+- **`State.md`** is the record, and DayDAG appends to it. It parses the file, adds what the run derived and is not already there, and renders the rest back byte-for-byte - sub-bullets, struck items and the sections the writer does not own are all his. It was a projection rewritten every loop until #130, which is how an `eod` run that derived nothing truncated a hand-written chase list to 41 bytes on 2026-09-14. His corrections were always documented as winning over derived state; now nothing re-derives, so nothing can lose to it.
 - **`Decisions.md`** is a conversation. He writes `no` next to a line and the next loop reads it. Mixing that into a file the agent regenerates is how an answer gets overwritten before it's seen.
 - **`Watchlist.md`** is config: which repos, which Jira projects, which channels. It changes monthly, it's his to set, and it should not be buried in a file that churns daily.
 - **`Proposals/`** exists because the remote execution option can't edit the vault in place. A proposed diff as a file works in both execution contexts, and gives a yes/no something to point at.

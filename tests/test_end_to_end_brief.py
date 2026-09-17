@@ -8,7 +8,7 @@ item survives becoming a brief line.
 
 Every defect this project has had passed its own unit tests: the ledger dropped
 61% of meetings because `_qualifies` was correct in isolation and wrong about
-the world; `write_state` filtered `chase` and not `watch` because each filter
+the world; `update_state` filtered `chase` and not `watch` because each filter
 was right on its own; the Gemini subject parser was dead code that every unit
 test exercised directly and no production path called. All three are seam
 defects. So this walks the seams:
@@ -212,7 +212,7 @@ def test_a_whole_morning_arrives_as_one_assembled_brief(tmp_path, landings, git_
     chase = log.chase_items()
     assert any(item.get("sensitivity") == "private" for item in chase), "fixture must be meaningful"
 
-    folder.write_state(
+    folder.update_state(
         chase=chase,
         watch=[{"what": "nightly ingest", "sensitivity": "private"}, {"what": "R1.5 staging"}],
         notes_gaps=gaps,

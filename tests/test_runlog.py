@@ -480,7 +480,7 @@ def test_no_run_row_reaches_the_vault(tmp_path, runlog, log):
     """
     runlog.record("morning brief", _rows(jira=ConnectionError("401 unauthorized")))
     folder = StateFolder.create(tmp_path / "DayDAG")
-    folder.write_state(chase=log.chase_items(), watch=[], notes_gaps=[])
+    folder.update_state(chase=log.chase_items(), watch=[], notes_gaps=[])
 
     body = "".join(
         path.read_text(encoding="utf-8") for path in folder.root.rglob("*.md") if path.is_file()
@@ -503,7 +503,7 @@ def test_a_run_row_is_not_a_chase_item(runlog, log):
 def test_a_damaged_run_row_cannot_blank_the_chase_list(runlog, log):
     """The two readers share one table, and the run log is its busiest writer.
 
-    `chase_items` feeds `write_state`, so a torn run payload raising out of the
+    `chase_items` feeds `update_state`, so a torn run payload raising out of the
     decode would take `State.md` down wholesale - over a row that has nothing to
     do with the chase list at all.
     """

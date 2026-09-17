@@ -163,7 +163,7 @@ def test_a_whole_morning_passes_through_every_module(tmp_path):
     assert "Pod Steering" in gaps, "prepping a meeting does not excuse it from the gap list"
 
     folder = StateFolder.create(tmp_path / "DayDAG")
-    folder.write_state(notes_gaps=gaps)
+    folder.update_state(notes_gaps=gaps)
     assert "Pod Steering" in folder.read_state()
 
 

@@ -544,7 +544,7 @@ def test_chase_reads_the_file_he_corrects_by_hand(identities, tmp_path):
     """CLAUDE.md: a hand edit is an event and WINS over derived state. A chaser
     that rebuilt the list from Slack each run would undo every correction."""
     folder = StateFolder.create(tmp_path / "DayDAG")
-    folder.write_state(chase=[{"owner": "VP-Data", "ask": "the compute consolidation plan"}])
+    folder.update_state(chase=[{"owner": "VP-Data", "ask": "the compute consolidation plan"}])
 
     text = run.render(
         "chase", now=MONDAY_PT, identities=identities, payloads=_payloads(), state=folder
@@ -872,7 +872,7 @@ def test_a_carried_chase_item_keeps_its_quote_and_permalink(identities, tmp_path
     from daydag.state import EventLog, StateFolder
 
     folder = StateFolder.create(tmp_path / "vault" / "DayDAG")
-    folder.write_state(chase=[{"owner": "VP-Data", "ask": "the compute plan"}])
+    folder.update_state(chase=[{"owner": "VP-Data", "ask": "the compute plan"}])
     log = tmp_path / "events.db"
     EventLog.open(log).record(
         "carry_forward",

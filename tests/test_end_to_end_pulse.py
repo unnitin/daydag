@@ -91,7 +91,7 @@ def morning(tmp_path, make_origin, clock):
         def ship(self, block):
             """Put the block where a human reads it, the way a loop would."""
             watch = [{"what": line.removeprefix("- ")} for line in block.splitlines()]
-            folder.write_state(watch=watch)
+            folder.update_state(watch=watch)
             return folder.read_state()
 
     return Morning()

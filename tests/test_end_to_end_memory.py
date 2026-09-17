@@ -149,7 +149,7 @@ def test_a_hand_written_chase_item_reaches_the_brief(home):
     loop reads `State.md` before it runs, or his corrections are noise it
     overwrites."""
     folder = StateFolder.create(home["vault"] / "DayDAG")
-    folder.write_state(chase=[{"owner": "VP-Data", "ask": "the compute consolidation plan"}])
+    folder.update_state(chase=[{"owner": "VP-Data", "ask": "the compute consolidation plan"}])
 
     text = run.render(
         "morning",
