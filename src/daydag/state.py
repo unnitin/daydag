@@ -123,13 +123,23 @@ _MD_LINK = re.compile(r"\[(?P<label>[^\]]*)\]\((?P<url>[^)\s]+)\)")
 _BARE_URL = re.compile(r"<?(?P<url>https?://[^\s>)]+)>?")
 
 
-def read_section(text: str, name: str) -> list[str]:
+def read_section(text: str, name: str, *, top_level: bool = False) -> list[str]:
     """Bullet bodies under the heading called ``name``, whatever its level.
 
     Shared by every reader of ``State.md`` - the brief's chase/watch sections
     and the week-ahead's carrying-in section both walk the same hand-edited
     file, and a second regex here is a second set of bugs that agree only on
     the easy cases.
+
+    Args:
+        top_level: return only bullets at column zero. The file's convention
+            is that an indented bullet is HIS COMMENT on the item above it -
+            "expect comments from me in sub-bullets" (2026-09-15) - so a
+            caller that wants the items rather than everything written about
+            them asks for this. The live file has 4 chase items and 22
+            bullets under that heading; `daydag.movement` read all 22 as open
+            loops before this existed. Default off: the brief and the
+            week-ahead quote the sub-bullets deliberately.
     """
     wanted = name.casefold()
     collecting = False
@@ -147,7 +157,7 @@ def read_section(text: str, name: str) -> list[str]:
                 collecting = False
             continue
         bullet = _BULLET.match(line)
-        if collecting and bullet:
+        if collecting and bullet and not (top_level and line[:1].isspace()):
             bodies.append(bullet["body"])
     return bodies
 

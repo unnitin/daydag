@@ -57,6 +57,7 @@ artifact is the load-bearing rule; the rest is plumbing.
 | `evalset` | The hand-labelled ingestion ground truth, and `score()` — so precision is measured, not asserted |
 | `soak` | The five-day gate's journal: every edit he asks for, and whether a repeat is still outstanding |
 | `ingestion` | SPEC §3.3's classifier: five labels, biased to precision, no write path |
+| `movement` | What the live sources say moved, proposed for confirmation - never a closure, no write path |
 
 ## Working on it
 

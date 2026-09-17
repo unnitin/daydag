@@ -67,7 +67,7 @@ from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any
 
-from daydag import brief, eod_wrap, recipes, week_ahead
+from daydag import brief, eod_wrap, movement, recipes, week_ahead
 from daydag.config import ConfigError, resolve_reference, timezone_for
 from daydag.ingestion import classify_items, unplaced
 from daydag.ledger import Ledger, Match, title_from_gemini_subject
@@ -292,10 +292,18 @@ def _calendar_windows(
         # this same arithmetic, so fetch and match are one set.
         return recipes.calendar_days(day, day + timedelta(days=HORIZON_DAYS - 1), tz=tz)
     if loop == "eod":
-        # `eod_wrap` reads exactly one window, and it is tomorrow's: the wrap
-        # reports the day that just ended and previews the first meeting of
-        # the next one.
-        return [recipes.calendar_day(day + timedelta(days=1))]
+        # TWO windows, and they have different consumers. `eod_wrap` reads
+        # tomorrow's, to preview the next day's first meeting. `daydag.movement`
+        # reads today's, because a room that was asked for and has now HAPPENED
+        # is the cheapest evidence there is that a loop moved - his own example
+        # for #134 was "drokit meeting w/ chris has been scheduled, you can
+        # confirm that yourself through calendar".
+        #
+        # Tomorrow alone meant the calendar half of the detector could only
+        # ever fire on a meeting landing on exactly the next day, which is not
+        # the case it was built for. `_Payloads.calendar` filters by window, so
+        # the wrap still sees only tomorrow.
+        return [recipes.calendar_day(day), recipes.calendar_day(day + timedelta(days=1))]
     if loop == "week-ahead":
         this_monday, _ = recipes.week_range(day)
         next_monday = this_monday + timedelta(days=7)
@@ -824,7 +832,13 @@ def render(
                 pulse=pulse,
             ).render()
         if loop == "eod":
-            return eod_wrap.assemble(now=now, sources=sources, ledger=ledger, pulse=pulse).render()
+            return eod_wrap.assemble(
+                now=now,
+                sources=sources,
+                ledger=ledger,
+                pulse=pulse,
+                movement=_movement_rows(folder, payloads, now),
+            ).render()
         return week_ahead.assemble(
             now=now, sources=sources, identities=identities, state=folder, pulse=pulse
         ).render()
@@ -933,6 +947,40 @@ def _seedable(payloads: Mapping[str, Any]) -> list[dict[str, Any]]:
 def _seeded(payloads: Mapping[str, Any]) -> list[Mapping[str, Any]]:
     raw = payloads.get("calendar")
     return [r for r in raw if isinstance(r, Mapping)] if isinstance(raw, list) else []
+
+
+def _movement_rows(
+    folder: StateFolder | None, payloads: Mapping[str, Any], now: datetime
+) -> list[movement.Movement]:
+    """Evidence from the live sources that an open item moved (#134).
+
+    Built here rather than inside `eod_wrap` because the wrap owns no source
+    and its `Sources` protocol deliberately does not reach Slack or Gmail -
+    but `plan eod` already fetches both, so the payloads are sitting right
+    here. `daydag.movement` is pure, so this is the only place the two meet.
+
+    Degrades to no rows rather than raising, for the same reason every other
+    read in this file does: a detector is not worth a dead wrap (guardrail 6).
+    """
+    state = ""
+    if folder is not None:
+        try:
+            state = folder.read_state()
+        except OSError:
+            state = ""
+    note = payloads.get("vault")
+    day = now.astimezone(recipes.PACIFIC).date()
+    return movement.detect(
+        open_items=movement.open_items(
+            state=state,
+            note=note if isinstance(note, str) else "",
+            note_path=recipes.weekly_note(day),
+        ),
+        calendar=payloads.get("calendar", ()),
+        slack=payloads.get("slack", ()),
+        gmail=payloads.get("gmail", ()),
+        now=now,
+    )
 
 
 def _project(folder: StateFolder, log: EventLog, ledger: Ledger, now: datetime) -> None:

@@ -72,7 +72,7 @@ KNOWN LIMIT
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import Any, Protocol
@@ -89,6 +89,7 @@ from daydag.brief import (
     render_push,
 )
 from daydag.ledger import Ledger
+from daydag.movement import Movement
 from daydag.pulse import Pulse
 from daydag.voice import Push, render
 
@@ -168,13 +169,16 @@ def assemble(
     sources: Sources,
     ledger: Ledger | None = None,
     pulse: Pulse | None = None,
+    movement: Sequence[Movement] = (),
 ) -> Wrap:
     """Build the EOD wrap for ``now``'s local day.
 
-    ``ledger`` and ``pulse`` are optional because they are *state the caller
-    owns*, not sources: a run with no pulse has no moved block, and that is
+    ``ledger``, ``pulse`` and ``movement`` are all *state the caller owns*
+    rather than sources: a run with no pulse has no moved block, and that is
     silence rather than a failure - the same contract as
-    :func:`daydag.brief.assemble`.
+    :func:`daydag.brief.assemble`. ``movement`` arrives already detected
+    because this module owns no source and `daydag.movement` reads Slack and
+    Gmail, which the wrap's own protocol deliberately does not.
     """
     if now.tzinfo is None or now.utcoffset() is None:
         raise WrapError(
@@ -205,6 +209,35 @@ def assemble(
             Section(
                 f"closed today ({len(closed)})",
                 tuple(claim(text, f"{note_path}#L{lineno}") for lineno, text in closed),
+            )
+        )
+
+    # -- what the LIVE sources say moved, proposed for confirmation -------
+    #
+    # The section above is his own bookkeeping, and he does not do it: "i dont
+    # always get the time to move things in obsidian" (2026-09-15). These rows
+    # are the rest of the day, read from calendar, Slack and Gmail - and they
+    # are PROPOSALS. #18's critical rule is that evidence of movement surfaces
+    # for confirmation and never auto-closes, and #134 is that the rule is the
+    # system's rather than the chaser's. Nothing here adds to `closed`.
+    # Filtered on `evidence` HERE, so the count and the lines cannot disagree.
+    # They did: the heading and the header both read `len(proposals)` while the
+    # line tuple dropped evidence-less rows, so one such row rendered
+    # "1 to confirm" above a section that `render_push` then omitted for being
+    # empty. `assemble` is public and takes any Sequence[Movement].
+    proposals = [row for row in movement if isinstance(row, Movement) and row.evidence]
+    if proposals:
+        sections.append(
+            Section(
+                f"looks moved - confirm ({len(proposals)})",
+                tuple(
+                    claim(
+                        f"{row.item.text} - {row.proposed} per {row.evidence[0].source}",
+                        row.evidence[0].permalink,
+                        quote=row.evidence[0].quote,
+                    )
+                    for row in proposals
+                ),
             )
         )
 
@@ -250,6 +283,7 @@ def assemble(
         {
             "closed": "?" if "the weekly note" in read.unreachable else len(closed),
             "moved": "?" if "the pulse" in read.unreachable else len(moved_lines),
+            "confirm": len(proposals),
         },
     )
     return Wrap(
