@@ -373,10 +373,11 @@ class _Payloads:
     def _records(self, name: str) -> list[Mapping[str, Any]]:
         if name not in self._payloads:
             raise RunError(f"{name} was not fetched")
-        value = self._payloads[name]
-        if not isinstance(value, list):
-            raise RunError(f"{name} came back as {type(value).__name__}, not a list of records")
-        return value
+        found = recipes.records(self._payloads[name])
+        if found is None:
+            kind = type(self._payloads[name]).__name__
+            raise RunError(f"{name} came back as {kind}, not a list of records")
+        return found
 
     @staticmethod
     def _day_of(record: Mapping[str, Any]) -> date | None:

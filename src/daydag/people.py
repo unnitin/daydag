@@ -59,14 +59,13 @@ KNOWN LIMIT
 
 from __future__ import annotations
 
-import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import date
 from typing import Any
 
 from daydag.eventlog import EventLog
-from daydag.ledger import attendee_parts, is_resource
+from daydag.ledger import attendee_parts, is_resource, name_tokens, tokens
 
 __all__ = [
     "OBSERVED",
@@ -87,21 +86,6 @@ _TRUST = {OBSERVED: 1, PROFILE: 2, STATED: 3}
 
 #: The event kind every fact is appended under.
 FACT = "person_fact"
-
-_TOKENS = re.compile(r"[^a-z0-9]+")
-
-
-def _tokens(text: str) -> set[str]:
-    return {part for part in _TOKENS.split(str(text).casefold()) if part}
-
-
-def _name_tokens(handle: str) -> set[str]:
-    """Name tokens in an address or display name, domain discarded.
-
-    Same rule as `prep_selector._person_tokens`, and for the same reason: every
-    colleague shares the domain, so matching it matches everybody.
-    """
-    return _tokens(str(handle).split("@", 1)[0])
 
 
 @dataclass(frozen=True)
@@ -278,15 +262,15 @@ class People:
 
     def _by_name(self, handle: str) -> Person | None:
         """Every token of the query present in someone's name - for humans typing."""
-        wanted = _name_tokens(handle)
+        wanted = name_tokens(handle)
         if not wanted:
             return None
         for person in self._by_key.values():
             known = set()
             for address in person.emails:
-                known |= _name_tokens(address)
+                known |= name_tokens(address)
             if person.display_name:
-                known |= _tokens(person.display_name)
+                known |= tokens(person.display_name)
             if wanted <= known:
                 return person
         return None
@@ -372,7 +356,7 @@ def _fold(target: Person, other: Person) -> Person:
 
 def _slug(address: str) -> str:
     """A stable key for someone nobody has named yet."""
-    return "-".join(sorted(_name_tokens(address))) or address.casefold()
+    return "-".join(sorted(name_tokens(address))) or address.casefold()
 
 
 def main(argv: list[str] | None = None) -> int:

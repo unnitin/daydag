@@ -52,20 +52,18 @@ from typing import Any
 # retyping them is the difference between a description and a restatement: a
 # cap that moves takes the report's wording with it. Constants only - no query
 # is built here, and no client comes with them.
-from daydag.payloads import (
-    error_text,
-    first_value,
-    has,
-    has_all,
-    measure,
-    records,
-)
 from daydag.recipes import (
     GEMINI_LABEL,
     GEMINI_SENDER,
     GH_LIMIT_CAP,
     JIRA_FIELDS,
     JIRA_MAX_RESULTS_CAP,
+    error_text,
+    first_value,
+    has,
+    has_all,
+    measure,
+    records,
 )
 from daydag.voice import clipped
 
@@ -160,7 +158,7 @@ def _classify(text: str, default: str = "") -> tuple[str, str]:
 
 # -- plausibility: what each source looks like when it genuinely answered ----
 #
-# The readers live in `daydag.payloads`: finding a record list or an error
+# The readers live in `daydag.recipes`: finding a record list or an error
 # object is the same job at every connector edge, and it was private here only
 # because this was the first edge to need it. What stays in this module is the
 # per-source judgement - which is the half that actually differs, and the half

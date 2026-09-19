@@ -42,7 +42,7 @@ from pathlib import Path
 from typing import Any
 
 from daydag import vault
-from daydag.payloads import has
+from daydag.recipes import has
 from daydag.voice import WARN
 
 #: The sanctioned warning glyph (plain U+26A0, not its emoji-presentation

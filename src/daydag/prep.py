@@ -57,7 +57,7 @@ from enum import Enum
 from typing import Any
 
 from daydag.config import resolve_reference
-from daydag.ledger import Row
+from daydag.ledger import Row, name_tokens, tokens
 from daydag.recipes import (
     PACIFIC,
     RecipeError,
@@ -623,25 +623,6 @@ def recipient(identities: Mapping[str, str]) -> str:
 # two matches surface as two - prep for the wrong meeting is worse than none.
 # ---------------------------------------------------------------------------
 
-_TOKENS = re.compile(r"[^a-z0-9]+")
-
-
-def _tokens(text: str) -> set[str]:
-    """The words in a string, however it was punctuated."""
-    return {part for part in _TOKENS.split(str(text).casefold()) if part}
-
-
-def _person_tokens(address: str, name: str) -> set[str]:
-    """The name tokens for one attendee: address local-part plus display name.
-
-    `wren.alder@example.com` is `{wren, alder}`, so a first name finds the
-    person without anyone storing a display name - and `example`/`com` are NOT
-    matchable, because every colleague shares them and a selector that hit the
-    domain would match the entire invite list. The display name adds the
-    surname a bare-first-name address lacks (`jonathan@` + "Jonathan Strauss").
-    """
-    return _tokens(address.split("@", 1)[0]) | _tokens(name)
-
 
 def _clock(moment: datetime, tz: tzinfo) -> str:
     """``mon 14 sep 9:00`` - his zone, his register, same as the brief.
@@ -690,7 +671,7 @@ def _matches(row: Row, wanted: set[str], principal: str) -> bool:
     either half would pick the wrong Bo. Tokens only - a substring path let
     "fin" find Finance, which is the fuzziness this module refuses.
     """
-    if wanted <= _tokens(row.summary):
+    if wanted <= tokens(row.summary):
         return True
     names = list(row.attendee_names) + [""] * (len(row.attendees) - len(row.attendee_names))
     for address, name in zip(row.attendees, names, strict=False):
@@ -701,7 +682,7 @@ def _matches(row: Row, wanted: set[str], principal: str) -> bool:
         # passed because their fixture principal happened to be email-shaped.
         if principal and address.casefold() == principal.casefold():
             continue
-        if wanted <= _person_tokens(address, name):
+        if wanted <= name_tokens(address, name):
             return True
     return False
 
@@ -726,7 +707,7 @@ def select(
     the TOKENS: an empty token set is a subset of every title's, so "---" or a
     stray quote passed a check on the string and matched the whole week.
     """
-    wanted = _tokens(selector)
+    wanted = tokens(selector)
     if not wanted:
         raise ValueError("a prep selector needs a word in it - a title word, or a name")
     phrase = " ".join(str(selector).split())

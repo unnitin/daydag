@@ -39,11 +39,16 @@ def test_a_mirror_reads_its_own_path_not_whatever_GIT_DIR_names(fake_repo, tmp_p
     assert [c.title for c in m.merges_since_cursor()] == ["Merge PR #412", "Merge PR #413"]
 
 
-def test_cursor_advances_only_after_a_successful_read(fake_repo):
+def test_cursor_advances_only_after_a_successful_read(fake_repo, monkeypatch):
     m = Mirror.attach(fake_repo, cursor="HEAD~2")
     before = m.cursor
+
+    def broken(*_args, **_kwargs):
+        raise PulseError("simulated read failure")
+
+    monkeypatch.setattr(m, "_git", broken)
     with pytest.raises(PulseError):
-        m.merges_since_cursor(_fail=True)
+        m.merges_since_cursor()
     assert m.cursor == before, "cursor advanced past commits that were never reported"
 
 

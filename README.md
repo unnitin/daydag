@@ -38,15 +38,14 @@ artifact is the load-bearing rule; the rest is plumbing.
 | `manifests` | Reads the `daydag:` block out of every `.claude/skills/*/SKILL.md`, so those checks run over what ships |
 | `statedoc` | The `DayDAG/` vault folder: State.md as a document, the sensitivity gate, the one State.md reader every push shares |
 | `eventlog` | The SQLite event log outside the vault: every transition, the meeting ledger, the sensitive partition |
-| `ledger` | Calendar-driven meeting rows, so a meeting that produced **no** notes is visible |
+| `ledger` | Calendar-driven meeting rows, so a meeting that produced **no** notes is visible; one verdict on what counts as a meeting, and the one attendee and name-token parse |
 | `pulse` | Repo state: local mirrors for history, API for review state |
 | `closure` | Open is a verdict, not a default: the reply under every ask is read before the ask is reported open |
 | `vault` | How bytes reach the vault safely: atomic writes, placeholder refusal, an iCloud-aware compare-and-swap for line edits |
 | `voice` | The house voice as assertions, and the templates for every push |
 | `smoke` | One pre-flight pass over every source: reached, skipped, or never connected |
 | `runlog` | One row per run in the event log, so a brief that never arrived can still be explained |
-| `recipes` | SPEC §4's prose as literal, testable queries |
-| `payloads` | Reading a connector's answer while it is still unvalidated - `recipes` asks, this reads |
+| `recipes` | The connector edge: SPEC §4's prose as literal, bounded queries, and the readers for what comes back |
 | `push` | The push kernel every loop renders with: one `Push`, one `Reader`, one citation rule, one weekly-note scanner, one overlap rule |
 | `brief` | SPEC §3.1's morning brief, assembled from the kernel |
 | `eod_wrap` | SPEC §3.5's EOD wrap: what closed, what moved, tomorrow's first meeting |

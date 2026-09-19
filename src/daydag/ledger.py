@@ -8,6 +8,7 @@ USING IT
     ledger.ambiguous()                  # note matched >1 row, needs a human
     ledger.close_day()
 
+    judge(event)                        # MEETING | NOT_MEETING | UNKNOWN, read two ways
     title_from_gemini_subject(subject)  # 'Notes: "<title>" <date>' -> title
 
 CONTRACTS
@@ -193,10 +194,6 @@ def is_resource(attendee: Any) -> bool:
     return _RESOURCE_DOMAIN in str(attendee).casefold()
 
 
-#: Internal callers predate the public name.
-_is_resource = is_resource
-
-
 #: Google attaches the Gemini notes doc to the calendar event. Measured as
 #: per-INSTANCE: the "1:1 | 2x weekly" series carries one on the Sep 1
 #: instance, which produced a note, and none on the Sep 10 one, which did not.
@@ -239,39 +236,76 @@ def _declares_note(event: Mapping[str, Any]) -> bool:
     )
 
 
-def qualifies(event: Mapping[str, Any]) -> bool:
-    """Whether a calendar entry is a meeting worth tracking or reporting.
+MEETING, NOT_MEETING, UNKNOWN = "meeting", "not a meeting", "unknown"
 
-    PUBLIC because more than one loop has to agree on it. The week-ahead built
-    its own idea of "a meeting" - one check, `kind not in NON_MEETING_KINDS` -
-    against the four here, and so rendered a meeting he had DECLINED and a
-    personal errand with no attendees as part of his week, while
-    `monday_prep_queue`, reading the same events through the ledger, dropped
-    both. Two qualification paths in one module, disagreeing silently.
 
-    Deliberately inclusive. A false positive costs one line in a brief that
-    says "no notes"; a false negative is a meeting the system cannot see at all.
+def judge(event: Mapping[str, Any]) -> str:
+    """One verdict on a calendar entry: MEETING, NOT_MEETING or UNKNOWN (#110).
+
+    `qualifies` and `part_of_the_week` were two predicates over the same
+    four rules with a documented policy difference in two cases, and they
+    drifted. Now both are one-line readings of this: the ledger tracks what
+    is positively a meeting, the week page drops only what is positively
+    not - an UNKNOWN record is kept on the page (losing a real meeting is the
+    failure he cannot notice) and left out of the ledger (nothing to track).
+
+    * declined, or a non-meeting kind (OOO, focus, hold) - NOT_MEETING
+    * two or more people once rooms are filtered - MEETING
+    * a solo entry he organised himself, attendees PRESENT - NOT_MEETING
+      (a personal errand); attendees ABSENT - UNKNOWN, we cannot judge it
+    * somebody else put it in his day - MEETING. An ATS interview invite
+      lists only him; the organizer is the evidence (#90)
+    * anything else - UNKNOWN
     """
     if _positively_not_his_meeting(event):
-        return False
-
-    people = [a for a in (event.get("attendees") or []) if not _is_resource(a)]
-    if len(people) >= 2:
-        return True
-
-    # Somebody ELSE put this in his day. An ATS interview invite lists only
-    # the principal - the candidate is invited through a separate calendar -
-    # so the attendee count made a 45-minute interview invisible, and three
-    # landed on one real Friday (#90). An organizer who is not him is the
-    # evidence that distinguishes it from a hold he made for himself.
+        return NOT_MEETING
+    attendees = event.get("attendees")
+    people = None if attendees is None else [a for a in attendees if not is_resource(a)]
+    if people is not None and len(people) >= 2:
+        return MEETING
     if event.get("organizer_is_self"):
-        # Every entry has an organizer, his own holds included. Google marks
-        # the self case and the shaper passes it through; without it a focus
-        # block would read as somebody else's meeting.
-        return False
+        return NOT_MEETING if people is not None else UNKNOWN
     organizer = str(event.get("organizer") or "").strip().casefold()
     principal = str(event.get("principal") or "").strip().casefold()
-    return bool(organizer) and organizer != principal
+    return MEETING if organizer and organizer != principal else UNKNOWN
+
+
+def qualifies(event: Mapping[str, Any]) -> bool:
+    """Whether the ledger tracks this entry for notes: positively a meeting."""
+    return judge(event) is MEETING
+
+
+def part_of_the_week(event: Mapping[str, Any]) -> bool:
+    """Whether the entry belongs on the page describing his week: not
+    positively NOT a meeting. An unreadable record is kept here and dropped
+    by the ledger, on purpose - see `judge`."""
+    return judge(event) is not NOT_MEETING
+
+
+def _positively_not_his_meeting(event: Mapping[str, Any]) -> bool:
+    """The two rules both readings share, default literals included."""
+    return (
+        event.get("response_status", "needsAction") in DISQUALIFYING_RESPONSES
+        or event.get("kind", "meeting") in NON_MEETING_KINDS
+    )
+
+
+_TOKENS = re.compile(r"[^a-z0-9]+")
+
+
+def tokens(text: Any) -> set[str]:
+    """The words in a string, however it was punctuated - casefolded."""
+    return {part for part in _TOKENS.split(str(text).casefold()) if part}
+
+
+def name_tokens(address: str, name: str = "") -> set[str]:
+    """The name tokens for one person: the address's local part plus the
+    display name, domain discarded - every colleague shares the domain, so a
+    selector or a directory lookup that hit it would match everybody.
+
+    One rule for the prep selector and the people directory, which each had
+    their own copy."""
+    return tokens(str(address).split("@", 1)[0]) | tokens(name)
 
 
 class Ledger:
@@ -295,7 +329,7 @@ class Ledger:
             # room's resource.calendar.google.com domain read as an outside
             # party to has_external and as the second person of a "1:1".
             parts = [
-                attendee_parts(a) for a in (event.get("attendees") or []) if not _is_resource(a)
+                attendee_parts(a) for a in (event.get("attendees") or []) if not is_resource(a)
             ]
             parts = [(addr, name) for addr, name in parts if addr]
             row = Row(
@@ -444,53 +478,3 @@ class Ledger:
         return [
             row.summary for row in self.open_rows() if row.end < as_of and not row.notes_declared
         ]
-
-
-def part_of_the_week(event: Mapping[str, Any]) -> bool:
-    """Whether an entry belongs on the page describing his week.
-
-    Close to `qualifies`, and deliberately NOT the same question. `qualifies`
-    asks "should the ledger track this for notes", and answers no for a record
-    missing the fields it reads. Here the question is "is this his week", where
-    dropping an unreadable record loses a real meeting from the page - the
-    under-reporting failure he has no way to notice, as against a stray line he
-    skims past.
-
-    So this drops only what it can POSITIVELY read as not his week:
-
-      * a response he declined
-      * a non-meeting kind - OOO, a focus block, a hold
-      * a solo entry he organised himself, which means `attendees` is PRESENT
-        and holds fewer than two people. Present-and-empty is a personal
-        errand; ABSENT is a record we cannot judge, and that one is kept.
-
-    Two things `qualifies` decides that this does NOT, both on purpose: an
-    unreadable record (above), and the organizer fallback - a solo entry with
-    attendees present and no `organizer_is_self` is dropped by the ledger
-    unless someone else organised it, and kept here, because "not enough
-    information to track for notes" is not "not his week". Say both, because
-    the first version of this docstring said "differs in one case" and the
-    code differed in two.
-    """
-    if _positively_not_his_meeting(event):
-        return False
-    attendees = event.get("attendees")
-    if attendees is not None and event.get("organizer_is_self"):
-        people = [a for a in attendees if not _is_resource(a)]
-        if len(people) < 2:
-            return False
-    return True
-
-
-def _positively_not_his_meeting(event: Mapping[str, Any]) -> bool:
-    """The two rules `qualifies` and `part_of_the_week` share, held once.
-
-    Both predicates opened with these same two checks, default literals
-    included. Two copies of a default is how "two qualification paths
-    disagreeing silently" - the failure `qualifies` exists to close - would
-    have come back through the front door.
-    """
-    return (
-        event.get("response_status", "needsAction") in DISQUALIFYING_RESPONSES
-        or event.get("kind", "meeting") in NON_MEETING_KINDS
-    )

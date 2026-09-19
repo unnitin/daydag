@@ -150,3 +150,35 @@ def test_timezone_for_falls_back_when_timezone_is_unset(tmp_path):
     env.write_text("SLACK_USER_PRINCIPAL=UPRINCIPAL1\n", encoding="utf-8")
 
     assert timezone_for(Identities.from_file(env)) is not None
+
+
+# -- one reader for every path key in .env ------------------------------------
+
+
+@pytest.mark.guardrail
+@pytest.mark.parametrize("value", ["", "   ", "$VAULT_HOME/notes", "${NOPE}/notes"])
+def test_an_unusable_path_value_raises_rather_than_writing_somewhere_odd(value):
+    """An empty value resolves to "." and an unset ${VAR} passes through as
+    text; either would quietly write into the working directory or a folder
+    named after the variable. Was `recipes.vault_root`'s guardrail; the one
+    reader is `config.path_from` now, behind `pulse.mirror_root`."""
+    from daydag.config import ConfigError, path_from
+
+    with pytest.raises(ConfigError):
+        path_from({"MIRROR_DIR": value}, "MIRROR_DIR")
+
+
+def test_a_missing_path_key_names_the_key():
+    from daydag.config import ConfigError, path_from
+
+    with pytest.raises(ConfigError, match="MIRROR_DIR"):
+        path_from({}, "MIRROR_DIR")
+
+
+def test_a_usable_path_value_is_expanded(tmp_path, monkeypatch):
+    from daydag.config import path_from
+
+    monkeypatch.setenv("DAYDAG_TEST_HOME", str(tmp_path))
+    assert (
+        path_from({"MIRROR_DIR": "$DAYDAG_TEST_HOME/mirrors"}, "MIRROR_DIR") == tmp_path / "mirrors"
+    )
