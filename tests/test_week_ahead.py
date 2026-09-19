@@ -18,7 +18,7 @@ import pytest
 
 from daydag import brief
 from daydag.pulse import Mirror, Pulse
-from daydag.state import StateFolder
+from daydag.statedoc import StateFolder
 from daydag.voice import voice_violations
 from daydag.week_ahead import WeekAheadError, assemble
 

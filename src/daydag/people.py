@@ -65,8 +65,8 @@ from dataclasses import dataclass, field, replace
 from datetime import date
 from typing import Any
 
+from daydag.eventlog import EventLog
 from daydag.ledger import attendee_parts, is_resource
-from daydag.state import EventLog
 
 __all__ = [
     "OBSERVED",

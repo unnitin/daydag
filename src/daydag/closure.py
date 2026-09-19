@@ -44,7 +44,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from daydag import brief
-from daydag.state import StateDoc, read_section
+from daydag.statedoc import StateDoc
 
 __all__ = [
     "Ask",
@@ -160,88 +160,38 @@ def slack_permalink(text: str) -> tuple[str, str, str, str]:
     return found["conversation"], ts, thread["ts"] if thread else "", found.group(0)
 
 
-#: The bullet marker only. `str.lstrip("-* ")` also ate the `**` opening a
-#: bold owner token, so `**gov-lead**` read back as `gov-lead**`.
-_MARKER = re.compile(r"^\s*[-*]\s+")
-
-
-def _struck(head: str) -> bool:
-    return _MARKER.sub("", head).startswith("~~")
-
-
-def _clean(head: str) -> str:
-    body = _MARKER.sub("", head).strip()
-    body = re.sub(r"\[(?P<label>[^\]]*)\]\([^)\s]+\)", r"\g<label>", body)
-    body = re.sub(r"\s{2,}", " ", body)
-    return body.strip(" -·")
-
-
 def asks_in(state_text: str, decisions_text: str = "") -> list[Ask]:
     """Every unstruck ask in ``State.md`` and every open pending decision.
 
-    Walks the blocks rather than `read_section`'s bodies because the permalink
-    usually sits in a SUB-bullet - the head line is his wording, the citation
-    is the line under it - and a top-level read would find no link on any of
-    the live file's rows.
+    `StateDoc.blocks_in` is the reader: it walks nested headings (the promises
+    sit under `### promises you made` inside `## Owed by you`) and `Block.link`
+    finds the permalink in the sub-bullet where his citation lives.
     """
     asks: list[Ask] = []
     doc = StateDoc.parse(state_text)
-    for section in doc.sections:
-        parent = _owning_section(section.name, doc)
-        if parent is None:
-            continue
-        for block in section.blocks:
-            head = block.head
-            if not head.strip() or _struck(head):
+    for section, waiting_on in SECTIONS.items():
+        for block in doc.blocks_in(section):
+            if block.struck or not block.head.strip():
                 continue
-            conversation, ts, thread_ts, link = slack_permalink("\n".join(block.lines))
-            asks.append(
-                Ask(
-                    text=_clean(head),
-                    section=parent,
-                    waiting_on=SECTIONS[parent],
-                    conversation=conversation,
-                    ts=ts,
-                    thread_ts=thread_ts,
-                    permalink=link,
-                )
-            )
-    for body in read_section(decisions_text, "Pending decisions", top_level=True):
-        if body.startswith("~~") or "status: answered" in body.casefold():
+            asks.append(_ask(block.body, section, waiting_on, "\n".join(block.lines)))
+    for block in StateDoc.parse(decisions_text).blocks_in("Pending decisions"):
+        if block.struck or "status: answered" in block.head.casefold():
             continue
-        conversation, ts, thread_ts, link = slack_permalink(body)
-        asks.append(
-            Ask(
-                text=_clean(body),
-                section="Pending decisions",
-                waiting_on="principal",
-                conversation=conversation,
-                ts=ts,
-                thread_ts=thread_ts,
-                permalink=link,
-            )
-        )
+        asks.append(_ask(block.body, "Pending decisions", "principal", "\n".join(block.lines)))
     return asks
 
 
-def _owning_section(name: str, doc: StateDoc) -> str | None:
-    """The `SECTIONS` heading ``name`` sits under, or None.
-
-    `### promises you made` is nested inside `## Owed by you`, and StateDoc
-    parses every heading as its own section - so a nested heading inherits
-    the nearest enclosing top-level heading that this module knows about.
-    """
-    if name in SECTIONS:
-        return name
-    enclosing: str | None = None
-    for section in doc.sections:
-        heading = section.heading or ""
-        level = len(heading) - len(heading.lstrip("#"))
-        if level == 2:
-            enclosing = section.name if section.name in SECTIONS else None
-        if section.name == name and level > 2:
-            return enclosing
-    return None
+def _ask(text: str, section: str, waiting_on: str, source: str) -> Ask:
+    conversation, ts, thread_ts, link = slack_permalink(source)
+    return Ask(
+        text=text,
+        section=section,
+        waiting_on=waiting_on,
+        conversation=conversation,
+        ts=ts,
+        thread_ts=thread_ts,
+        permalink=link,
+    )
 
 
 # ---------------------------------------------------------------------------

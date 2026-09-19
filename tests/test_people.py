@@ -21,9 +21,9 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from daydag.eventlog import EventLog
 from daydag.ledger import Row, attendee_parts
 from daydag.people import OBSERVED, PROFILE, STATED, People
-from daydag.state import EventLog
 
 MON = datetime(2026, 9, 14, 9, 0, tzinfo=UTC)
 

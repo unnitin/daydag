@@ -69,6 +69,7 @@ from typing import Any
 
 from daydag import brief, closure, eod_wrap, recipes, week_ahead
 from daydag.config import ConfigError, resolve_reference, timezone_for
+from daydag.eventlog import EventLog
 from daydag.ingestion import classify_items, unplaced
 from daydag.ledger import Ledger, Match, title_from_gemini_subject
 from daydag.people import People
@@ -76,13 +77,7 @@ from daydag.prep import Audience, Reason, build, point, prep_worthy
 from daydag.prep_selector import HORIZON_DAYS, select
 from daydag.runlog import RunLog
 from daydag.smoke import REACHED
-from daydag.state import (
-    EventLog,
-    NotesGap,
-    StateFolder,
-    StateNotWritable,
-    classify_sensitivity,
-)
+from daydag.statedoc import NotesGap, StateFolder, StateNotWritable, classify_sensitivity
 
 __all__ = ["LOOPS", "Plan", "RunError", "Step", "main", "plan", "render"]
 

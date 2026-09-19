@@ -36,9 +36,10 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from daydag import brief as brief_module
+from daydag.eventlog import EventLog
 from daydag.ledger import Ledger, Match
 from daydag.pulse import Mirror, Pulse
-from daydag.state import EventLog, StateFolder
+from daydag.statedoc import StateFolder
 from daydag.voice import voice_violations
 
 PT = timezone(timedelta(hours=-7))

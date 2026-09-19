@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from daydag.state import StateFolder
+from daydag.statedoc import StateFolder
 
 FIXTURE = Path(__file__).parent / "fixtures" / "state" / "hand_edited.md"
 
@@ -38,7 +38,7 @@ def test_parsing_then_rendering_a_hand_edited_file_changes_nothing():
     it. Byte-for-byte, including the blockquote, the tab-indented sub-bullets
     and the trailing newline.
     """
-    from daydag.state import StateDoc
+    from daydag.statedoc import StateDoc
 
     text = FIXTURE.read_text(encoding="utf-8")
 
@@ -51,7 +51,7 @@ def test_a_file_the_parser_cannot_reproduce_is_left_alone(folder):
     The failure direction that matters: a file shape nobody anticipated is
     worth a skipped update and a complaint, never a best-effort rewrite.
     """
-    from daydag.state import StateDoc
+    from daydag.statedoc import StateDoc
 
     weird = "# State\n\n﻿ not markdown at all\n"
     assert StateDoc.parse(weird).render() == weird, (
@@ -249,7 +249,7 @@ def test_a_file_that_fails_its_own_round_trip_is_refused_not_rewritten(folder, m
     """The valve, exercised. `parse` is total by construction, so the only way
     to reach this is to break it - which is exactly the change that must not
     be allowed to write the file anyway."""
-    from daydag import state as state_module
+    from daydag import statedoc as state_module
 
     before = folder.read_state()
     monkeypatch.setattr(state_module.StateDoc, "render", lambda self: "# State\n")
@@ -287,7 +287,7 @@ def test_the_round_trip_holds_for_any_string_at_all(name, text):
     \\u2028 and \\u2029, and `render` rejoined with \\n - so a file carrying
     any of them did not survive its own parse and every loop refused to write
     it. They arrive by pasting from a browser or copying out of Slack."""
-    from daydag.state import StateDoc
+    from daydag.statedoc import StateDoc
 
     assert StateDoc.parse(text).render() == text, name
 
@@ -319,7 +319,7 @@ def test_a_run_that_cannot_write_state_costs_one_line_not_the_whole_push(tmp_pat
     just declined to touch."""
     from daydag import run
     from daydag.config import Identities
-    from daydag.state import StateDoc
+    from daydag.statedoc import StateDoc
 
     env = tmp_path / ".env"
     env.write_text(
@@ -406,7 +406,7 @@ def test_an_appended_item_reads_back_as_one_item_not_three(folder):
     sub-bullets, and `read_section` matched indented bullets - so the brief
     announced "owed to you (3)" for one item, two of them being a quote and a
     bare link. The live file's 4 chase items read back as 22 bodies."""
-    from daydag.state import read_section
+    from daydag.statedoc import StateDoc
 
     folder.state_path.write_text("# State\n\n## Chase list\n\n## Watch items\n", encoding="utf-8")
     folder.update_state(
@@ -421,6 +421,7 @@ def test_an_appended_item_reads_back_as_one_item_not_three(folder):
         ]
     )
 
-    bodies = read_section(folder.read_state(), "Chase list", top_level=True)
+    blocks = StateDoc.parse(folder.read_state()).blocks_in("Chase list")
 
-    assert bodies == ["vp-ai · the wave 2 rollout date · status open"], bodies
+    assert [b.body for b in blocks] == ["vp-ai · the wave 2 rollout date · status open"]
+    assert [b.link for b in blocks] == ["https://example.com/p1"], "the link is in the sub-bullet"

@@ -214,16 +214,9 @@ class VaultNote:
 
     def read(self) -> NoteSnapshot:
         """Snapshot the note, refusing placeholders and undecodable bytes."""
-        sidecar = self.path.parent / f".{self.path.name}.icloud"
-        if not self.path.exists():
-            if sidecar.exists():
-                raise NotMaterialisedError(self.path)
-            raise FileNotFoundError(self.path)
-
-        stat_result = self.path.stat()
-        data = self.path.read_bytes()
-        if _looks_like_placeholder(data) or (sidecar.exists() and not data):
-            raise NotMaterialisedError(self.path)
+        stat_result = self.path.stat() if self.path.exists() else None
+        data = read_materialised(self.path)
+        assert stat_result is not None  # read_materialised raised otherwise
         try:
             data.decode("utf-8")
         except UnicodeDecodeError as exc:
@@ -331,7 +324,7 @@ class VaultNote:
         # not report success against a file the agent never re-read.
         if edit.is_noop:
             return
-        _atomic_write(self.path, edit.result())
+        atomic_write(self.path, edit.result())
 
 
 class Vault:
@@ -416,7 +409,25 @@ def _line_at(snapshot: NoteSnapshot, lineno: int) -> str:
     return lines[lineno - 1] if 1 <= lineno <= len(lines) else "<line no longer exists>"
 
 
-def _atomic_write(path: Path, data: bytes) -> None:
+def read_materialised(path: Path) -> bytes:
+    """The bytes of ``path``, refusing an iCloud placeholder or an evicted note.
+
+    The read half of contract 3, for callers that hold a path rather than a
+    `VaultNote` - `statedoc` reads `State.md` through this so a placeholder
+    is never mistaken for an empty record.
+    """
+    sidecar = path.parent / f".{path.name}.icloud"
+    if not path.exists():
+        if sidecar.exists():
+            raise NotMaterialisedError(path)
+        raise FileNotFoundError(path)
+    data = path.read_bytes()
+    if _looks_like_placeholder(data) or (sidecar.exists() and not data):
+        raise NotMaterialisedError(path)
+    return data
+
+
+def atomic_write(path: Path, data: bytes) -> None:
     """Temp file in the same directory, fsync, ``os.replace``.
 
     Same directory because ``os.replace`` is only atomic within a filesystem.
@@ -464,4 +475,6 @@ __all__ = [
     "Vault",
     "VaultError",
     "VaultNote",
+    "atomic_write",
+    "read_materialised",
 ]

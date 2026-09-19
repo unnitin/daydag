@@ -20,7 +20,8 @@ import pytest
 
 from daydag import run
 from daydag.config import Identities
-from daydag.state import EventLog, StateFolder
+from daydag.eventlog import EventLog
+from daydag.statedoc import StateFolder
 
 PT = timezone(timedelta(hours=-7))
 MONDAY = datetime(2026, 9, 7, 6, 40, tzinfo=PT)

@@ -63,7 +63,7 @@ from daydag.smoke import FAILED as SMOKE_FAILED
 from daydag.voice import clipped
 
 if TYPE_CHECKING:  # pragma: no cover - import cycle only matters to type checkers
-    from daydag.state import EventLog
+    from daydag.eventlog import EventLog
 
 #: The event-log `kind` every run row is written under. One kind, so a reader
 #: can pull the run history without knowing which loops ever existed.
@@ -565,7 +565,7 @@ class RunLog:
         the trouble started - answers in their place.
         """
         rows = []
-        for payload in self._log.recorded(RUN):
+        for payload in self._log.recorded(RUN, raw=True):
             try:
                 rows.append(RunRow.from_payload(payload))
             except (KeyError, TypeError, AttributeError, ValueError):

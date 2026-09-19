@@ -1,73 +1,47 @@
-"""The two state stores, split by opposite requirements.
+"""The `DayDAG/` vault folder: State.md as a document, the sensitivity gate, the writer.
 
 USING IT
-    folder = StateFolder.create(root)       # DayDAG/, idempotent
-    folder.update_state(chase=..., watch=..., notes_gaps=...)  # APPENDS
-
+    folder = StateFolder.create(root)                    # DayDAG/, idempotent
+    folder.update_state(chase=..., watch=..., notes_gaps=...)   # APPENDS, atomically
     folder.add_decision("draft nudge to VP-Data? · status: open")  # APPENDS
-
-    log = EventLog.open(path)               # SQLite, OUTSIDE the vault
-    log.record("loop_opened", sensitivity=classify_sensitivity(ask, quote, origin=kind),
-               **payload)                 # kind: the Slack conversation type
-    log.chase_items()
+    doc = StateDoc.parse(folder.read_state())
+    for block in doc.blocks_in("Chase list"):            # nested headings included
+        block.body, block.link, block.struck             # the line, its permalink, ~~done~~
 
 CONTRACTS
-    1. Anything sensitive goes to the EVENT LOG, never the vault. The vault is
-       plaintext on every device it syncs to.
-    2. `update_state` runs `chase`, `watch` AND `notes_gaps` through one
-       `_visible` gate before anything is rendered - one filter, so
-       `sensitivity == "private"` cannot be wired to two of the three lists and
-       forgotten on the third. It was once wired to `chase` and not to its twin
-       `watch`, and a private carry-forward reached a synced file (#63's
-       sibling); `notes_gaps` had no sensitivity field to filter on at all
-       until `NotesGap` gave it one (#61).
-    3. One shape per list, held on BOTH sides of the log/vault seam. A chase
-       entry is a `ChaseItem` - `EventLog.chase_items()` returns one and
-       `update_state` coerces whatever it is handed before rendering, so the two
-       cannot drift apart the way they had (#63). A notes gap is a `NotesGap`.
-       Both coercions are idempotent and accept their own type first.
-    4. `State.md` is the RECORD, and `update_state` APPENDS to it. It is
-       parsed, added to, and re-rendered; every line the run did not derive
-       comes back byte-for-byte. A derived item already in the file - under
-       any heading, struck or open - is recognised and not filed twice. This
-       was contract 4 the other way round until #130: the file was a
-       projection rewritten wholesale, and on 2026-09-14 an `eod` run that
-       derived nothing wrote nothing over four hand-written chase items.
-       Nothing re-derives the list now, because nothing can.
-    5. `Decisions.md` is APPENDED and never regenerated, so an answer written
-       on the line cannot be overwritten before it is read. The answer IS the
-       line's `status:` field (D-5, #62) and `closure` reads it; nothing here
-       parses one, so nothing can read an answer he did not write.
-    6. A VAULT-BOUND kind cannot be recorded without saying how sensitive it
-       is. `record("loop_opened", ...)` with no `sensitivity`, or with anything
-       other than exactly "private" or "normal", raises; the gate in (2)
-       filters what is MARKED private, and a gate that depends on the writer
-       remembering to mark - or spelling the mark the way `_is_private` reads
-       it - is not a gate (#105). `classify_sensitivity` is the answer to
-       pass: private for anything from a DM, or carrying personnel / comp /
-       M&A vocabulary - house rule 7's three categories. Meeting titles reach
-       the vault through `notes_gaps`, not through a recorded kind, so the
-       runner classifies each title at projection time instead.
+    1. `parse` is TOTAL and `render` its exact inverse for ANY string, split on
+       "\n" only. A writer that cannot reproduce the file it read refuses
+       (`StateNotWritable`) and writes nothing (#130).
+    2. `State.md` is the RECORD and the writer APPENDS. Every line a run did
+       not derive comes back byte-for-byte; a derived item already present -
+       under any heading, struck or open - is not filed twice.
+    3. One gate. `chase`, `watch` and `notes_gaps` pass through `_visible`
+       before anything renders, so `sensitivity == "private"` cannot be wired
+       to two lists and forgotten on the third (#63, #61, #105).
+    4. One reader. `Block` is the unit every consumer reads - the brief, the
+       week-ahead and the chaser - and `Block.link` is found anywhere in the
+       block, because his citation sits in the sub-bullet under the line.
+    5. Writes go through `vault`: temp file, fsync, `os.replace`, and a read
+       that refuses an iCloud placeholder rather than treating it as empty.
+    6. `Decisions.md` is appended, never regenerated, and the answer is the
+       line's own `status:` field (D-5, #62). A private line is refused at the
+       append (#124) - house rule 7.
 
 WHY IT EXISTS
-    The folder is markdown a human corrects by hand, and that is the reason
-    this is not a black box - a hand edit is an event and wins over anything
-    derived. The event log is SQLite because markdown cannot answer "median
-    days to answer", and because five scheduled loops appending to one
-    iCloud-synced file with no locking is a lost update.
+    The folder is markdown a human corrects by hand, and a hand edit is an
+    event that wins over anything derived. Everything sensitive lives in
+    `eventlog`, outside the vault.
 """
 
 from __future__ import annotations
 
-import json
 import re
-import sqlite3
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from daydag import vault
 from daydag.payloads import has
 from daydag.voice import WARN
 
@@ -105,45 +79,6 @@ _MD_LINK = re.compile(r"\[(?P<label>[^\]]*)\]\((?P<url>[^)\s]+)\)")
 _BARE_URL = re.compile(r"<?(?P<url>https?://[^\s>)]+)>?")
 
 
-def read_section(text: str, name: str, *, top_level: bool = False) -> list[str]:
-    """Bullet bodies under the heading called ``name``, whatever its level.
-
-    Shared by every reader of ``State.md`` - the brief's chase/watch sections
-    and the week-ahead's carrying-in section both walk the same hand-edited
-    file, and a second regex here is a second set of bugs that agree only on
-    the easy cases.
-
-    Args:
-        top_level: return only bullets at column zero. An indented bullet is
-            HIS COMMENT on the item above it - "expect comments from me in
-            sub-bullets" (2026-09-15) - and since #130 it is also the quote
-            and the permalink `_render_chase` writes under each row. Without
-            this, one appended chase item reads back as three, and the brief
-            announced "owed to you (3)" with two of the three being a quote
-            and a bare link. The live file's 4 chase items read back as 22
-            bodies. Default off: nothing else has been audited for it.
-    """
-    wanted = name.casefold()
-    collecting = False
-    section_level = 0
-    bodies: list[str] = []
-    for line in text.splitlines():
-        heading = _HEADING.match(line)
-        if heading:
-            level = len(heading["hashes"])
-            if heading["name"].casefold() == wanted:
-                collecting, section_level = True, level
-            elif collecting and level <= section_level:
-                # A hand-added `### Snoozed` under `## Chase list` must not end
-                # the section. State.md is edited by a human; nesting is normal.
-                collecting = False
-            continue
-        bullet = _BULLET.match(line)
-        if collecting and bullet and not (top_level and line[:1].isspace()):
-            bodies.append(bullet["body"])
-    return bodies
-
-
 def split_link(body: str) -> tuple[str, str | None]:
     """A hand-written line's text and the link in it, if there is one.
 
@@ -167,17 +102,6 @@ def split_link(body: str) -> tuple[str, str | None]:
         # typo in a brief, which spends the reader's trust on nothing.
         return re.sub(r"\s{2,}", " ", head + tail).strip(" -·"), bare["url"]
     return body.strip(), None
-
-
-def _as_utc(when: datetime) -> datetime:
-    """``when`` as an aware UTC datetime, assuming UTC if it says nothing.
-
-    One naive stamp beside one aware stamp is a ``TypeError`` on the comparison
-    between them, so the log never holds both. Assuming rather than refusing is
-    the right failure direction here: the caller is a scheduled pre-step, and a
-    missing tzinfo is a cosmetic mistake that must not stop a brief.
-    """
-    return when.replace(tzinfo=UTC) if when.tzinfo is None else when.astimezone(UTC)
 
 
 #: Every field a chase item carries beyond `sensitivity` (CLAUDE.md section 8's
@@ -397,9 +321,22 @@ def _visible(items: Iterable[Any]) -> list[Any]:
 #: conventions blockquote is not a bullet at all.
 _TOP_BULLET = re.compile(r"^[-*]\s+\S")
 
+#: The bullet marker only. `str.lstrip("-* ")` also eats the `**` opening a
+#: bold owner token, so `**gov-lead**` read back as `gov-lead**`.
+_MARKER = re.compile(r"^\s*[-*]\s+")
+
+#: Strike marks, dropped from a body but read by `struck`.
+_STRIKE = re.compile(r"~~")
+
 #: Emphasis and strike markers, dropped before two lines are compared. He
 #: writes `- **gov-lead** · ...`; the log records `gov-lead`.
 _DECORATION = re.compile(r"[*_`~]+")
+
+
+class PrivateDecision(Exception):
+    """A decision line the sensitivity classifier marks private was refused
+    at the append (#124). Not a `ValueError`, for the same reason as
+    `SensitivityRequired`."""
 
 
 class StateNotWritable(Exception):
@@ -455,6 +392,35 @@ class Block:
     """
 
     lines: tuple[str, ...]
+
+    @property
+    def body(self) -> str:
+        """The bullet line with its marker, strike marks and links stripped.
+
+        What a push prints for this block. `split_link` drops the link and
+        keeps the label, so `[slack · his DM](url)` reads as `slack · his DM`.
+        """
+        text, _ = split_link(_MARKER.sub("", self.head))
+        return _STRIKE.sub("", text).strip(" -·")
+
+    @property
+    def link(self) -> str | None:
+        """The first URL anywhere in the block - head line or sub-bullet.
+
+        His citation sits UNDER the line (`\t- [slack](url)`), so a reader
+        that looked at the head alone rendered every hand-written chase item
+        as "couldn't source this one" while the link sat one line below.
+        """
+        for line in self.lines:
+            _, link = split_link(line)
+            if link:
+                return link
+        return None
+
+    @property
+    def struck(self) -> bool:
+        """Whether he crossed the line off - `~~…~~ ✓` is the audit trail."""
+        return _MARKER.sub("", self.head).startswith("~~")
 
     @property
     def head(self) -> str:
@@ -615,6 +581,29 @@ class StateDoc:
                 return section
         return None
 
+    def blocks_in(self, name: str) -> list[Block]:
+        """Every block under the heading ``name``, including nested headings.
+
+        A `### promises you made` under `## Owed by you`, or a hand-added
+        `### Snoozed` under `## Chase list`, belongs to the section above it:
+        State.md is hand-edited and nesting is normal. The section ends at the
+        next heading of the same or a higher level.
+        """
+        wanted = name.casefold()
+        found: list[Block] = []
+        level = 0
+        collecting = False
+        for section in self.sections:
+            heading = section.heading or ""
+            depth = len(heading) - len(heading.lstrip("#"))
+            if section.name.casefold() == wanted:
+                collecting, level = True, depth
+            elif collecting and depth <= level:
+                collecting = False
+            if collecting:
+                found.extend(section.blocks)
+        return found
+
     def contains(self, *needles: str) -> bool:
         """Whether any block in any section is already about this.
 
@@ -772,7 +761,7 @@ class StateFolder:
             (folder.watchlist_path, "# Watchlist\n\n## repos\n\n## jira\n\n## channels\n"),
         ):
             if not path.exists():
-                path.write_text(body, encoding="utf-8")
+                vault.atomic_write(path, body.encode("utf-8"))
         return folder
 
     # -- State.md is the record; the writer appends to it (#130) ----------
@@ -848,11 +837,16 @@ class StateFolder:
             return
         if self.state_path.exists():
             (self.root / "Archive").mkdir(exist_ok=True)
-            (self.root / "Archive" / "State.md.bak").write_text(before, encoding="utf-8")
-        self.state_path.write_text(after, encoding="utf-8")
+            vault.atomic_write(self.root / "Archive" / "State.md.bak", before.encode("utf-8"))
+        vault.atomic_write(self.state_path, after.encode("utf-8"))
 
     def read_state(self) -> str:
-        return self.state_path.read_text(encoding="utf-8")
+        """State.md, refusing an iCloud placeholder rather than reading it as empty.
+
+        Reading a placeholder as "" is the one failure that makes a writer
+        delete content it thought was absent (`vault` contract 3).
+        """
+        return vault.read_materialised(self.state_path).decode("utf-8")
 
     def add_decision(self, line: str) -> None:
         """Append one pending decision to ``Decisions.md``, never regenerating it.
@@ -861,15 +855,18 @@ class StateFolder:
         (D-5, #62) - the line is his to edit, and `closure` reads the status
         back. Nothing here parses an answer, so a decision cannot self-answer
         and a hand edit cannot be overwritten.
+
+        A line the classifier marks private is refused (#124): personnel, comp
+        and M&A go to the DM only (house rule 7), and `Decisions.md` syncs to
+        every device he owns.
         """
+        if classify_sensitivity(line) == "private":
+            raise PrivateDecision(
+                "that decision reads as personnel / comp / M&A - it goes to the DM, "
+                "not to a synced vault file (house rule 7)"
+            )
         with self.decisions_path.open("a", encoding="utf-8") as handle:
             handle.write(f"- {line.strip()}\n")
-
-
-@dataclass
-class _Event:
-    kind: str
-    payload: dict[str, Any]
 
 
 #: Kinds `chase_items` projects into `State.md`. Recording one without an
@@ -948,178 +945,3 @@ class SensitivityRequired(Exception):
 #: The only two marks `_is_private` reads. Anything else - "Private",
 #: "privat", True - would pass a None check and then render as visible.
 SENSITIVITIES = frozenset({"private", "normal"})
-
-
-class EventLog:
-    """Append-mostly SQLite, outside the vault.
-
-    Holds every transition, the meeting ledger, repo cursors, section 8 metrics,
-    and the sensitive partition that must never reach a synced markdown file.
-    """
-
-    def __init__(self, connection: sqlite3.Connection) -> None:
-        self._db = connection
-        self._db.execute(
-            "CREATE TABLE IF NOT EXISTS events ("
-            " id INTEGER PRIMARY KEY AUTOINCREMENT,"
-            " kind TEXT NOT NULL,"
-            " sensitivity TEXT NOT NULL DEFAULT 'normal',"
-            " payload TEXT NOT NULL)"
-        )
-        self._db.commit()
-
-    @classmethod
-    def open(cls, path: str | Path) -> EventLog:
-        return cls(sqlite3.connect(str(path)))
-
-    def record(self, kind: str, *, sensitivity: str | None = None, **payload: Any) -> None:
-        """Append one event.
-
-        ``sensitivity`` may be omitted for a kind that never reaches the vault -
-        a run-log row, a remembered meeting. For a kind in `VAULT_BOUND` it is
-        REQUIRED and must be exactly "private" or "normal": the default was how
-        an unmarked comp item reached a plaintext `State.md` (#105), and a
-        misspelt mark would take the same road, since `_is_private` compares
-        for equality. Pass `classify_sensitivity(...)` if you do not know.
-        """
-        if sensitivity is None and kind in VAULT_BOUND:
-            raise SensitivityRequired(
-                f"{kind!r} is projected into the vault: say sensitivity="
-                '"private" or "normal" explicitly - classify_sensitivity() decides it'
-            )
-        if sensitivity is None:
-            sensitivity = "normal"
-        elif sensitivity not in SENSITIVITIES:
-            raise SensitivityRequired(
-                f"sensitivity={sensitivity!r} is not one of {sorted(SENSITIVITIES)}; "
-                "the vault gate compares for equality, so a near miss renders as visible"
-            )
-        self._db.execute(
-            "INSERT INTO events (kind, sensitivity, payload) VALUES (?, ?, ?)",
-            (kind, sensitivity, json.dumps(payload)),
-        )
-        self._db.commit()
-
-    def _rows(self, kind: str | None = None) -> list[tuple[str, str, dict[str, Any]]]:
-        """Decoded events, skipping any row whose payload will not parse.
-
-        Skipped rather than raised. This feeds `chase_items`, which feeds
-        `update_state` - so one torn or hand-repaired row would otherwise take
-        `State.md` down wholesale. The run log is now by far the highest-volume
-        writer into this table, and a damaged row of *its* would have blanked
-        the chase list. A row that cannot be decoded carries nothing a chase
-        list could show anyway; `payloads` hands the raw text back for callers
-        that want to say so.
-        """
-        sql = "SELECT kind, sensitivity, payload FROM events"
-        args: tuple[Any, ...] = ()
-        if kind is not None:
-            sql += " WHERE kind = ?"
-            args = (kind,)
-        rows = []
-        for k, s, p in self._db.execute(sql, args):
-            try:
-                rows.append((k, s, json.loads(p)))
-            except ValueError:
-                continue
-        return rows
-
-    def recorded(self, kind: str) -> list[Any]:
-        """Every payload recorded under one kind, oldest first.
-
-        The read side of `record`, and named for it - `record` writes, this
-        reads back. It was `payloads`, which collided with the `daydag.payloads`
-        module for a reader seeing both in one file, and the two mean different
-        things: that module reads an unvalidated connector response, this reads
-        a row this log wrote itself. `chase_items` predates this and
-        folds the sensitivity column into each item, which is right for a chase
-        entry and wrong for anything that has to round-trip.
-
-        Ordered explicitly: a bare `SELECT` happens to come back in rowid order
-        today, and "happens to" is not a thing a run log can be built on - the
-        whole value of the log is which run came last.
-
-        A row that will not decode comes back as its **raw text** rather than
-        raising. One torn write or hand-repaired row would otherwise take the
-        whole history down from inside this comprehension, before any caller
-        could attribute the damage to a single row - and the moment a store gets
-        damaged is the moment somebody is reading it. Callers already have to
-        handle a payload that is not the shape they expect; this makes a
-        corrupt one the same case rather than a fatal one.
-        """
-        rows = []
-        for (payload,) in self._db.execute(
-            "SELECT payload FROM events WHERE kind = ? ORDER BY id", (kind,)
-        ):
-            try:
-                rows.append(json.loads(payload))
-            except ValueError:
-                rows.append(payload)
-        return rows
-
-    # -- mirror freshness ------------------------------------------------
-
-    def record_fetch(self, repo: str, *, at: datetime) -> None:
-        """Note that ``repo``'s mirror fetched cleanly at ``at``.
-
-        Appended like everything else rather than upserted: the log is the
-        history, and "when did this repo stop fetching" is a question only the
-        rows can answer. ``last_fetch`` reads the newest back out.
-
-        Normalised to UTC on the way in. A naive stamp is *assumed* UTC rather
-        than refused, because refusing would take the pre-step down over a
-        cosmetic detail - but it is not stored naive: one naive row beside one
-        aware row makes them incomparable, and a mixed comparison is a
-        ``TypeError`` three frames inside the 6:40am run.
-        """
-        self.record("mirror_fetched", repo=repo, at=_as_utc(at).isoformat())
-
-    def last_fetch(self, repo: str) -> datetime | None:
-        """When ``repo``'s mirror last fetched cleanly, or ``None``.
-
-        ``None`` rather than "now": a mirror that has never once been read
-        successfully must not be dated as if it were fresh, which is the exact
-        lie issue #60 is about. The stale line says so in words instead.
-
-        A row whose stamp does not parse is skipped rather than raised on, and a
-        naive one is read as UTC. This file is on disk and a human can touch it;
-        a bad value there must not take the 6:40am brief down.
-
-        Filtered in SQL rather than in Python. Every mirror stamps this table
-        three times a day forever, and this is read once per watched repo per
-        run - decoding every event of every kind to answer it turns a constant
-        into a scan that grows without bound.
-        """
-        rows = self._db.execute(
-            "SELECT payload FROM events"
-            " WHERE kind = 'mirror_fetched' AND json_extract(payload, '$.repo') = ?"
-            " ORDER BY id DESC",
-            (repo,),
-        )
-        newest: datetime | None = None
-        for (payload,) in rows:
-            try:
-                # Newest by *stamp*, not by insertion order: the clock is
-                # injected, so the two are not guaranteed to agree.
-                stamp = _as_utc(datetime.fromisoformat(json.loads(payload).get("at", "")))
-            except (ValueError, TypeError):
-                continue
-            if newest is None or stamp > newest:
-                newest = stamp
-        return newest
-
-    def chase_items(self) -> list[ChaseItem]:
-        """Chase entries as `ChaseItem` (#63), each tagged with the sensitivity
-        that gates the vault.
-
-        Was a bare dict merging the sensitivity column in - a payload recorded
-        with only `key` rendered as `- ?` in `State.md`, a formatting glitch
-        standing in for data nobody had agreed had to be there.
-        `ChaseItem.from_payload` is where that agreement now lives, and
-        `update_state` is held to the same shape on its side of the seam.
-        """
-        return [
-            ChaseItem.from_payload(payload, sensitivity=sensitivity)
-            for kind, sensitivity, payload in self._rows()
-            if kind in {"loop_opened", "carry_forward"}
-        ]

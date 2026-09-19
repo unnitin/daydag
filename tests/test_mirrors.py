@@ -14,6 +14,7 @@ from datetime import UTC, datetime
 import pytest
 
 from daydag.config import ConfigError, Identities
+from daydag.eventlog import EventLog
 from daydag.pulse import (
     GIT_TIMED_OUT,
     NO_PUSH,
@@ -28,7 +29,7 @@ from daydag.pulse import (
     mirror_root,
     read_watchlist,
 )
-from daydag.state import EventLog, StateFolder
+from daydag.statedoc import StateFolder
 
 
 @pytest.fixture

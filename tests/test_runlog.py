@@ -33,6 +33,7 @@ import pytest
 
 from daydag import runlog as runlog_module
 from daydag import smoke
+from daydag.eventlog import EventLog
 from daydag.runlog import (
     DEGRADED,
     FAILED,
@@ -43,7 +44,7 @@ from daydag.runlog import (
     RunLog,
     RunRow,
 )
-from daydag.state import EventLog, StateFolder
+from daydag.statedoc import StateFolder
 from daydag.voice import voice_violations
 
 PT = timezone(timedelta(hours=-7))

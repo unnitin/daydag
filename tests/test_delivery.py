@@ -28,10 +28,10 @@ import pytest
 from daydag import delivery
 from daydag.config import Identities
 from daydag.delivery import DeliveryError, deliver_push
+from daydag.eventlog import EventLog
 from daydag.prep import Point, PrepPing, Reason
 from daydag.registry import Registry, RegistryError
 from daydag.runlog import DEGRADED, FAILED, OK, RunLog
-from daydag.state import EventLog
 from daydag.voice import Push
 
 PRINCIPAL = "UPRINCIPAL1"

@@ -57,7 +57,7 @@ from daydag import recipes
 from daydag.config import resolve_reference
 from daydag.ledger import Ledger, title_from_gemini_subject
 from daydag.pulse import Pulse
-from daydag.state import StateFolder, read_section, split_link
+from daydag.statedoc import StateDoc, StateFolder
 from daydag.voice import Push, clipped, render
 
 __all__ = [
@@ -647,12 +647,12 @@ def assemble(
 
     # -- chase and watch, read out of the file he corrects by hand --------
     if state is not None:
-        written = read("the chase list", state.read_state, "")
+        doc = StateDoc.parse(read("the chase list", state.read_state, ""))
         chase = [
-            _line_from_state(body) for body in read_section(written, "Chase list", top_level=True)
+            line_from_state(block) for block in doc.blocks_in("Chase list") if not block.struck
         ]
         watch = [
-            _line_from_state(body) for body in read_section(written, "Watch items", top_level=True)
+            line_from_state(block) for block in doc.blocks_in("Watch items") if not block.struck
         ]
         if chase:
             sections.append(Section(f"owed to you ({len(chase)})", tuple(chase)))
@@ -709,14 +709,14 @@ def _day_label(day: date) -> str:
     return f"{day:%a %b} {day.day}".lower()
 
 
-def _line_from_state(body: str) -> str:
-    text, link = split_link(body)
-    return claim(text, link)
+def line_from_state(block: Any) -> str:
+    """One State.md block as a push line: his wording, its permalink from
+    anywhere in the block - the one rule the brief, the week-ahead and the
+    chaser share."""
+    return claim(block.body, block.link)
 
 
-#: Public names for the two helpers `run` and `week_ahead` were re-spelling -
-#: one bullet-from-State.md rule and one quote budget, held here.
-line_from_state = _line_from_state
+#: Public name for the quote budget `run` uses.
 short = _short
 
 

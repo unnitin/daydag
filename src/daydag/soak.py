@@ -53,7 +53,7 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Any
 
-from daydag.state import EventLog
+from daydag.eventlog import EventLog
 
 __all__ = ["REQUIRED_DAYS", "Report", "Soak", "main"]
 
