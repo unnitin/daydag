@@ -22,7 +22,12 @@ import json
 from pathlib import Path
 from typing import Any
 
-FIXTURES = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "ingestion"
+# Re-exported: the classifier owns the vocabularies, the eval set is labelled in them.
+from daydag.ingestion import DECISION_MARKERS as DECISION_MARKERS
+from daydag.ingestion import MODALITIES as MODALITIES
+from daydag.ingestion import OWNER_FORMS as OWNER_FORMS
+
+FIXTURES = Path(__file__).resolve().parent / "fixtures" / "ingestion"
 
 #: The five categories of SPEC section 3.3 step 2. Exactly one per item.
 LABELS = (
@@ -45,46 +50,8 @@ HARD_CASES = frozenset(
     }
 )
 
-#: How the note names an owner. `the_group` is Gemini's literal `[The group]`,
-#: and it is common enough that treating it as "no owner, therefore not an ask"
-#: would discard a large share of the real asks.
-OWNER_FORMS = frozenset(
-    {"principal", "named_person", "named_people", "first_name_only", "the_group", "none"}
-)
-
-#: Gemini writes everything in the third person, so the first-person signal
-#: SPEC section 3.3 illustrates with "I'll intro Daniel to CTO" never appears.
-#: Modality is what is left to separate a commitment from a description.
-MODALITIES = frozenset(
-    {
-        "imperative",
-        "past_declarative",
-        "present_declarative",
-        "future_will",
-        "progressive",
-        "hedged",
-    }
-)
-
 DATE_FORMS = frozenset(
     {"weekday", "relative_day", "relative_week", "quarter", "absolute", "end_of_period", None}
-)
-
-#: The verbs that mark a decision in the prose. There is no `Decisions` section
-#: to read - see reference/ingestion-eval.md.
-DECISION_MARKERS = frozenset(
-    {
-        "decided",
-        "agreed",
-        "consensus",
-        "established",
-        "adopted",
-        "resolved",
-        "finalized",
-        "prioritized",
-        "confirmed",
-        None,
-    }
 )
 
 MEETING_KINDS = frozenset(

@@ -1,0 +1,19 @@
+morning. fri sep 18 - 2 meetings
+
+meetings (2)
+- 9:00 Nitin / VP-Data 1:1 (https://example.com/cal/2026-09-18/11)
+- 11:00 Pod Steering (https://example.com/cal/2026-09-18/steering)
+
+top of the note (0914-0918)
+- 🔴 compute consolidation plan *(mine w/ vp-data)* (Create Music Group/Weekly Notes/0914-0918.md#L8)
+
+owed to you (2)
+- vp-data · fruits metadata list · asked-on 2026-09-10 · status open (couldn't source this one)
+- gov-lead · define project expectations + coverage timelines · asked-on 2026-09-11 · status open (couldn't source this one)
+
+overnight (2)
+- someone: "<@UPRINCIPAL1> the compute consolidation doc is ready for a read" (https://example.com/archives/CHANNELID/p1789700000000000)
+- notes landed: "Nitin / VP-Data 1:1" (couldn't source this one)
+
+watch
+- nightly ingest job, since the schema change (couldn't source this one)
