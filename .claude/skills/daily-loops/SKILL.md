@@ -180,7 +180,7 @@ but knowing which is which before you start saves a wasted round-trip.
 | Command | How |
 |---|---|
 | `prep <meeting or person>` | `python -m daydag.run plan prep --for "<name or title words>"`, then fetch, then `render prep --for ...`. Searches the next 7 days in his zone. When the name fits several meetings it ASKS - narrow with words from the title (`"ruwen / nitin"`), never pick one for him. Without `--for`, `prep` takes the next qualifying meeting |
-| `ship <repo>` | `render ship`, with a `Pulse` built from the mirrors. Without one it degrades to a line |
+| `ship <repo>` | `python -m daydag.run render ship --mirrors --log ~/.local/state/daydag/events.db < /dev/null` - `--mirrors` syncs the watchlist's repos and reads each on from its stored cursor; without it the loop degrades to a line. The same flag gives the morning, wrap and week-ahead their shipping section |
 | `sweep` | you, following SPEC §3.8 - a pending-items pass across Slack/Gmail/Notion/Obsidian, triaged, every item with a permalink. **Before any line is reported open, run `chase` first**: it reads the reply under every ask State.md already carries, and a sweep that re-lists those from their ask text repeats the 2026-09-18 miss |
 | `find <question>` | you - person-scoped Slack (`from:<@ID>`, `sort:timestamp asc`), then Gmail, then read the thread. Answer with quote + link, never from memory |
 | `draft <what>` | you, in the voice above. A draft, never a send |

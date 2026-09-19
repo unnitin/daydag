@@ -20,7 +20,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from daydag import brief, run
+from daydag import push, run
 from daydag.config import Identities
 from daydag.statedoc import StateFolder
 
@@ -186,7 +186,7 @@ def test_the_runner_fetches_nothing_itself():
 def test_a_json_timestamp_becomes_a_datetime_before_the_brief_sees_it(identities):
     """The seam this whole module is, and the one place it can go wrong quietly.
 
-    `brief._local` returns None unless the value is a `datetime` OBJECT. The
+    `push.local` returns None unless the value is a `datetime` OBJECT. The
     agent fetches over MCP and hands back JSON, where every instant is a
     string - so passing payloads through untouched made every meeting render
     "all day", with the right title and the wrong time, on every real run.
@@ -456,7 +456,7 @@ def test_an_unplaceable_event_is_still_offered_rather_than_dropped(identities):
 
 
 def test_a_note_that_was_never_written_says_so(identities):
-    """`brief.read_vault_note` splits three ways on exception type, and this
+    """`push.read_vault_note` splits three ways on exception type, and this
     layer could only ever produce two of them. The missing one is the state the
     vault is actually in: the note is hand-written and the series has had a gap
     for weeks, so every real run meets it."""
@@ -586,7 +586,7 @@ def test_the_payload_adapter_serves_every_source_method(identities):
     than the thing it stood in for.
     """
     for name in ("calendar", "slack", "gmail", "weekly_note", "vault_note"):
-        assert hasattr(brief.Sources, name), f"the protocol lost {name}"
+        assert hasattr(push.Sources, name), f"the protocol lost {name}"
         assert callable(getattr(run._Payloads(_payloads()), name, None)), (
             f"_Payloads does not implement {name}, so every read of it degrades"
         )
@@ -794,7 +794,7 @@ def test_two_meetings_at_the_same_time_cluster_instead_of_crashing():
     sits outside `read()`, so the whole Sunday push died."""
     from datetime import UTC, datetime
 
-    from daydag.brief import overlap_clusters
+    from daydag.push import overlap_clusters
 
     at = datetime(2026, 9, 17, 18, 0, tzinfo=UTC)
     a = {"summary": "Finance x Data", "start": at, "end": at.replace(hour=19)}
@@ -810,7 +810,7 @@ def test_a_meeting_with_a_start_but_no_end_can_still_sit_inside_another():
     tentative invite with no end that begins inside a hold is a clash."""
     from datetime import UTC, datetime
 
-    from daydag.brief import overlap_clusters
+    from daydag.push import overlap_clusters
 
     hold = {
         "summary": "Hold",
@@ -868,7 +868,7 @@ def test_ingest_lines_are_bulleted_like_every_other_section(identities):
 
 def test_a_carried_chase_item_keeps_its_quote_and_permalink(identities, tmp_path):
     """House rule 1. Bare `owner: ask` dropped both, and was invisible to
-    `brief.unsourced_claims` for want of a bullet."""
+    `push.unsourced_claims` for want of a bullet."""
     from daydag.eventlog import EventLog
     from daydag.statedoc import StateFolder
 

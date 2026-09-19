@@ -13,7 +13,7 @@ USING IT
 
     wrap = assemble(now=now, sources=Connectors(), ledger=ledger, pulse=pulse)
     wrap.render()
-    unsourced_claims(wrap.render())   # from daydag.brief - must be empty
+    unsourced_claims(wrap.render())   # from daydag.push - must be empty
 
 CONTRACTS
     1. Silence is information (SPEC 3.7 rule 3). An empty section - nothing
@@ -24,7 +24,7 @@ CONTRACTS
        with, because the rule is not brief-specific.
     3. Degrade, never stall (guardrail 6). A source that raises costs one
        "couldn't check X" line; the wrap still ships regardless.
-    4. A naive `now` is REFUSED with `WrapError`, never read against the
+    4. A naive `now` is REFUSED with `PushError`, never read against the
        host's zone - `astimezone()` with no argument adopts the runner's
        timezone, which is the bug `daydag.brief.assemble` was fixed for and
        this must not reintroduce.
@@ -72,32 +72,31 @@ KNOWN LIMIT
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
-from datetime import date, datetime, timedelta
-from typing import Any, Protocol
+from datetime import date, timedelta
+from typing import TYPE_CHECKING
 
-from daydag import recipes
-from daydag.brief import (
-    WARN,
+from daydag import recipes, voice
+from daydag.push import (
+    Push,
     Reader,
     Section,
+    Sources,
+    aware,
     claim,
     closed_red_items,
     first_meeting_line,
+    missing_note_section,
     read_vault_note,
-    render_push,
+    shipping_lines,
 )
-from daydag.ledger import Ledger
-from daydag.pulse import Pulse
-from daydag.voice import Push, render
 
-__all__ = [
-    "Sources",
-    "Wrap",
-    "WrapError",
-    "assemble",
-]
+if TYPE_CHECKING:
+    from datetime import datetime
+
+    from daydag.ledger import Ledger
+    from daydag.pulse import Pulse
+
+__all__ = ["assemble"]
 
 #: Friday, 0-indexed from Monday - `date.weekday()`'s own convention.
 _FRIDAY = 4
@@ -107,68 +106,13 @@ _FRIDAY = 4
 _NEXT_WEEK = timedelta(days=7)
 
 
-class WrapError(RuntimeError):
-    """The wrap was asked for something it cannot honestly produce.
-
-    Raised only for a caller mistake - a naive clock - never for a source that
-    failed. A failed source degrades to a line; a wrong parameter would
-    silently produce a wrap that reads fine and is not true. Mirrors
-    :class:`daydag.brief.BriefError` on purpose, so a caller that already
-    catches one knows to catch the other.
-    """
-
-
-class Sources(Protocol):
-    """The two reads the wrap performs. Every one may raise.
-
-    Narrower than :class:`daydag.brief.Sources` on purpose: the wrap asks a
-    different question and does not need Slack or Gmail to answer it. Taking
-    the *query* rather than the parameters behind it is the same discipline
-    as the brief's own protocol - the queries come from :mod:`daydag.recipes`.
-    """
-
-    def calendar(self, window: recipes.DayWindow) -> Iterable[Mapping[str, Any]]:
-        """Events in one local day."""
-
-    def weekly_note(self, path: str) -> str:
-        """THIS week's plan of record. ``FileNotFoundError`` means no note.
-
-        Separate from `vault_note` because the runner keys the two payloads
-        separately, not because the read is different: `run.plan` puts this
-        one under `vault` and every other path under `vault_notes`, and
-        `run.py`'s own comment says `vault` already means this note. The wrap
-        asked for it through the other method and so never saw it (#131).
-        """
-
-    def vault_note(self, path: str) -> str:
-        """Any OTHER vault path. ``FileNotFoundError`` means nobody wrote it.
-
-        On a Friday: the coming week's plan and its meeting prep file, which
-        the wrap reports on per contract 5.
-        """
-
-
-@dataclass(frozen=True)
-class Wrap:
-    """One evening's assembled wrap."""
-
-    day: date
-    header: str
-    sections: tuple[Section, ...]
-    #: Display names of sources that could not be read this run.
-    unreachable: tuple[str, ...] = ()
-
-    def render(self) -> str:
-        return render_push(self.header, self.sections, self.unreachable)
-
-
 def assemble(
     *,
     now: datetime,
     sources: Sources,
     ledger: Ledger | None = None,
     pulse: Pulse | None = None,
-) -> Wrap:
+) -> Push:
     """Build the EOD wrap for ``now``'s local day.
 
     ``ledger`` and ``pulse`` are optional because they are *state the caller
@@ -176,14 +120,8 @@ def assemble(
     silence rather than a failure - the same contract as
     :func:`daydag.brief.assemble`.
     """
-    if now.tzinfo is None or now.utcoffset() is None:
-        raise WrapError(
-            "now must be timezone-aware: today's close and tomorrow's first "
-            "meeting are both local wall-clock questions, and a naive clock "
-            "is silently hours wrong on a UTC runner"
-        )
+    aware(now, "today's close and tomorrow's first meeting are local wall-clock questions")
     day = now.astimezone(recipes.PACIFIC).date()
-    tomorrow = day + timedelta(days=1)
     read = Reader()
     sections: list[Section] = []
 
@@ -194,9 +132,8 @@ def assemble(
     )
     if missing_note:
         sections.append(
-            Section(
-                f"{WARN} no weekly note for {recipes.week_label(day)}",
-                (claim("can't say what closed today without the week's priorities", note_path),),
+            missing_note_section(
+                day, note_path, "can't say what closed today without the week's priorities"
             )
         )
     closed = closed_red_items(note)
@@ -209,22 +146,16 @@ def assemble(
         )
 
     # -- what moved: the pulse's own block, reused verbatim ----------------
-    moved_lines: list[str] = []
-    if pulse is not None:
-        block = read("the pulse", pulse.render, "")
-        if block.strip():
-            moved_lines = block.splitlines()
-            # Counted from `items()`, not from the rendered lines. That block
-            # also carries stale-mirror, unavailable-repo and unparsed-watchlist
-            # notices, so a day where nothing shipped and two sources degraded
-            # announced "moved (2)" with both lines being failure notices. The
-            # lines all still ship - degrading loudly is the point - but a
-            # failure to read is not a thing that moved.
-            count = len(read("the pulse", pulse.items, []))
-            sections.append(Section(f"moved ({count})", tuple(moved_lines)))
+    moved_lines = shipping_lines(read, pulse)
+    if moved_lines and pulse is not None:
+        # Counted from `items()`, not from the rendered lines: the block also
+        # carries stale-mirror and unparsed-watchlist notices, and a failure
+        # to read is not a thing that moved.
+        count = len(read("the pulse", pulse.items, []))
+        sections.append(Section(f"moved ({count})", tuple(moved_lines)))
 
     # -- tomorrow's first meeting, plus any prep gap -----------------------
-    window = recipes.calendar_day(tomorrow)
+    (window,) = recipes.loop_windows("eod", day)
     # `list` inside the lambda, not outside it - see brief.assemble for why:
     # a paginated adapter is a generator that raises on iteration, and
     # materialised outside the guard that failure walks past the degrade path.
@@ -245,14 +176,14 @@ def assemble(
     if day.weekday() == _FRIDAY:
         sections += _friday_outcome(read, sources, day)
 
-    header = render(
-        Push.EOD_WRAP,
+    header = voice.render(
+        voice.Push.EOD_WRAP,
         {
             "closed": "?" if "the weekly note" in read.unreachable else len(closed),
             "moved": "?" if "the pulse" in read.unreachable else len(moved_lines),
         },
     )
-    return Wrap(
+    return Push(
         day=day,
         header=header,
         sections=tuple(sections),

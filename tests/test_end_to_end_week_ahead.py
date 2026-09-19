@@ -9,7 +9,7 @@ event log, the ledger and the pulse. This walks the seams with the real
 objects instead:
 
     a real event log      -> State.md, private items withheld     -> carrying in
-    a real weekly note     -> brief.red_items, cited by path#line  -> carrying in
+    a real weekly note     -> push.red_items, cited by path#line  -> carrying in
     a real git mirror      -> pulse                                -> shipping
     real calendar events   -> a real Ledger -> prep.prep_worthy    -> monday_preps,
                               with the SAME meeting's week named correctly even
@@ -24,7 +24,7 @@ from __future__ import annotations
 import subprocess
 from datetime import datetime, timedelta, timezone
 
-from daydag import brief, week_ahead
+from daydag import push, week_ahead
 from daydag.eventlog import EventLog
 from daydag.pulse import Mirror, Pulse
 from daydag.statedoc import StateFolder
@@ -81,7 +81,7 @@ class Connectors:
 def test_a_sunday_evening_arrives_as_one_assembled_week_ahead(tmp_path, git_env):
     """The integration path, asserted at each seam rather than only at the end."""
     # -- a real weekly note -> the closing week's open red item -------------
-    # (read via brief.red_items - never re-derived, contract 1)
+    # (read via push.red_items - never re-derived, contract 1)
 
     # -- a real mirror -> pulse ---------------------------------------------
     repo = tmp_path / "svc.git"
@@ -200,7 +200,7 @@ def test_a_sunday_evening_arrives_as_one_assembled_week_ahead(tmp_path, git_env)
     assert "shipping" in text
     assert "CDI-596 cutover rehearsal" in text
 
-    assert brief.unsourced_claims(text) == [], f"a claim shipped with no evidence:\n{text}"
+    assert push.unsourced_claims(text) == [], f"a claim shipped with no evidence:\n{text}"
     assert voice_violations(text) == [], f"broke the house voice:\n{voice_violations(text)}\n{text}"
 
 
@@ -261,5 +261,5 @@ def test_a_dead_connector_and_a_stale_mirror_both_degrade_into_the_same_push(tmp
     # a dead vault read on a DIFFERENT note must not take it down
     assert "Pod Steering" in text
     assert any(p.meeting == "Pod Steering" for p in pushed.monday_preps)
-    assert brief.unsourced_claims(text) == []
+    assert push.unsourced_claims(text) == []
     assert voice_violations(text) == []

@@ -75,36 +75,38 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import Any
 
-from daydag import recipes
-from daydag.brief import UNSOURCED, Section, Sources, line_from_state, overlap_clusters, red_items
+from daydag import recipes, voice
 from daydag.ledger import Ledger, part_of_the_week
 from daydag.prep import Audience, Reason, SourcePlan, prep_worthy
 from daydag.prep import sources as build_source_plan
 from daydag.pulse import Pulse
-from daydag.statedoc import StateDoc, StateFolder
-from daydag.voice import Push, render
+from daydag.push import (
+    WARN,
+    Push,
+    Reader,
+    Section,
+    Sources,
+    aware,
+    claim,
+    clock,
+    day_label,
+    instant,
+    link,
+    local,
+    overlap_clusters,
+    read_vault_note,
+    red_items,
+    seed_ledger,
+    shipping_lines,
+    state_lines,
+)
+from daydag.statedoc import StateFolder
 
 __all__ = [
     "MondayPrep",
     "WeekAhead",
-    "WeekAheadError",
     "assemble",
 ]
-
-
-class WeekAheadError(RuntimeError):
-    """The week-ahead was asked for something it cannot honestly produce.
-
-    Raised only for a caller mistake - a naive clock - never for a source that
-    failed. A failed source degrades to a line; a wrong parameter would
-    silently push a message that reads fine and describes the wrong week.
-    """
-
-
-#: The sanctioned warning glyph: plain U+26A0. Its own constant, matching the
-#: convention every loop in this package follows (`prep.py`'s `UNSOURCED` is
-#: its own string too) rather than reaching into `brief`'s private one.
-WARN = "⚠"
 
 #: Loose net on purpose. A false positive here costs one inline flag Nitin
 #: reads past in a second; a false negative is the "CTO flying Tue" case rule
@@ -136,86 +138,24 @@ class MondayPrep:
     starts: datetime
     reason: Reason
     plan: SourcePlan
+    permalink: str | None = None
+
+    def line(self) -> str:
+        """The push line: when, what, why it qualifies, cited to the invite."""
+        why = self.reason.value if hasattr(self.reason, "value") else str(self.reason)
+        return claim(f"{clock(self.starts)} {self.meeting} - {why}", self.permalink)
 
 
 @dataclass(frozen=True)
-class WeekAhead:
-    """One Sunday's assembled week-ahead push."""
+class WeekAhead(Push):
+    """One Sunday's push, plus the Monday prep queue a later loop threads.
 
-    day: date
-    header: str
-    sections: tuple[Section, ...]
-    #: Display names of sources that could not be read this run.
-    unreachable: tuple[str, ...] = ()
-    #: Monday meetings due a prep ping, for the loop that threads them.
-    monday_preps: tuple[MondayPrep, ...] = ()
-
-    def render(self) -> str:
-        blocks = [self.header]
-        blocks += [section.render() for section in self.sections if section.lines]
-        if self.unreachable:
-            blocks.append("\n".join(f"- couldn't check {name}" for name in self.unreachable))
-        return "\n\n".join(blocks)
-
-
-# --------------------------------------------------------------------------
-# rendering primitives
-#
-# Deliberately re-derived rather than imported from `brief` - only PUBLIC
-# names cross module boundaries in this package (see `README.md`'s module
-# table and `prep.py`'s own naive-start guard, which does the same rather
-# than reaching into `brief._local`). `UNSOURCED`'s wording is imported,
-# though: it is `brief.unsourced_claims`'s only lexical anchor for "this line
-# admits it has no evidence", so a second string here would silently stop
-# being recognised by the shared check.
-# --------------------------------------------------------------------------
-
-
-def _local(value: Any) -> datetime | None:
-    """A calendar instant in the principal's zone.
-
-    Same contract as `brief._local`: a naive value is assumed to already be
-    his local wall-clock time, never reinterpreted via the host's zone.
+    A `Push` with one more field: the preps are RENDERED as a section (SPEC
+    3.6 rule 2, "pre-built, not pre-sent") and carried as objects for the
+    loop that fetches their sources.
     """
-    if not isinstance(value, datetime):
-        return None
-    if value.tzinfo is None:
-        return value.replace(tzinfo=recipes.PACIFIC)
-    return value.astimezone(recipes.PACIFIC)
 
-
-def _clock(value: Any) -> str:
-    moment = _local(value)
-    if moment is None:
-        return "all day"
-    return f"{moment.hour % 12 or 12}:{moment.minute:02d}"
-
-
-def _instant(event: Mapping[str, Any]) -> float:
-    moment = _local(event.get("start"))
-    return moment.timestamp() if moment else float("inf")
-
-
-def _link(record: Mapping[str, Any]) -> str | None:
-    value = record.get("permalink")
-    return str(value) if value else None
-
-
-def _day_label(day: date) -> str:
-    return f"{day:%a %b} {day.day}".lower()
-
-
-def _claim(text: str, *permalinks: str | None) -> str:
-    """One push line, with its citation or an admission that it has none."""
-    links = [str(link) for link in permalinks if link]
-    if not links:
-        return f"- {text} ({UNSOURCED})"
-    return "- " + text + "".join(f" ({link})" for link in links)
-
-
-# --------------------------------------------------------------------------
-# OOO / travel - Nitin's own calendar only (KNOWN LIMIT above)
-# --------------------------------------------------------------------------
+    monday_preps: tuple[MondayPrep, ...] = ()
 
 
 def _is_travel(event: Mapping[str, Any]) -> bool:
@@ -233,7 +173,7 @@ def _travel_index(events: Sequence[Mapping[str, Any]]) -> dict[str, tuple[str, s
         if not _is_travel(event):
             continue
         summary = str(event.get("summary", "travel"))
-        permalink = _link(event)
+        permalink = link(event)
         for attendee in event.get("attendees") or []:
             key = str(attendee).strip().casefold()
             if key:
@@ -262,15 +202,15 @@ def _monday_lines(
     events: Sequence[Mapping[str, Any]], travel: Mapping[str, tuple[str, str | None]]
 ) -> list[str]:
     lines: list[str] = []
-    for event in sorted(events, key=_instant):
+    for event in sorted(events, key=instant):
         summary = str(event.get("summary", "untitled"))
-        head = f"{_clock(event.get('start'))} {summary}"
+        head = f"{clock(event.get('start'))} {summary}"
         flag = _traveller_flag(event.get("attendees") or [], travel)
         if flag is None:
-            lines.append(_claim(head, _link(event)))
+            lines.append(claim(head, link(event)))
         else:
             text, travel_link = flag
-            lines.append(_claim(f"{head} - {text}", _link(event), travel_link))
+            lines.append(claim(f"{head} - {text}", link(event), travel_link))
     return lines
 
 
@@ -287,7 +227,7 @@ def _week_lines(
     """
     lines: list[str] = []
     for day in days:
-        events = sorted(by_day.get(day, ()), key=_instant)
+        events = sorted(by_day.get(day, ()), key=instant)
         if not events:
             continue
         label = _WEEKDAY[day.weekday()]
@@ -300,14 +240,14 @@ def _week_lines(
         shown = titles[:_WEEK_TITLES]
         tail = "" if len(titles) <= _WEEK_TITLES else f", +{len(titles) - _WEEK_TITLES} more"
         body = f"{label}: {len(events)} meeting{plural} - " + ", ".join(shown) + tail
-        link = next((_link(event) for event in events if _link(event)), None)
+        cite = next((link(event) for event in events if link(event)), None)
         found_flags = (_traveller_flag(e.get("attendees") or [], travel) for e in events)
         flag = next((flag for flag in found_flags if flag), None)
         if flag is None:
-            lines.append(_claim(body, link))
+            lines.append(claim(body, cite))
         else:
             text, travel_link = flag
-            lines.append(_claim(f"{body} - {text}", link, travel_link))
+            lines.append(claim(f"{body} - {text}", cite, travel_link))
     return lines
 
 
@@ -335,10 +275,10 @@ def _clash_lines(
             titles = ", ".join(str(e.get("summary", "untitled")) for e in cluster)
             # Clusters come back in time order, so the first member is the earliest.
             lines.append(
-                _claim(
-                    f"{WARN} {_WEEKDAY[day.weekday()]} {_clock(cluster[0].get('start'))}"
+                claim(
+                    f"{WARN} {_WEEKDAY[day.weekday()]} {clock(cluster[0].get('start'))}"
                     f" - {len(cluster)} at once: {titles}",
-                    *[_link(e) for e in cluster],
+                    *[link(e) for e in cluster],
                 )
             )
     return lines
@@ -358,17 +298,9 @@ def _monday_preps(
     tolerated, same as `brief._seed_and_gaps`: silently seeding zero rows here
     means Monday's prep queue is empty and nothing says why.
     """
-    for event in events:
-        missing = [
-            key for key in ("id", "start", "end", "summary", "attendees") if key not in event
-        ]
-        if missing:
-            raise KeyError(
-                f"calendar record is missing {', '.join(missing)}; "
-                "monday's prep queue cannot qualify it"
-            )
     ledger = Ledger()
-    ledger.seed_day(events)
+    seed_ledger(ledger, events, required=("id", "start", "end", "summary", "attendees"))
+    permalinks = {str(event.get("id")): link(event) for event in events}
     audience = Audience.from_identities(identities)
     preps: list[MondayPrep] = []
     for row in ledger.open_rows():
@@ -376,7 +308,15 @@ def _monday_preps(
         if reason is None:
             continue
         plan = build_source_plan(row, now, identities=identities)
-        preps.append(MondayPrep(meeting=row.summary, starts=row.start, reason=reason, plan=plan))
+        preps.append(
+            MondayPrep(
+                meeting=row.summary,
+                starts=row.start,
+                reason=reason,
+                plan=plan,
+                permalink=permalinks.get(row.event_id),
+            )
+        )
     return preps
 
 
@@ -399,54 +339,26 @@ def assemble(
     :func:`daydag.brief.assemble`: state the caller owns, not a source, and a
     run without either is silence rather than a failure.
     """
-    if now.tzinfo is None or now.utcoffset() is None:
-        raise WeekAheadError(
-            "now must be timezone-aware: the week-ahead is a Sunday-evening "
-            "wall-clock push, and a naive clock is silently hours wrong on a "
-            "UTC runner"
-        )
+    aware(now, "the week-ahead is a Sunday-evening wall-clock push")
     day = now.astimezone(recipes.PACIFIC).date()
-    # `day + 1` only means "next Monday" when `now` actually falls on a
-    # Sunday. The scheduled run always does, but SPEC 3.8's on-demand "week
-    # ahead" command does not promise that - so this is derived from
-    # `week_range`, the one place that arithmetic already lives, rather than
-    # assumed: the Monday of `day`'s own week, one week further out, is the
-    # upcoming Mon-Fri regardless of which weekday `now` happens to be.
-    this_monday, _ = recipes.week_range(day)
-    next_monday = this_monday + timedelta(days=7)
-    unreachable: list[str] = []
-
-    def read(name: str, call, default):
-        try:
-            return call()
-        except Exception:  # any failure degrades identically
-            # Named once, not once per failing call: the calendar alone is up
-            # to seven calls (contract 7), and seven identical "couldn't check
-            # calendar" lines is the opposite of "thin, still" (rule 4).
-            if name not in unreachable:
-                unreachable.append(name)
-            return default
-
+    next_monday = recipes.next_monday(day)
+    read = Reader()
     sections: list[Section] = []
 
     # -- the plan weekly-planning produced Friday: read, never re-derived ---
+    # A missing plan is not a failure: SPEC 3.6 rule 3 wants it as the LEADING
+    # finding, not folded into `unreachable` beside a dead Slack connector.
     next_note_path = recipes.weekly_note(next_monday)
-    missing_plan = False
-    try:
-        sources.weekly_note(next_note_path)
-    except FileNotFoundError:
-        # Not a failure: SPEC 3.6 rule 3 wants this as the LEADING finding,
-        # not folded into `unreachable` beside a dead Slack connector.
-        missing_plan = True
-    except Exception:
-        unreachable.append("the week-ahead plan")
+    _, missing_plan = read_vault_note(
+        read, lambda: sources.weekly_note(next_note_path), label="the week-ahead plan"
+    )
 
     if missing_plan:
         sections.append(
             Section(
                 f"{WARN} no week-ahead plan for {recipes.next_week_label(day)}",
                 (
-                    _claim(
+                    claim(
                         "nothing to lead the week with - run weekly-planning now?",
                         next_note_path,
                     ),
@@ -455,38 +367,27 @@ def assemble(
         )
 
     # -- carryover: the closing week's open red items ------------------------
+    # A closing week with no note has nothing to carry forward - not itself a
+    # finding; the missing-plan section above already leads.
     closing_note_path = recipes.weekly_note(day)
-    try:
-        closing_note = sources.weekly_note(closing_note_path)
-    except FileNotFoundError:
-        # A closing week with no note at all has nothing to carry forward -
-        # not itself a finding; the missing-plan section above already leads.
-        closing_note = ""
-    except Exception:
-        closing_note = ""
-        unreachable.append("the closing week's note")
+    closing_note, _ = read_vault_note(
+        read, lambda: sources.weekly_note(closing_note_path), label="the closing week's note"
+    )
 
     carrying = [
-        _claim(text, f"{closing_note_path}#L{lineno}") for lineno, text in red_items(closing_note)
+        claim(text, f"{closing_note_path}#L{lineno}") for lineno, text in red_items(closing_note)
     ]
 
     # -- chase + watch, read out of the file he corrects by hand -------------
-    watch_lines: list[str] = []
-    if state is not None:
-        doc = StateDoc.parse(read("the chase list", state.read_state, ""))
-        carrying += [
-            line_from_state(block) for block in doc.blocks_in("Chase list") if not block.struck
-        ]
-        watch_lines = [
-            line_from_state(block) for block in doc.blocks_in("Watch items") if not block.struck
-        ]
+    chase_lines, watch_lines = state_lines(read, state)
+    carrying += chase_lines
 
     if carrying:
         sections.append(Section(f"carrying in ({len(carrying)})", tuple(carrying)))
 
     # -- the next seven days of calendar, day by day (same as 3.1) ----------
     events: list[Mapping[str, Any]] = []
-    for window in recipes.calendar_days(next_monday, next_monday + timedelta(days=6)):
+    for window in recipes.loop_windows("week-ahead", day):
         events += read("calendar", lambda w=window: list(sources.calendar(w)), [])
 
     # `travel` scans EVERY event, OOO included - that is the signal it exists
@@ -507,13 +408,13 @@ def assemble(
         # notice.
         if not part_of_the_week(event):
             continue
-        moment = _local(event.get("start"))
+        moment = local(event.get("start"))
         if moment is not None:
             by_day.setdefault(moment.date(), []).append(event)
     monday_events = by_day.get(next_monday, [])
 
     if monday_events:
-        monday_heading = f"monday ({_day_label(next_monday)})"
+        monday_heading = f"monday ({day_label(next_monday)})"
         sections.append(Section(monday_heading, tuple(_monday_lines(monday_events, travel))))
 
     weekdays = [next_monday + timedelta(days=offset) for offset in range(5)]
@@ -534,21 +435,27 @@ def assemble(
     if watch_lines:
         sections.append(Section("watch", tuple(watch_lines)))
 
-    if pulse is not None:
-        block = read("shipping", pulse.render, "")
-        if block.strip():
-            sections.append(Section("shipping", tuple(block.splitlines())))
+    shipping = shipping_lines(read, pulse)
+    if shipping:
+        sections.append(Section("shipping", tuple(shipping)))
 
     # -- Monday prep, pre-built and never pre-sent (contract 4) --------------
     def _preps():
         return _monday_preps(monday_events, now, identities)
 
     monday_preps = tuple(read("monday prep", _preps, []))
+    if monday_preps:
+        sections.append(
+            Section(
+                f"monday prep - pre-built ({len(monday_preps)})",
+                tuple(prep.line() for prep in monday_preps),
+            )
+        )
 
     return WeekAhead(
         day=day,
-        header=render(Push.WEEK_AHEAD, {}),
+        header=voice.render(voice.Push.WEEK_AHEAD, {}),
         sections=tuple(sections),
-        unreachable=tuple(unreachable),
+        unreachable=tuple(read.unreachable),
         monday_preps=monday_preps,
     )

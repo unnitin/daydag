@@ -687,7 +687,7 @@ def test_a_naive_fetch_time_still_renders_with_a_zone():
 
     Naive means UTC here, matching `state._as_utc`, which is the writer for
     this field and assumes UTC when a stamp says nothing. Reading it as the
-    principal's wall clock instead - the convention `brief._local` holds for
+    principal's wall clock instead - the convention `push.local` holds for
     calendar events - would render a naive 06:40 as "06:40 PDT", seven hours
     off, and a confident wrong label is worse than the bare one.
 

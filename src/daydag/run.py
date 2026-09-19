@@ -45,7 +45,7 @@ WHY IT EXISTS
 
 KNOWN LIMIT
     All seven loops in `LOOPS` render. Without `--for`, `prep` renders the
-    NEXT meeting worth prepping; with it, the one he named (`prep_selector`).
+    NEXT meeting worth prepping; with it, the one he named (`prep.select`).
     Either way its points come from the overnight Slack payload rather than
     the row-specific searches `prep.sources` would build, because the two-phase
     plan cannot know the row before the fetch. FIRING a prep ping at a
@@ -61,20 +61,20 @@ from __future__ import annotations
 import json
 import sys
 from collections import Counter
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any
 
-from daydag import brief, closure, eod_wrap, recipes, week_ahead
+from daydag import brief, closure, eod_wrap, push, recipes, week_ahead
 from daydag.config import ConfigError, resolve_reference, timezone_for
 from daydag.eventlog import EventLog
 from daydag.ingestion import classify_items, unplaced
 from daydag.ledger import Ledger, Match, title_from_gemini_subject
 from daydag.people import People
-from daydag.prep import Audience, Reason, build, point, prep_worthy
-from daydag.prep_selector import HORIZON_DAYS, select
+from daydag.prep import HORIZON_DAYS, Audience, Reason, build, point, prep_worthy, select
+from daydag.pulse import MirrorStore, Pulse, SyncReport, github_url, mirror_root, read_watchlist
 from daydag.runlog import RunLog
 from daydag.smoke import REACHED
 from daydag.statedoc import NotesGap, StateFolder, StateNotWritable, classify_sensitivity
@@ -87,16 +87,15 @@ __all__ = ["LOOPS", "Plan", "RunError", "Step", "main", "plan", "render"]
 #: refusal naming the other three (#95).
 #:
 #: `ship` is the odd one - it reads local git mirrors, not a connector, so its
-#: plan has no fetch steps at all. See `_calendar_windows` for the rest.
+#: plan has no fetch steps at all. See `recipes.loop_windows` for the rest.
 LOOPS = ("morning", "eod", "week-ahead", "prep", "ingest", "chase", "ship")
 
 #: Loops whose plan asks for no calendar at all.
-_NO_CALENDAR = frozenset({"ingest", "chase", "ship"})
 
 #: Loops that READ the rehydrated ledger - and therefore the only loops whose
 #: `--write-state` may project notes gaps. `week-ahead` builds its own ledger;
 #: `chase`, `ingest` and `ship` never look at one. The first gate was
-#: `_NO_CALENDAR`, which handed chase an EMPTY ledger and then let `_project`
+#: the no-calendar set, which handed chase an EMPTY ledger and then let `_project`
 #: write `notes_gaps=[]` over the section the morning run had just recorded.
 _NEEDS_LEDGER = frozenset({"morning", "eod", "prep"})
 
@@ -161,7 +160,7 @@ def plan(loop: str, *, now: datetime, identities: Mapping[str, str], selector: s
     # timezone, and `brief` renders the Pacific day - so between 5pm and
     # midnight Pacific the plan fetched one day while the brief reported
     # another, and the two would have disagreed on every evening run. Same
-    # convention as `brief._local` and `recipes.timezone_for`.
+    # convention as `push.local` and `recipes.timezone_for`.
     tz = timezone_for(identities)
     day = now.astimezone(tz).date()
 
@@ -239,7 +238,7 @@ def plan(loop: str, *, now: datetime, identities: Mapping[str, str], selector: s
         # `_prep` reads the calendar and the Slack payload, nothing else. No
         # note can attach to a meeting that has not happened, and the weekly
         # note is never read - so gmail and vault were two connector round-trips
-        # for nothing, the same waste `_NO_CALENDAR` exists to prevent.
+        # for nothing, the same waste `loop_windows` exists to prevent.
         steps = [step for step in steps if step.source in {"calendar", "slack"}]
     return Plan(loop=loop, at=now.isoformat(), steps=tuple(steps))
 
@@ -305,47 +304,9 @@ def _closure_reads(identities: Mapping[str, str]) -> list[Step]:
 def _calendar_windows(
     loop: str, day: date, *, tz: Any = recipes.PACIFIC, selector: str = ""
 ) -> list[recipes.DayWindow]:
-    """The calendar windows this LOOP will actually ask its sources for.
-
-    Every loop used to get the same single window - the principal's today -
-    because the plan never looked at `loop` at all. Each consumer then asked
-    for something else and was served today's events anyway, silently:
-
-        morning      today                    matched, by luck
-        eod          TOMORROW                 served today
-        week-ahead   next mon-sun, 7 windows  served today, seven times
-
-    So the two loops nobody had run were both fetching the wrong days. Kept in
-    step with the consumers deliberately - `eod_wrap` and `week_ahead` derive
-    their windows from these same `recipes` helpers, so the arithmetic (and
-    the Monday-of-next-week rule) lives in one place rather than two.
-    """
-    if loop in _NO_CALENDAR:
-        # `ingest` reads mail, `chase` reads the chase list he maintains by
-        # hand. Neither looks at the calendar, and fetching a day they ignore
-        # is a connector round-trip for nothing.
-        return []
-    if loop == "prep" and selector:
-        # A NAMED prep searches the week, not today - the meeting he wants
-        # prepped is usually not today's, that is why he named it. Seven
-        # windows, in HIS zone: an earlier version recomputed the day in
-        # hardcoded Pacific and fetched an eighth day the match then discarded,
-        # so a London principal got windows a day off and the answer "nothing
-        # matches" for a meeting that existed. `_prep` derives its `until` from
-        # this same arithmetic, so fetch and match are one set.
-        return recipes.calendar_days(day, day + timedelta(days=HORIZON_DAYS - 1), tz=tz)
-    if loop == "eod":
-        # `eod_wrap` reads exactly one window, and it is tomorrow's: the wrap
-        # reports the day that just ended and previews the first meeting of
-        # the next one.
-        return [recipes.calendar_day(day + timedelta(days=1))]
-    if loop == "week-ahead":
-        this_monday, _ = recipes.week_range(day)
-        next_monday = this_monday + timedelta(days=7)
-        # Seven requests, never one wide one - a five-day pull measured 156,681
-        # characters and exceeded the connector's output limit (#2 audit).
-        return recipes.calendar_days(next_monday, next_monday + timedelta(days=6))
-    return [recipes.calendar_day(day)]
+    """The windows this loop fetches - `recipes.loop_windows`, the one place
+    the arithmetic lives, so the plan and every consumer agree (#109)."""
+    return recipes.loop_windows(loop, day, tz=tz, selector=selector)
 
 
 def _overnight_opened(window: recipes.OvernightWindow) -> Any:
@@ -355,7 +316,7 @@ def _overnight_opened(window: recipes.OvernightWindow) -> Any:
 
 
 class _Payloads:
-    """A `brief.Sources` served from what the agent fetched.
+    """A `push.Sources` served from what the agent fetched.
 
     A source the agent could not reach is simply absent, and a source it
     fetched badly is the wrong shape. Both raise here, which is what puts them
@@ -370,7 +331,7 @@ class _Payloads:
     def _instant(value: Any) -> Any:
         """A JSON timestamp as a `datetime`, or the value untouched.
 
-        The one place this seam can go wrong quietly. `brief._local` returns
+        The one place this seam can go wrong quietly. `push.local` returns
         None unless the value is a `datetime` OBJECT, and the agent fetches
         over MCP, where every instant is a string - so passing payloads
         through untouched rendered every meeting "all day", right title and
@@ -429,7 +390,7 @@ class _Payloads:
         """
         start = record.get("start")
         if isinstance(start, datetime):
-            # Naive means already his wall-clock, same contract as `brief._local`.
+            # Naive means already his wall-clock, same contract as `push.local`.
             return (start.astimezone(recipes.PACIFIC) if start.tzinfo else start).date()
         if isinstance(start, date):
             return start
@@ -470,61 +431,32 @@ class _Payloads:
     def gmail(self, query: str) -> Sequence[Mapping[str, Any]]:
         return self._records("gmail")
 
-    def weekly_note(self, path: str) -> str:
-        """The weekly note, in the THREE states `brief.read_vault_note` tells apart.
+    @staticmethod
+    def _note(value: Any, path: str) -> str:
+        """One vault note in its three states, mapped once for both readers.
 
-        It splits on exception type - text, `FileNotFoundError` for a note that
-        was never written, anything else for a source it could not reach - and
-        this layer could only ever produce two of the three. `null` had no
-        meaning, so an agent reporting "the file is not there" had to choose
-        between omitting the key, which renders "couldn't check the weekly
-        note" and reads as a downed connector, and sending "", which renders
-        NOTHING AT ALL because an empty note is a note that was read.
-
-        The third state is the one that is true: the note is hand-written, and
-        the series has had a gap for weeks, so every real run meets it. It is
-        also the one worth saying out loud, because the brief cannot triage the
-        day against a plan of record that does not exist.
-
-        `str(None)` also used to render the note's body as the literal text
-        "None".
-
-            key absent  -> could not reach the vault   (RunError -> degrade)
-            null        -> the note does not exist     (FileNotFoundError)
-            ""          -> it exists and is empty
-            text        -> the note
+        The caller raising `RunError` first means the vault could not be
+        reached (degrade); ``None`` means the note does not exist
+        (`FileNotFoundError` - the finding); text means it was read, and ""
+        is a note that exists and is empty. `str(None)` once rendered a note
+        body as the word None.
         """
+        if value is None:
+            raise FileNotFoundError(path)
+        return str(value)
+
+    def weekly_note(self, path: str) -> str:
+        """THIS week's note, under `vault` - see `_note` for the three states."""
         if "vault" not in self._payloads:
             raise RunError("the weekly note was not read")
-        note = self._payloads["vault"]
-        if note is None:
-            raise FileNotFoundError(path)
-        return str(note)
+        return self._note(self._payloads["vault"], path)
 
     def vault_note(self, path: str) -> str:
-        """Any vault note by path, carried in `vault_notes`.
-
-        `eod_wrap` reads next week's plan and next week's meeting prep through
-        this to report whether Friday's planning actually landed. The `Sources`
-        protocol never declared it, so this class never implemented it, so both
-        reads raised and the whole "friday - weekly-planning outcome" section
-        was dropped on every real run. Both test doubles have the method, which
-        is exactly why nothing failed.
-
-        Same three states as `weekly_note`, one level down:
-
-            vault_notes absent       -> could not read any of them (degrade)
-            path absent from the map -> that note does not exist
-            null                     -> that note does not exist
-            text                     -> the note
-        """
+        """Any other vault note, under `vault_notes` keyed by path."""
         notes = self._payloads.get("vault_notes")
         if not isinstance(notes, Mapping):
             raise RunError(f"{path} was not read")
-        note = notes.get(path)
-        if note is None:
-            raise FileNotFoundError(path)
-        return str(note)
+        return self._note(notes.get(path), path)
 
 
 #: The event kind a seeded meeting is recorded under, so the next run can
@@ -627,7 +559,7 @@ def _chase(
 
     verdicts = closure.judge(asks, fetched, principal=principal)
     established = closure.Closure(tuple(verdicts))
-    sections: list[brief.Section] = []
+    sections: list[push.Section] = []
     for name in ("Chase list", "Owed by you", "Pending decisions"):
         sections += closure.render_closure(verdicts, section=name)
     unreachable: list[str] = []
@@ -649,14 +581,14 @@ def _chase(
             carried = []
         if carried:
             sections.append(
-                brief.Section(
+                push.Section(
                     f"not yet in State.md ({len(carried)})",
                     # Through `claim`, so the row's own quote and permalink
                     # render - house rule 1 - and the line is bulleted like the
                     # section above it. Bare `owner: ask` strings dropped both
-                    # and were invisible to `brief.unsourced_claims`.
+                    # and were invisible to `push.unsourced_claims`.
                     tuple(
-                        brief.claim(
+                        push.claim(
                             f"{item.get('owner', 'someone')} · {item.get('ask', '')}",
                             item.get("permalink") or None,
                             quote=item.get("quote") or None,
@@ -665,7 +597,7 @@ def _chase(
                     ),
                 )
             )
-    return brief.render_push(
+    return push.render_push(
         f"open loops - {established.open_count} open, verified", sections, unreachable
     )
 
@@ -698,18 +630,18 @@ def _ingest(sources: _Payloads) -> str:
     placed = classify_items(items)
     counts = Counter(record.label for record in placed if record.label)
     sections = [
-        brief.Section("placed", tuple(f"- {label}: {n}" for label, n in sorted(counts.items())))
+        push.Section("placed", tuple(f"- {label}: {n}" for label, n in sorted(counts.items())))
     ]
     # `ingestion.unplaced` is the one definition of "could not be placed"; a
     # second predicate here stopped following it the moment the first changed.
     if missing := unplaced(placed):
         sections.append(
-            brief.Section(
+            push.Section(
                 f"unplaced ({len(missing)}) - these need you, not a guess",
                 tuple(f"- {item_id}" for item_id in missing),
             )
         )
-    return brief.render_push(
+    return push.render_push(
         f"ingest: {len(items)} item{'' if len(items) == 1 else 's'}", sections, ()
     )
 
@@ -795,7 +727,7 @@ def _points(payloads: Mapping[str, Any]) -> list[Any]:
     that a claim carries its link, and a prep point he cannot click through to
     is one he has to take on trust in a meeting.
     """
-    # `brief.short`, not a raw slice: it collapses a multi-line message onto
+    # `push.short`, not a raw slice: it collapses a multi-line message onto
     # the one line `Point.render` has, marks a mid-word cut with an ellipsis
     # rather than presenting it as verbatim (house rule 1), and holds the quote
     # budget in one place. `or ""` because a file-only message carries
@@ -804,7 +736,7 @@ def _points(payloads: Mapping[str, Any]) -> list[Any]:
     for message in payloads.get("slack", []):
         if not isinstance(message, Mapping) or not message.get("permalink"):
             continue
-        text = brief.short(message.get("text") or "")
+        text = push.short(message.get("text") or "")
         if not text:
             continue
         points.append(
@@ -819,6 +751,45 @@ def _points(payloads: Mapping[str, Any]) -> list[Any]:
         if len(points) == 3:
             break
     return points
+
+
+def build_pulse(
+    identities: Mapping[str, str],
+    log: EventLog | None,
+    *,
+    url_for: Callable[[Any], str] = github_url,
+) -> tuple[Pulse, SyncReport]:
+    """The pulse for this run: mirrors synced, each read on from its stored cursor.
+
+    The CLI path #138 was missing. `render` accepted a pulse and `main` never
+    built one, so `ship` degraded on every real run and the shipping sections
+    of the morning, the wrap and the week-ahead never rendered. Cursors come
+    from the event log and go back to it (`store_cursors`) once the push has
+    rendered - without that every run started at first sight and reported a
+    quiet day forever.
+    """
+    folder = _vault(identities)
+    if folder is None:
+        raise RunError("no vault is configured, so there is no Watchlist.md to read repos from")
+    watchlist = read_watchlist(folder.watchlist_path)
+    store = MirrorStore(mirror_root(identities), url_for=url_for, log=log)
+    cursors: dict[str, str] = {}
+    if log is not None:
+        for repo in watchlist.repos:
+            cursor = log.last_cursor(repo.slug)
+            if cursor:
+                cursors[repo.slug] = cursor
+    report = store.sync(watchlist, cursors=cursors)
+    return Pulse.from_sync(report), report
+
+
+def store_cursors(log: EventLog, report: SyncReport) -> None:
+    """Remember where each mirror read up to. After the render, never before:
+    the cursor advances when the pulse lists its items, and a cursor stored
+    ahead of a push that then failed would bury those landings."""
+    for mirror in report.mirrors:
+        if not mirror.stale:
+            log.record_cursor(mirror.label, mirror.cursor)
 
 
 def render(
@@ -1048,7 +1019,7 @@ def main(argv: list[str] | None = None) -> int:
         print(
             "usage: python -m daydag.run {plan|render} {"
             + "|".join(LOOPS)
-            + '} [--log PATH] [--write-state] [--for "<meeting or person>"]'
+            + '} [--log PATH] [--write-state] [--mirrors] [--for "<meeting or person>"]'
         )
         return 2
 
@@ -1060,6 +1031,9 @@ def main(argv: list[str] | None = None) -> int:
     # `--write-state` projects what the run learned back into `State.md`.
     log = args[args.index("--log") + 1] if "--log" in args[:-1] else None
     write_state = "--write-state" in args
+    # `--mirrors` syncs the watchlist's repos and builds the pulse (#138), so
+    # `ship` and the shipping sections render from the CLI at all.
+    with_mirrors = "--mirrors" in args
     # `--for` names the meeting to prep. Without it `prep` takes the next
     # qualifying one, which is the scheduled ping's behaviour.
     selector = ""
@@ -1068,7 +1042,7 @@ def main(argv: list[str] | None = None) -> int:
         if not after or after[0].startswith("--"):
             # Falling through to the next-qualifying meeting here would prep a
             # meeting he did not ask about and say nothing - the wrong-meeting
-            # failure prep_selector calls worse than no prep.
+            # failure `prep.select` calls worse than no prep.
             print("--for needs a meeting or a person after it", file=sys.stderr)
             return 2
         selector = after[0]
@@ -1080,6 +1054,10 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(built.to_dict(), indent=2))
         else:
             payloads = json.load(sys.stdin)
+            pulse, report = (None, None)
+            events = EventLog.open(log) if log else None
+            if with_mirrors:
+                pulse, report = build_pulse(identities, events)
             print(
                 render(
                     loop,
@@ -1087,10 +1065,13 @@ def main(argv: list[str] | None = None) -> int:
                     identities=identities,
                     payloads=payloads,
                     log=log,
+                    pulse=pulse,
                     write_state=write_state,
                     selector=selector,
                 )
             )
+            if events is not None and report is not None:
+                store_cursors(events, report)
     except (RunError, ConfigError) as bad:
         print(f"{bad}", file=sys.stderr)
         return 1

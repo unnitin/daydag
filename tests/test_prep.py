@@ -326,7 +326,7 @@ def test_a_naive_meeting_start_names_its_own_wall_clock_day_not_the_hosts():
 
     Found by `/code-review` on the fix above: `.astimezone()` called directly
     on a NAIVE value adopts whatever zone the runner has - the same failure
-    class `brief._local` guards against for an event's start, and the reason
+    class `push.local` guards against for an event's start, and the reason
     that fix reads `start.replace(tzinfo=PACIFIC)` first rather than calling
     `.astimezone(PACIFIC)` on the naive value straight away. A midnight-thirty
     meeting is the case that catches a host-zone leak: under a host east of

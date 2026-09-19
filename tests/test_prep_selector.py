@@ -23,8 +23,8 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from daydag.ledger import Row, attendee_parts
-from daydag.prep_selector import HORIZON_DAYS, Selection
-from daydag.prep_selector import select as _select
+from daydag.prep import HORIZON_DAYS, Selection
+from daydag.prep import select as _select
 
 NOW = datetime(2026, 9, 14, 9, 0, tzinfo=UTC)
 UNTIL = NOW + timedelta(days=HORIZON_DAYS)

@@ -16,11 +16,12 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from daydag import brief
+from daydag import push
 from daydag.pulse import Mirror, Pulse
+from daydag.push import PushError
 from daydag.statedoc import StateFolder
 from daydag.voice import voice_violations
-from daydag.week_ahead import WeekAheadError, assemble
+from daydag.week_ahead import assemble
 
 PT = ZoneInfo("America/Los_Angeles")
 
@@ -51,7 +52,7 @@ def _event(event_id, summary, start, *, minutes=60, attendees=None, kind="meetin
 
 
 class FakeSources:
-    """The same four reads `brief.Sources` performs, recorded rather than done."""
+    """The same four reads `push.Sources` performs, recorded rather than done."""
 
     def __init__(self, *, events=(), notes=None, broken=()):
         self._events = list(events)
@@ -100,7 +101,7 @@ def _assemble(*, sources, state=None, pulse=None, now=SUNDAY):
 
 
 def test_a_naive_now_is_refused():
-    with pytest.raises(WeekAheadError, match="timezone-aware"):
+    with pytest.raises(PushError, match="timezone-aware"):
         assemble(now=SUNDAY.replace(tzinfo=None), sources=FakeSources(), identities=IDENTITIES)
 
 
@@ -486,7 +487,7 @@ def test_a_fully_loaded_week_is_evidenced_and_clean_in_the_house_voice(state):
     pushed = _assemble(sources=sources, state=state)
     text = pushed.render()
 
-    assert brief.unsourced_claims(text) == [], f"a claim shipped with no evidence:\n{text}"
+    assert push.unsourced_claims(text) == [], f"a claim shipped with no evidence:\n{text}"
     assert voice_violations(text) == [], f"broke the house voice:\n{voice_violations(text)}\n{text}"
 
 
@@ -495,7 +496,7 @@ def test_a_thin_week_still_renders_a_short_honest_push():
     pushed = _assemble(sources=FakeSources())
     text = pushed.render()
     assert text.startswith("week ahead")
-    assert brief.unsourced_claims(text) == []
+    assert push.unsourced_claims(text) == []
     assert voice_violations(text) == []
 
 
@@ -507,7 +508,7 @@ def test_a_thin_week_still_renders_a_short_honest_push():
 def test_overlapping_meetings_are_surfaced_as_a_clash():
     """The most valuable thing on a "prepare my week" page, and it was absent.
 
-    `brief._overlap_flags` does exactly this for a single day; the week-ahead
+    `push.overlap_flags` does exactly this for a single day; the week-ahead
     never called it. Measured on a real week: eleven overlapping clusters,
     including four meetings stacked at Thursday 11:00, every one unflagged.
     """
@@ -544,7 +545,7 @@ def test_a_pile_up_is_one_line_not_every_pair():
 
 
 def test_back_to_back_meetings_are_not_a_clash():
-    """Half-open, same as `brief._overlap_flags`: 9-10 and 10-11 are a busy
+    """Half-open, same as `push.overlap_flags`: 9-10 and 10-11 are a busy
     morning, not a conflict. Flagging them trains him to ignore the section."""
     nine = datetime(2026, 9, 7, 9, 0, tzinfo=PT)
     sources = FakeSources(

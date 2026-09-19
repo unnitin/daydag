@@ -6,6 +6,7 @@ USING IT
     log.recorded("run")                     # every payload of one kind, oldest first
     log.chase_items()                       # ChaseItem rows, sensitivity from the column
     log.record_fetch("org/repo", at=now); log.last_fetch("org/repo")
+    log.record_cursor("org/repo", sha); log.last_cursor("org/repo")   # the pulse reads on
 
 CONTRACTS
     1. Anything sensitive lives here and never in the vault - the vault is
@@ -124,6 +125,32 @@ class EventLog:
                 if raw:
                     rows.append(payload)
         return rows
+
+    # -- mirror cursors (#138) -------------------------------------------
+
+    def record_cursor(self, repo: str, cursor: str) -> None:
+        """Remember where ``repo``'s pulse read up to, so the next run reads on.
+
+        Without this every run starts at first sight and reports a quiet day
+        forever - the cursor was computed, returned, and thrown away.
+        """
+        self.record("mirror_cursor", repo=repo, cursor=cursor)
+
+    def last_cursor(self, repo: str) -> str | None:
+        """The newest stored cursor for ``repo``, or ``None`` on first sight."""
+        rows = self._db.execute(
+            "SELECT payload FROM events"
+            " WHERE kind = 'mirror_cursor' AND json_extract(payload, '$.repo') = ?"
+            " ORDER BY id DESC LIMIT 1",
+            (repo,),
+        )
+        for (payload,) in rows:
+            try:
+                cursor = json.loads(payload).get("cursor")
+            except ValueError:
+                continue
+            return str(cursor) if cursor else None
+        return None
 
     # -- mirror freshness ------------------------------------------------
 
