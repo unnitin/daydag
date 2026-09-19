@@ -237,42 +237,11 @@ def _as_text(row: Any, key: str) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """`shipped` / `note` / `folded` write; `report` reads."""
-    args = list(sys.argv[1:] if argv is None else argv)
-    usage = (
-        "usage: python -m daydag.soak {shipped|note|folded|report} [text]"
-        " --log PATH [--day YYYY-MM-DD]"
-    )
-    if not args or args[0] not in {"shipped", "note", "folded", "report"}:
-        print(usage)
-        return 2
-    if "--log" not in args[:-1]:
-        print(usage + "\n\n--log is required: the journal IS the gate's memory.")
-        return 2
+    """``python -m daydag.soak ...`` - the one CLI (`daydag.cli`), entered here."""
 
-    command = args[0]
-    log = args[args.index("--log") + 1]
-    day = (
-        date.fromisoformat(args[args.index("--day") + 1]) if "--day" in args[:-1] else date.today()
-    )
-    text = " ".join(a for a in args[1:] if not a.startswith("--")).strip()
-    text = text.replace(log, "").replace(day.isoformat(), "").strip()
+    from daydag.cli import main as cli_main
 
-    journal = Soak(EventLog.open(log))
-    if command == "report":
-        print(journal.report().render())
-        return 0
-    if command == "shipped":
-        journal.shipped(day)
-    elif not text:
-        print(f"{command} needs the text of the edit")
-        return 2
-    elif command == "note":
-        journal.note(text, day=day)
-    else:
-        journal.folded(text)
-    print(journal.report().render())
-    return 0
+    return cli_main(["soak", *(sys.argv[1:] if argv is None else argv)])
 
 
 if __name__ == "__main__":  # pragma: no cover

@@ -12,7 +12,7 @@ All planning work is orchestrated from this repo. Four skills were copied **verb
 
 ## Every skill here carries a `daydag:` manifest
 
-Frontmatter block: `writes` / `reads` / `consumes` / `emits` / `schedule` / `sensitivity`. The Skill loader ignores it; `daydag.manifests` reads it and hands the set to `daydag.registry`, which refuses to load two writers for one artifact and refuses to route a `sensitivity: private` skill anywhere with an audience above one. Run `python -m daydag.manifests` to see the ownership table and schedule as declared; `scripts/preflight.sh` runs the same check on every push.
+Frontmatter block: `writes` / `reads` / `consumes` / `emits` / `schedule` / `sensitivity`. The Skill loader ignores it; `daydag.registry` reads it and refuses to load two writers for one artifact and refuses to route a `sensitivity: private` skill anywhere with an audience above one. Run `python -m daydag.registry` to see the ownership table and schedule as declared; `scripts/preflight.sh` runs the same check on every push.
 
 Three consequences worth knowing before you edit one:
 

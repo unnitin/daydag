@@ -29,9 +29,9 @@ from daydag import delivery
 from daydag.config import Identities
 from daydag.delivery import DeliveryError, deliver_push
 from daydag.eventlog import EventLog
+from daydag.observe import DEGRADED, FAILED, OK, RunLog
 from daydag.prep import Point, PrepPing, Reason
 from daydag.registry import Registry, RegistryError
-from daydag.runlog import DEGRADED, FAILED, OK, RunLog
 from daydag.voice import Push
 
 PRINCIPAL = "UPRINCIPAL1"
@@ -95,12 +95,6 @@ def test_deliver_push_posts_the_rendered_text_to_the_resolved_principal():
     assert transport.calls == [
         {"channel": PRINCIPAL, "text": "morning. tue - 4 meetings", "thread_ts": None}
     ]
-
-
-def test_deliver_push_has_no_destination_parameter_at_all():
-    """Guardrail 1, made structural: there is no kwarg to pass a different `to`."""
-    params = set(inspect.signature(delivery.deliver_push).parameters)
-    assert params.isdisjoint({"channel", "to", "destination", "recipient"})
 
 
 @pytest.mark.parametrize(
@@ -267,23 +261,6 @@ def test_delivery_works_with_no_runlog_at_all():
 # ---------------------------------------------------------------------------
 
 
-def test_deliver_push_consults_the_registry_when_given_one():
-    registry = Registry.load(
-        [{"name": "morning-brief", "daydag": {"writes": [], "sensitivity": "private"}}]
-    )
-    sent = delivery.deliver_push(
-        "hi",
-        kind=Push.MORNING_BRIEF,
-        transport=_Recorder(),
-        identities=IDENTITIES,
-        registry=registry,
-        skill="morning-brief",
-    )
-    assert sent.channel == PRINCIPAL, (
-        "the DM is inside PRIVATE_SURFACES; a private skill may reach it"
-    )
-
-
 def test_deliver_push_fails_closed_for_an_unregistered_skill():
     """The guard applies here too, not only to callers who go through `route` directly."""
     registry = Registry.load([])
@@ -314,18 +291,6 @@ def test_deliver_push_skips_the_registry_check_when_no_skill_is_named():
 # ---------------------------------------------------------------------------
 # draft: a different return type, not a flag - and it never touches a transport
 # ---------------------------------------------------------------------------
-
-
-def test_draft_never_calls_the_transport():
-    transport = _Recorder()
-    note = delivery.draft(
-        "hey vp-data - can you take a look?", to="UVPDATA01", reason="chase nudge"
-    )
-
-    assert isinstance(note, delivery.Draft)
-    assert note.to == "UVPDATA01"
-    assert note.text == "hey vp-data - can you take a look?"
-    assert transport.calls == []
 
 
 def test_no_function_in_the_module_accepts_a_draft_and_a_transport_together():

@@ -17,7 +17,7 @@ useless:
    iCloud-synced markdown file with no locking is a lost update, which is the
    reason ARCHITECTURE splits the stores at all.
 
-The rows come from `smoke.as_rows()` rather than from its rendered text, and the
+The rows come from `observe.as_rows()` rather than from its rendered text, and the
 clock is injected, because a report that cannot be reproduced byte-for-byte in a
 test is a report nobody can assert anything about.
 """
@@ -31,10 +31,9 @@ from pathlib import Path
 
 import pytest
 
-from daydag import runlog as runlog_module
-from daydag import smoke
+from daydag import observe
 from daydag.eventlog import EventLog
-from daydag.runlog import (
+from daydag.observe import (
     DEGRADED,
     FAILED,
     OK,
@@ -61,7 +60,7 @@ def log():
 def clock():
     """A clock the test drives, so a timestamp assertion is exact rather than fuzzy.
 
-    `smoke.py` deliberately takes no clock - a stamped report would be
+    `observe.py` deliberately takes no clock - a stamped report would be
     non-deterministic and therefore unassertable. The stamp has to happen
     somewhere, so it happens here, injected, for the same reason.
     """
@@ -115,7 +114,7 @@ def _probes(**broken):
 
 
 def _rows(**broken):
-    return smoke.run(_probes(**broken)).as_rows()
+    return observe.run(_probes(**broken)).as_rows()
 
 
 # --------------------------------------------------------------------------
@@ -184,8 +183,8 @@ def test_a_skipped_source_is_named_with_its_reason(runlog):
 
     named = {skip.name: skip for skip in row.skipped}
     assert set(named) == {"jira", "databricks"}
-    assert named["jira"].reason == smoke.AUTH
-    assert named["databricks"].reason == smoke.AUTH
+    assert named["jira"].reason == observe.AUTH
+    assert named["databricks"].reason == observe.AUTH
     assert named["jira"].detail, "a reason without a detail is half a diagnosis"
 
 
@@ -198,7 +197,7 @@ def test_the_line_names_every_skipped_source_and_its_reason(runlog):
     line = row.line()
 
     assert row.at in line and "morning brief" in line
-    for name, reason in (("jira", smoke.AUTH), ("calendar", smoke.OVERFLOW)):
+    for name, reason in (("jira", observe.AUTH), ("calendar", observe.OVERFLOW)):
         assert f"{name} ({reason})" in line, f"{name} is not named with its reason in {line!r}"
 
 
@@ -231,7 +230,7 @@ def test_a_row_with_no_check_name_is_refused_the_same_way(runlog):
     about what was wrong with it.
     """
     with pytest.raises(ValueError, match="no check name"):
-        runlog.record("morning brief", [{"source": "jira", "status": smoke.REACHED}])
+        runlog.record("morning brief", [{"source": "jira", "status": observe.REACHED}])
 
 
 def test_a_malformed_row_still_leaves_a_run_row_behind(runlog, log):
@@ -244,14 +243,14 @@ def test_a_malformed_row_still_leaves_a_run_row_behind(runlog, log):
     good = {
         "name": "calendar",
         "source": "calendar",
-        "status": smoke.REACHED,
+        "status": observe.REACHED,
         "reason": "",
         "detail": "one day of events",
     }
     with pytest.raises(ValueError, match="no check name"):
         runlog.record(
             "morning brief",
-            [good, {"source": "jira", "status": smoke.REACHED}],
+            [good, {"source": "jira", "status": observe.REACHED}],
             failure=RuntimeError("mirror fetch died"),
         )
 
@@ -268,7 +267,7 @@ def test_a_malformed_row_still_leaves_a_run_row_behind(runlog, log):
     [
         pytest.param(["not a record"], id="a list of strings"),
         pytest.param(42, id="not iterable at all"),
-        pytest.param([{"name": 5, "status": smoke.REACHED}], id="a name that is not text"),
+        pytest.param([{"name": 5, "status": observe.REACHED}], id="a name that is not text"),
     ],
 )
 def test_any_malformed_input_still_leaves_a_run_row_behind(runlog, log, bad_rows):
@@ -338,7 +337,7 @@ def test_a_run_of_nothing_but_unconnected_sources_is_not_a_successful_run(runlog
             {
                 "name": "granola",
                 "source": "granola",
-                "status": smoke.NOT_CONNECTED,
+                "status": observe.NOT_CONNECTED,
                 "reason": "",
                 "detail": "not wired up on purpose",
             }
@@ -432,7 +431,7 @@ def test_a_loop_name_is_bounded_like_every_other_word_on_the_line(runlog):
     runlog.record("morning\nbrief " + "X" * 2000, [])
 
     row = runlog.last_run()
-    assert len(row.loop) <= runlog_module.FAILURE_LIMIT
+    assert len(row.loop) <= observe.FAILURE_LIMIT
     assert "\n" not in row.loop
     assert "\n" not in runlog.projection_line(row.loop)
 
@@ -450,7 +449,7 @@ def test_a_check_name_is_bounded_too(runlog):
     )
 
     skip = runlog.last_run().skipped[0]
-    assert len(skip.name) <= runlog_module.FAILURE_LIMIT
+    assert len(skip.name) <= observe.FAILURE_LIMIT
     assert "\n" not in skip.name
 
 
@@ -486,7 +485,7 @@ def test_no_run_row_reaches_the_vault(tmp_path, runlog, log):
     body = "".join(
         path.read_text(encoding="utf-8") for path in folder.root.rglob("*.md") if path.is_file()
     )
-    for leaked in ("morning brief", "401 unauthorized", smoke.AUTH, "reached:"):
+    for leaked in ("morning brief", "401 unauthorized", observe.AUTH, "reached:"):
         assert leaked not in body, f"{leaked!r} reached a synced markdown file"
 
     # And the one line that IS offered to the vault carries no connector wording,
@@ -652,7 +651,7 @@ def test_a_skip_field_that_is_not_text_is_refused_on_the_way_in(runlog, log):
     with pytest.raises(ValueError, match="reason that is not text"):
         runlog.record(
             "morning brief",
-            [{"name": "jira", "source": "jira", "status": smoke.SKIPPED, "reason": None}],
+            [{"name": "jira", "source": "jira", "status": observe.SKIPPED, "reason": None}],
         )
 
     assert runlog.rows()[0].outcome != UNREADABLE, "what it did write must stay readable"
@@ -885,7 +884,7 @@ def test_the_row_is_built_from_smoke_rows_and_never_from_rendered_text(runlog):
             {
                 "name": "calendar",
                 "source": "calendar",
-                "status": smoke.REACHED,
+                "status": observe.REACHED,
                 "reason": "",
                 "detail": "one day of events",
             }
@@ -913,7 +912,7 @@ def test_the_module_reads_no_clock_of_its_own(runlog):
     Docstrings and comments cannot call anything, so dropping them costs the
     guardrail nothing.
     """
-    tree = ast.parse(Path(runlog_module.__file__).read_text(encoding="utf-8"))
+    tree = ast.parse(Path(observe.__file__).read_text(encoding="utf-8"))
     for node in ast.walk(tree):
         if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant):
             node.value = ast.Constant(value="")  # a docstring, not a call
