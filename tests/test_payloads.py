@@ -9,7 +9,7 @@ one writes its own copy rather than trusting an untested private.
 
 from __future__ import annotations
 
-from daydag.payloads import (
+from daydag.recipes import (
     error_text,
     first_value,
     flatten,

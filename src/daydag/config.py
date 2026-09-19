@@ -33,6 +33,7 @@ WHY IT EXISTS
 
 from __future__ import annotations
 
+import os
 import re
 from collections.abc import Iterator, Mapping
 from pathlib import Path
@@ -107,6 +108,19 @@ def resolve_reference(
         # prevent.
         raise error(f"{key} is set to {type(found).__name__}, not a string. Check .env.")
     return found.strip()
+
+
+def path_from(identities: Mapping[str, str], key: str) -> Path:
+    """A directory named in .env, expanded and checked - one reader for every
+    path key. An empty value resolves to "." and an unset ``${VAR}`` passes
+    through as literal text; both would quietly write into the working
+    directory or into a folder named after the variable."""
+    if key not in identities:
+        raise ConfigError(f"{key} is not set. Add it to .env; see .env.example.")
+    resolved = os.path.expanduser(os.path.expandvars(str(identities[key]).strip()))
+    if not resolved or "$" in resolved:
+        raise ConfigError(f"{key} is empty or names an unset variable. Fix it in .env.")
+    return Path(resolved)
 
 
 class ConfigError(RuntimeError):

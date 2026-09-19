@@ -49,7 +49,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
 
-from daydag.config import ConfigError
+from daydag.config import path_from
 
 #: Words that would turn this into a productivity metric. Asserted against.
 FORBIDDEN_IN_OUTPUT = ("commits", "lines changed", "+/-", "contributions")
@@ -299,15 +299,13 @@ class Mirror:
             raise PulseError(f"git {' '.join(args)} failed: {result.stderr.strip()}")
         return result.stdout
 
-    def merges_since_cursor(self, _fail: bool = False) -> list[Item]:
+    def merges_since_cursor(self) -> list[Item]:
         """Merges between the cursor and the tip, oldest first.
 
         The cursor advances only once the caller has the result. Advancing on
         the attempt would silently skip commits that were never reported - a
         gap nobody would ever notice.
         """
-        if _fail:
-            raise PulseError("simulated read failure")
         # Resolved to a sha ONCE, before the log, and that same sha is both the
         # upper bound of the range and the new cursor. Naming the ref twice -
         # `log ..dev` then `rev-parse dev` - lets a fetch landing between the
@@ -324,10 +322,19 @@ class Mirror:
             if not line.strip():
                 continue
             sha, _, subject = line.partition("\x1f")
-            items.append(Item(title=subject, permalink=f"{self.path}#{sha[:7]}"))
+            items.append(Item(title=subject, permalink=self._permalink(sha)))
         items.reverse()
         self.cursor = tip
         return items
+
+    def _permalink(self, sha: str) -> str:
+        """A link a reader can open (#139): the commit on GitHub when the
+        mirror is labelled with its slug, the local path only for a mirror
+        attached by path alone. The old form leaked the machine's filesystem
+        into a Slack DM and could not be clicked."""
+        if "/" in self.label:
+            return f"https://github.com/{self.label}/commit/{sha}"
+        return f"{self.path}#{sha[:7]}"
 
     def _resolve_ref(self) -> str:
         """The watched ref as a sha, or a failure that says whose fault it is.
@@ -593,15 +600,7 @@ def mirror_root(identities: Mapping[str, str]) -> Path:
     public repo. Deliberately outside the vault - a few hundred MB of git
     objects in an iCloud-synced folder is a bad day.
     """
-    if "MIRROR_DIR" not in identities:
-        raise ConfigError("MIRROR_DIR is not set. Add it to .env; see .env.example.")
-    resolved = os.path.expanduser(os.path.expandvars(identities["MIRROR_DIR"].strip()))
-    # An empty value resolves to "." and an unset ${VAR} passes through as
-    # literal text, so both would quietly clone hundreds of MB into the process
-    # working directory or into a folder named after the variable.
-    if not resolved or "$" in resolved:
-        raise ConfigError("MIRROR_DIR is empty or names an unset variable. Fix it in .env.")
-    return Path(resolved)
+    return path_from(identities, "MIRROR_DIR")
 
 
 #: Cursor for a repo seen for the first time. First sight is not news: reporting
@@ -875,6 +874,14 @@ class MirrorStore:
         return report
 
 
+_TICKET_KEY = re.compile(r"\b[A-Z][A-Z0-9]+-\d+\b")
+
+
+def keys_in(text: str) -> set[str]:
+    """Every ticket key in untrusted text - and nothing else is read from it."""
+    return set(_TICKET_KEY.findall(text or ""))
+
+
 class Pulse:
     """Assembles the shipping block from mirrors and observed API state."""
 
@@ -905,18 +912,12 @@ class Pulse:
 
     # -- the ticket-key join ---------------------------------------------
 
-    @staticmethod
-    def _keys(text: str) -> set[str]:
-        import re
-
-        return set(re.findall(r"\b[A-Z][A-Z0-9]+-\d+\b", text or ""))
-
     def observe_slack(self, text: str) -> None:
-        for key in self._keys(text):
+        for key in keys_in(text):
             self._joined.setdefault(key, Joined(key)).mentioned_in_slack = True
 
     def observe_pr(self, *, title: str, number: int, state: str) -> None:
-        for key in self._keys(title):
+        for key in keys_in(title):
             joined = self._joined.setdefault(key, Joined(key))
             joined.pr_number = number
             joined.pr_state = state

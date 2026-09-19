@@ -61,9 +61,8 @@ from dataclasses import dataclass
 from typing import Protocol, TypeVar
 
 from daydag.config import resolve_reference
-from daydag.payloads import error_text
 from daydag.prep import PrepPing, may_interrupt
-from daydag.recipes import is_user_id
+from daydag.recipes import error_text, is_user_id
 from daydag.registry import DM_SURFACE, Registry
 from daydag.runlog import Run, RunLog
 from daydag.smoke import REACHED

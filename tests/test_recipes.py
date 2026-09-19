@@ -289,37 +289,6 @@ def test_meeting_prep_uses_the_same_plain_date_name():
     assert recipes.meeting_prep(date(2026, 9, 8)) == "Create Music Group/Meeting Prep/0907-0911.md"
 
 
-def test_workstreams_looks_in_daydag_before_fact_base():
-    """Custody transfers to DayDAG at the cut (#37); both paths are live states."""
-    assert recipes.workstreams_paths() == (
-        "Create Music Group/DayDAG/Workstreams.md",
-        "Create Music Group/Fact Base/Workstreams.md",
-    )
-
-
-def test_local_path_adds_the_prefix_when_the_configured_root_stops_short():
-    path = recipes.vault_path({"VAULT_ROOT": "/vault/Documents"}, "Fact Base", "Workstreams.md")
-    assert str(path) == "/vault/Documents/Create Music Group/Fact Base/Workstreams.md"
-
-
-def test_local_path_does_not_double_a_root_that_already_ends_in_the_prefix():
-    root = "/vault/Documents/Create Music Group"
-    path = recipes.vault_path({"VAULT_ROOT": root}, "Fact Base", "Workstreams.md")
-    assert str(path) == f"{root}/Fact Base/Workstreams.md"
-
-
-@pytest.mark.guardrail
-@pytest.mark.parametrize("root", ["", "   ", "$VAULT_HOME/notes", "${NOPE}/notes"])
-def test_an_unusable_vault_root_raises_rather_than_writing_somewhere_odd(root):
-    with pytest.raises(RecipeError):
-        recipes.vault_path({"VAULT_ROOT": root}, "DayDAG", "State.md")
-
-
-def test_a_missing_vault_root_names_the_key():
-    with pytest.raises(RecipeError, match="VAULT_ROOT"):
-        recipes.vault_path({}, "DayDAG", "State.md")
-
-
 # ---------------------------------------------------------------------------
 # jira - bounded, because an unbounded one has already blown the limit
 # ---------------------------------------------------------------------------

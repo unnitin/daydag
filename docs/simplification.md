@@ -104,12 +104,12 @@ The house rules are untouched: one writer per artifact, evidence or silence,
 surface don't resolve, sensitivity never reaches the vault, the event log
 outside the vault, Jira read-only, bounded queries, id-scoped Slack search.
 
-## 3. Target shape - 25 modules to 17
+## 3. Target shape - 25 modules to 18
 
 | after | from | holds |
 |---|---|---|
 | `config.py` | `config` | `.env` identities, `${VAR}` resolution, timezone, plus `path_from`/`host_from` so three env readers become one |
-| `connectors.py` | `recipes` + `payloads` | what to ask each connector and how to read what comes back. `gh_*` builders gone; `GH_WRITE_VERBS` stays as the tripwire subject |
+| `recipes.py` | `recipes` + `payloads` | what to ask each connector and how to read what comes back, under the name every importer already uses. `gh_*` builders gone |
 | `push.py` | `brief` primitives + `voice` | `Section`, `claim`, `render_push`, `Reader`, red items, overlap clusters, `unsourced_claims`, `clipped`, `WARN`, one `Push`, one `PushError` |
 | `loops.py` | `brief` body + `eod_wrap` + `week_ahead` + `run._chase/_ingest/_prep` | one `Loop` descriptor (windows, needs_ledger, assemble) and the seven bodies sharing prologue helpers |
 | `run.py` | `run` | plan, render, the payload adapter. No loop bodies |
@@ -118,9 +118,10 @@ outside the vault, Jira read-only, bounded queries, id-scoped Slack search.
 | `statedoc.py` | `state` (folder half) | `StateDoc`/`Block`/`StateFolder`/`update_state`; one parser, `Block.body`/`link`/`struck`, `StateDoc.blocks_in`; writes through `vault` |
 | `eventlog.py` | `state` (log half) | `EventLog`, one decoder, `record_fetch`/`last_fetch` |
 | `vault.py` | `vault` | how bytes reach the vault safely: atomic write, placeholder refusal, compare-and-swap line edits - the one write path, used by `statedoc` now and by #16's write-back later |
-| `meetings.py` | `ledger` + `people` | rows, one `qualifies(for_week=)`, notes gaps, the directory folded from the same attendee parse |
+| `ledger.py` | `ledger` | rows, one `judge` behind both qualifiers (#110), notes gaps, the one attendee and name-token parse |
+| `people.py` | `people` | the directory, on the ledger's parse and tokens. Kept its own module: a directory and a meeting ledger are two concerns, and one 900-line file is not simpler than two of 450 |
 | `ingestion.py` | `ingestion` + `evalset` vocabularies | the classifier and its three vocabularies. `load_items`/`score` move to `tests/evalset.py` |
-| `evidence.py` | `pulse` | mirrors, the join, one watchlist parser, one `apply_evidence`. `board` retired until M2-4 wires it |
+| `pulse.py` | `pulse` | mirrors and the join; the second watchlist parser and the second evidence rule went with `board`. Permalinks are GitHub commit URLs (#139) |
 | `observe.py` | `smoke` + `runlog` + `soak` | one `Row`, one renderer, the probe table, the run row, the soak journal |
 | `registry.py` | `registry` + `manifests` | one validate step, `main` kept |
 | `delivery.py` | `delivery` | `Transport`, `deliver_push`, `deliver_prep_ping`, `draft` - the shape the guardrails inspect, minus its run-log plumbing |
@@ -168,7 +169,7 @@ what gives a stacked PR CI (CONTRIBUTING, "Branches").
 | 1 | `chore/simplify-01-retire` | tag `pre-simplification`; delete `board.py`, the `gh_*` builders, the runlog projection half, `DecisionQueue`, the ledger backfill path, `prep.Schedule`/`due_at`, the Monday prep chain, `evalset`'s test-only half (to `tests/`), `people`'s unread fields; add the golden renders; fix the three stale doc claims | −2,300 (−1,500 tests) | low - deletions of unreached code, no behaviour change |
 | 2 | `chore/simplify-02-state` | `state.py` → `statedoc.py` + `eventlog.py`; one State.md reader (`Block`), one log decoder; State.md written through `vault`'s atomic writer and read through its placeholder check; `closure` reads the vault through `StateDoc`; one `line_from_state` | −300 | medium - the round-trip and sensitivity guardrails are the safety net |
 | 3 | `chore/simplify-03-loops` | `push.py`, the kernel the brief, wrap and week-ahead compose from (one `Push`, one error, one reader, one State.md/pulse/note prologue); `recipes.loop_windows` is the one window function the plan and every consumer call (#109); `prep` absorbs `prep_selector`; the Monday prep queue renders; `main --mirrors` builds the pulse and stores cursors (#138); the runner's note mapping is one function (#112) | −450 | medium - `test_plan_feeds_render` parametrises over every loop |
-| 4 | `chore/simplify-04-sources` | `meetings.py` (ledger + people, one qualifier, #110); `evidence.py` (pulse, one watchlist parser, one evidence rule); `connectors.py` (recipes + payloads, `run` adopts `records()`); `config.path_from`/`host_from` | −700 | medium - mirror tests run real `git clone --mirror`; keep them |
+| 4 | `chore/simplify-04-sources` | one `judge` behind `qualifies`/`part_of_the_week` (#110); one name-token rule in `ledger` for the selector and the directory; `payloads` folded into `recipes` and `run` reads records through it; `config.path_from` replaces the env-path readers; the pulse cites GitHub commit URLs (#139) and loses its fault-injection hook | −250 | medium - mirror tests run real `git clone --mirror`; keep them |
 | 5 | `chore/simplify-05-observe` | `observe.py` (smoke + runlog + soak, one `Row`); `registry` absorbs `manifests`; `delivery` trimmed to the guardrail shape; `cli.py` argparse (#117, #126); the ~220 duplicated guardrail lines deleted, scanners re-pointed | −900 (−600 tests) | medium - the module-scoped "no function takes a Draft and a Transport" assertion must move with `draft` |
 | 6 | `chore/simplify-06-prose` | docstring pass: a contract a test pins becomes one line and the test's name; calibration facts to `reference/meeting-ledger.md`, `reference/sensitivity.md`, `reference/state-incidents.md`; connector numbers already in `reference/connector-audit.md` become pointers; `USING IT` blocks kept | −1,600 prose | low - `test_docstring_examples` catches a broken example |
 | 7 | `chore/simplify-07-docs` | README absorbs USAGE; SPEC absorbs BUILD's status table; ARCHITECTURE keeps ownership, invariants and seams; SKILL.md loses the documentation-about-DayDAG its own README says it should not carry; `build_docs.REQUIRED_DOCS` updated | −700 doc lines | low |
