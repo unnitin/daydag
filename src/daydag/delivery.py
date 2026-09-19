@@ -61,11 +61,10 @@ from dataclasses import dataclass
 from typing import Protocol, TypeVar
 
 from daydag.config import resolve_reference
+from daydag.observe import REACHED, Result, Run, RunLog
 from daydag.prep import PrepPing, may_interrupt
 from daydag.recipes import error_text, is_user_id
 from daydag.registry import DM_SURFACE, Registry
-from daydag.runlog import Run, RunLog
-from daydag.smoke import REACHED
 from daydag.voice import Push
 
 _T = TypeVar("_T")
@@ -189,15 +188,10 @@ def _principal_channel(identities: Mapping[str, str]) -> str:
     return value
 
 
-def _posted_row(name: str) -> dict[str, str]:
-    """One `smoke`-shaped observation: a message went out. Fed to `run.observe`.
-
-    Reuses `smoke`'s own vocabulary (`REACHED`) rather than a second literal
-    "reached" - the run log already reads this shape from `smoke.as_rows()`,
-    and a send is the same kind of fact: something was asked of a source and
-    it answered.
-    """
-    return {"name": name, "source": "slack", "status": REACHED, "reason": "", "detail": "posted"}
+def _posted_row(name: str) -> Result:
+    """One observation: a message went out. The same `Result` a probe produces -
+    something was asked of a source and it answered."""
+    return Result(name, "slack", REACHED, detail="posted")
 
 
 def _send(

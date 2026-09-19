@@ -442,8 +442,9 @@ def test_a_valueless_log_flag_is_refused_not_written_to_a_file_named_None(tmp_pa
     from daydag.people import main
 
     monkeypatch.chdir(tmp_path)
-    with pytest.raises(SystemExit):
-        main(["add", "x", "--email", "a@example.com", "--log"])
+    assert main(["add", "x", "--email", "a@example.com", "--log"]) == 2, (
+        "a flag with no value is a usage error"
+    )
     assert not (tmp_path / "None").exists()
 
 

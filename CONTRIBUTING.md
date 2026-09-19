@@ -73,7 +73,7 @@ KNOWN LIMIT       what it does not do, when that is load-bearing
 """
 ```
 
-`src/daydag/runlog.py` is the worked example. Function docstrings lead with
+`src/daydag/observe.py` is the worked example. Function docstrings lead with
 what the call returns, then `Args:` / `Raises:` for anything a caller can get
 wrong - `record`'s `started` and `failure` are both there because both have a
 wrong-looking-right form.

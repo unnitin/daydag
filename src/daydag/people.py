@@ -360,90 +360,12 @@ def _slug(address: str) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """`add` / `set` write a stated fact; `show` and `list` read.
-
-    Hand entry is a first-class path, not a convenience. Most of what this
-    store holds will be learned from meetings at `OBSERVED`, and the only way
-    that stays trustworthy is if a correction is easy enough to actually make -
-    it lands at `STATED` and outranks anything a later run infers.
-    """
+    """``python -m daydag.people ...`` - the one CLI (`daydag.cli`), entered here."""
     import sys
 
-    args = list(sys.argv[1:] if argv is None else argv)
-    usage = (
-        "usage: python -m daydag.people {add|set|show|list} [key] --log PATH\n"
-        "       [--email A] [--slack-id U] [--name N] [--title T]\n"
-        "       [--dm D] [--group C] [--leadership]"
-    )
-    if not args or args[0] not in {"add", "set", "show", "list"} or "--log" not in args:
-        print(usage)
-        return 2
+    from daydag.cli import main as cli_main
 
-    def opt(name: str) -> str | None:
-        """The value after ``name``, or None if the flag is absent.
-
-        A flag that is present but has NO value - last on the line, or followed
-        by another flag - is refused loudly. `--log` at the end used to return
-        None, which `str()` turned into a sqlite file literally named "None" in
-        whatever directory was current, holding real addresses and ids.
-        """
-        if name not in args:
-            return None
-        after = args[args.index(name) + 1 :]
-        if not after or after[0].startswith("--"):
-            raise SystemExit(f"{name} needs a value")
-        return after[0]
-
-    directory = People(EventLog.open(str(opt("--log"))))
-    command = args[0]
-
-    if command == "list":
-        for person in sorted(directory.all(), key=lambda p: p.key):
-            met = f"met {person.met}x" if person.met else "not met yet"
-            print(
-                f"  {person.key:22} {person.primary_email or '-':34} {person.title or '-':28} {met}"
-            )
-        return 0
-
-    if command == "show":
-        person = directory.resolve(args[1]) if len(args) > 1 else None
-        if person is None:
-            print(f"not in the directory: {args[1] if len(args) > 1 else ''}")
-            return 1
-        for name in (
-            "key",
-            "emails",
-            "slack_id",
-            "display_name",
-            "title",
-            "dm",
-            "groups",
-            "leadership",
-            "met",
-            "first_met",
-            "last_met",
-        ):
-            print(f"  {name:14} {getattr(person, name)}")
-        print(f"  {'sources':14} {dict(person.sources)}")
-        return 0
-
-    if len(args) < 2 or args[1].startswith("--"):
-        print(usage)
-        return 2
-    groups = [args[i + 1] for i, a in enumerate(args) if a == "--group" and i + 1 < len(args)]
-    directory.remember(
-        args[1],
-        source=STATED,
-        email=opt("--email"),
-        slack_id=opt("--slack-id"),
-        display_name=opt("--name"),
-        title=opt("--title"),
-        dm=opt("--dm"),
-        groups=groups,
-        leadership=True if "--leadership" in args else None,
-    )
-    print(f"  remembered {args[1]}")
-    return 0
+    return cli_main(["people", *(sys.argv[1:] if argv is None else argv)])
 
 
 if __name__ == "__main__":  # pragma: no cover

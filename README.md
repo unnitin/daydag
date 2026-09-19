@@ -34,8 +34,7 @@ artifact is the load-bearing rule; the rest is plumbing.
 | Module | What it is |
 |---|---|
 | `config` | Identifiers resolved from a local `.env`. This repo is public; nothing real is committed |
-| `registry` | The ownership table as startup checks — two writers to one artifact is an error, not a convention |
-| `manifests` | Reads the `daydag:` block out of every `.claude/skills/*/SKILL.md`, so those checks run over what ships |
+| `registry` | The ownership table as startup checks, read off every `.claude/skills/*/SKILL.md` — two writers to one artifact is an error, not a convention |
 | `statedoc` | The `DayDAG/` vault folder: State.md as a document, the sensitivity gate, the one State.md reader every push shares |
 | `eventlog` | The SQLite event log outside the vault: every transition, the meeting ledger, the sensitive partition |
 | `ledger` | Calendar-driven meeting rows, so a meeting that produced **no** notes is visible; one verdict on what counts as a meeting, and the one attendee and name-token parse |
@@ -43,8 +42,7 @@ artifact is the load-bearing rule; the rest is plumbing.
 | `closure` | Open is a verdict, not a default: the reply under every ask is read before the ask is reported open |
 | `vault` | How bytes reach the vault safely: atomic writes, placeholder refusal, an iCloud-aware compare-and-swap for line edits |
 | `voice` | The house voice as assertions, and the templates for every push |
-| `smoke` | One pre-flight pass over every source: reached, skipped, or never connected |
-| `runlog` | One row per run in the event log, so a brief that never arrived can still be explained |
+| `observe` | What ran and what it reached: the pre-flight over injected probes, and one row per run in the event log |
 | `recipes` | The connector edge: SPEC §4's prose as literal, bounded queries, and the readers for what comes back |
 | `push` | The push kernel every loop renders with: one `Push`, one `Reader`, one citation rule, one weekly-note scanner, one overlap rule |
 | `brief` | SPEC §3.1's morning brief, assembled from the kernel |
@@ -54,6 +52,7 @@ artifact is the load-bearing rule; the rest is plumbing.
 | `delivery` | The shape of the one autonomous send - the principal's DM - and the threaded prep reply. Not yet wired to a transport: the skill posts by hand until the loops are scheduled (#25) |
 | `people` | Who someone is - ids, title, DM, groups, how often met - with stated facts outranking inferred ones |
 | `run` | The two-phase contract that makes a loop runnable: plan the fetch, assemble the push |
+| `cli` | The one command line behind `daydag.run`, `people`, `soak` and `registry` - argparse, not four hand-rolled parsers |
 | `soak` | The five-day gate's journal: every edit he asks for, and whether a repeat is still outstanding |
 | `ingestion` | SPEC §3.3's classifier: five labels, biased to precision, no write path |
 

@@ -771,7 +771,7 @@ def test_a_trailing_for_is_refused_not_silently_dropped(tmp_path, monkeypatch, c
     monkeypatch.setattr("sys.stdin", __import__("io").StringIO('{"calendar":[],"slack":[]}'))
 
     assert run.main(["render", "prep", "--for"]) == 2
-    assert "--for needs" in capsys.readouterr().err
+    assert "--for" in capsys.readouterr().err, "the refusal names the flag"
 
 
 def test_a_blank_selector_is_one_line_on_stderr_not_a_traceback(identities):

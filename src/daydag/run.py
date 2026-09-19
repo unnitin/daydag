@@ -58,7 +58,6 @@ KNOWN LIMIT
 
 from __future__ import annotations
 
-import json
 import sys
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping, Sequence
@@ -68,15 +67,14 @@ from pathlib import Path
 from typing import Any
 
 from daydag import brief, closure, eod_wrap, push, recipes, week_ahead
-from daydag.config import ConfigError, resolve_reference, timezone_for
+from daydag.config import resolve_reference, timezone_for
 from daydag.eventlog import EventLog
 from daydag.ingestion import classify_items, unplaced
 from daydag.ledger import Ledger, Match, title_from_gemini_subject
+from daydag.observe import REACHED, Result, RunLog
 from daydag.people import People
 from daydag.prep import HORIZON_DAYS, Audience, Reason, build, point, prep_worthy, select
 from daydag.pulse import MirrorStore, Pulse, SyncReport, github_url, mirror_root, read_watchlist
-from daydag.runlog import RunLog
-from daydag.smoke import REACHED
 from daydag.statedoc import NotesGap, StateFolder, StateNotWritable, classify_sensitivity
 
 __all__ = ["LOOPS", "Plan", "RunError", "Step", "main", "plan", "render"]
@@ -880,7 +878,7 @@ def render(
         # for, so the row is written either way and the failure re-raised.
         with runner.run(f"loop: {loop}") as active:
             text = _assemble()
-            active.observe([{"name": loop, "source": "daydag", "status": REACHED, "reason": ""}])
+            active.observe([Result(loop, "daydag", REACHED)])
 
     if loop != "prep":
         # A prep is a QUESTION about the week ahead, not a day's seeding.
@@ -898,7 +896,7 @@ def render(
     # this one, so it stays as it is rather than being widened in passing.
     if write_state and loop in _NEEDS_LEDGER and folder is not None and events is not None:
         try:
-            _project(folder, events, ledger, now)
+            _project(folder, events, ledger, now, runner)
         except StateNotWritable as unwritable:
             # Guardrail 6: one line, never a dead push. The brief is already
             # assembled at this point and `main` prints the RETURN VALUE, so
@@ -990,8 +988,19 @@ def _seeded(payloads: Mapping[str, Any]) -> list[Mapping[str, Any]]:
     return [r for r in raw if isinstance(r, Mapping)] if isinstance(raw, list) else []
 
 
-def _project(folder: StateFolder, log: EventLog, ledger: Ledger, now: datetime) -> None:
+def _project(
+    folder: StateFolder,
+    log: EventLog,
+    ledger: Ledger,
+    now: datetime,
+    runner: RunLog | None = None,
+) -> None:
     """Add what this run learned to `State.md`, leaving the rest alone.
+
+    Including the run's own line under `## Run log` (SPEC 7): `timestamp ·
+    loop · reached · skipped`, free text withheld. It was rendered by
+    `projection_line` and never carried anywhere; the line was appended by
+    hand at the end of every run instead.
 
     Through `update_state`'s own `_visible` gate rather than filtering here:
     the runner is not a second writer with its own idea of the rules, and the
@@ -1010,73 +1019,15 @@ def _project(folder: StateFolder, log: EventLog, ledger: Ledger, now: datetime) 
             NotesGap(title=gap, sensitivity=classify_sensitivity(gap))
             for gap in ledger.notes_gaps(now)
         ],
+        run_lines=[runner.projection_line(runner.current_loop)] if runner is not None else (),
     )
 
 
 def main(argv: list[str] | None = None) -> int:
-    """`plan` writes JSON to stdout; `render` reads payloads from stdin."""
-    args = list(sys.argv[1:] if argv is None else argv)
-    if len(args) < 2 or args[0] not in {"plan", "render"}:
-        print(
-            "usage: python -m daydag.run {plan|render} {"
-            + "|".join(LOOPS)
-            + '} [--log PATH] [--write-state] [--mirrors] [--for "<meeting or person>"]'
-        )
-        return 2
+    """``python -m daydag.run {plan|render} <loop> ...`` - the one CLI, entered here."""
+    from daydag.cli import main as cli_main
 
-    from daydag.config import Identities
-
-    command, loop = args[0], args[1]
-    # `--log <path>` is what makes a run remember: without it the ledger starts
-    # empty every morning and a meeting seeded today cannot be a gap tomorrow.
-    # `--write-state` projects what the run learned back into `State.md`.
-    log = args[args.index("--log") + 1] if "--log" in args[:-1] else None
-    write_state = "--write-state" in args
-    # `--mirrors` syncs the watchlist's repos and builds the pulse (#138), so
-    # `ship` and the shipping sections render from the CLI at all.
-    with_mirrors = "--mirrors" in args
-    # `--for` names the meeting to prep. Without it `prep` takes the next
-    # qualifying one, which is the scheduled ping's behaviour.
-    selector = ""
-    if "--for" in args:
-        after = args[args.index("--for") + 1 :]
-        if not after or after[0].startswith("--"):
-            # Falling through to the next-qualifying meeting here would prep a
-            # meeting he did not ask about and say nothing - the wrong-meeting
-            # failure `prep.select` calls worse than no prep.
-            print("--for needs a meeting or a person after it", file=sys.stderr)
-            return 2
-        selector = after[0]
-    try:
-        identities = Identities.from_file(Path(".env"))
-        now = datetime.now().astimezone()
-        if command == "plan":
-            built = plan(loop, now=now, identities=identities, selector=selector)
-            print(json.dumps(built.to_dict(), indent=2))
-        else:
-            payloads = json.load(sys.stdin)
-            pulse, report = (None, None)
-            events = EventLog.open(log) if log else None
-            if with_mirrors:
-                pulse, report = build_pulse(identities, events)
-            print(
-                render(
-                    loop,
-                    now=now,
-                    identities=identities,
-                    payloads=payloads,
-                    log=log,
-                    pulse=pulse,
-                    write_state=write_state,
-                    selector=selector,
-                )
-            )
-            if events is not None and report is not None:
-                store_cursors(events, report)
-    except (RunError, ConfigError) as bad:
-        print(f"{bad}", file=sys.stderr)
-        return 1
-    return 0
+    return cli_main(["run", *(sys.argv[1:] if argv is None else argv)])
 
 
 if __name__ == "__main__":

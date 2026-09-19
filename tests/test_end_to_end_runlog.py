@@ -33,10 +33,10 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from daydag import smoke
+from daydag import observe
 from daydag.eventlog import EventLog
+from daydag.observe import FAILURE_LIMIT, RUN, UNCHECKED, RunLog, RunRow
 from daydag.pulse import Mirror, Pulse
-from daydag.runlog import FAILURE_LIMIT, RUN, UNCHECKED, RunLog, RunRow
 from daydag.statedoc import StateFolder
 
 PT = timezone(timedelta(hours=-7))
@@ -46,7 +46,7 @@ SIX_FORTY = datetime(2026, 9, 8, 6, 40, tzinfo=PT)
 #: Two of the real `smoke` checks, so the walk is fed genuine rows rather than
 #: hand-written dicts. Calendar is probed and answers; Jira is given no probe,
 #: which is the case that must never come out the far end as "reached".
-RUNLOG_CHECKS = tuple(check for check in smoke.CHECKS if check.name in {"calendar", "jira"})
+RUNLOG_CHECKS = tuple(check for check in observe.CHECKS if check.name in {"calendar", "jira"})
 
 
 @pytest.fixture
@@ -81,7 +81,7 @@ def _first_commit(repo, git_env):
 
 def _morning_smoke():
     """One pre-flight pass: the calendar answers, nothing probed Jira."""
-    return smoke.run({"calendar": lambda: {"events": []}}, checks=RUNLOG_CHECKS).as_rows()
+    return observe.run({"calendar": lambda: {"events": []}}, checks=RUNLOG_CHECKS).as_rows()
 
 
 def test_a_morning_run_leaves_its_row_in_the_log_and_nothing_in_the_vault(
@@ -129,13 +129,13 @@ def test_a_morning_run_leaves_its_row_in_the_log_and_nothing_in_the_vault(
     row = RunRow.from_payload(payload)
     assert row.at == SIX_FORTY.isoformat(), "the row is stamped by the injected clock"
     assert row.completed and row.reached == ("calendar",)
-    assert [(skip.name, skip.reason) for skip in row.skipped] == [("jira", smoke.NO_PROBE)]
+    assert [(skip.name, skip.reason) for skip in row.skipped] == [("jira", observe.NO_PROBE)]
 
     # -- and the vault, rewritten from the same log, carries none of it -----
     written = folder.read_state()
     assert "cutover rehearsal" in written, "the walk must be doing real work"
     assert "perf-conversation" not in written, "a private chase item reached the vault"
-    for leaked in ("morning brief", "reached:", smoke.NO_PROBE):
+    for leaked in ("morning brief", "reached:", observe.NO_PROBE):
         assert leaked not in written, f"{leaked!r} reached a synced markdown file"
 
     # The one line the vault MAY carry keeps the wording of nothing.

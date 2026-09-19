@@ -184,7 +184,7 @@ Four files rather than one, because they have genuinely different edit patterns 
 
 Six rules the whole thing rests on. Each was expensive to learn or is expensive to break.
 
-1. **One writer per artifact.** The ownership table is the architecture; the rest is plumbing. Enforced mechanically by `daydag.registry` over the manifests `daydag.manifests` loads — a documented invariant is one a hurried author breaks, so it is a startup error instead.
+1. **One writer per artifact.** The ownership table is the architecture; the rest is plumbing. Enforced mechanically by `daydag.registry` over the manifests it loads from `.claude/skills/*/SKILL.md` — a documented invariant is one a hurried author breaks, so it is a startup error instead.
 2. **Read, don't re-derive.** If a routine already produced it, consume its output. Violated twice in one session — a chase list copied out of Workstreams, and a Sunday brief re-synthesising Friday's plan.
 3. **Evidence or silence.** Verbatim quote plus permalink, or say it can't be sourced. `weekly-feedback-scan` states the same rule as *"no link, no claim."* The two halves apply at different levels, and conflating them is what let an unsourced item ship as `- title ()` for a milestone: a *source* that could not be read is named in one line, because a reader needs to know what is missing; a single *claim* with no link is not weakened, it is refused, because "could not source this" spends attention on something nobody can check or act on. `pulse.Item` and `voice.render` both raise; anything that produces claims later should too.
 4. **Drafts, not sends.** Exactly one autonomous channel: the DM to Nitin. Everything else waits for a per-item yes.
@@ -224,7 +224,7 @@ session, which is what makes scheduling a design question rather than a crontab.
 
 Five DayDAG schedules, not six: the pulse is a pre-step of three of them.
 
-The rows below are a projection of the manifests' `schedule:` keys rather than a thing kept in sync by hand — `python -m daydag.manifests` prints the live version. Only three skills declare one: DayDAG's five loops share a manifest, and the Friday ritual is scheduled on its orchestrator, not on the two content skills it invokes.
+The rows below are a projection of the manifests' `schedule:` keys rather than a thing kept in sync by hand — `python -m daydag.registry` prints the live version. Only three skills declare one: DayDAG's five loops share a manifest, and the Friday ritual is scheduled on its orchestrator, not on the two content skills it invokes.
 
 **Retired:** the weekdays-7:00 `dt-leadership-monitor`. The D&T leadership call is cancelled — it was Former-Sponsor's meeting and it left with him. The routine chased a weekly update for a forum that no longer meets, so there is nothing to absorb into the chaser; it should be disabled outright, not ported. That also removes the 6:45/7:00 competing-morning-push problem the spec flagged. `#dt-leadership` (`${SLACK_CH_DT_LEADERSHIP}`) stays on the read list until it goes quiet, as a source only.
 
@@ -319,7 +319,7 @@ DayDAG loads every manifest at the top of each loop and the registry does four j
 3. **Routes evidence.** `consumes:` is how the pulse feeds `weekly-progress-reporting` and `weekly-feedback-scan` without any of the three knowing about the others.
 4. **Carries sensitivity mechanically.** `sensitivity: private` lets the orchestrator *refuse* to route that skill's output into a brief or a channel draft. §10.1's strictest guardrail becomes a check instead of a paragraph — which is the only form of it that survives contact with a future author.
 
-**Built, and actually loaded.** All five shipped skills carry the block. `daydag.registry` holds the checks; `daydag.manifests` reads `.claude/skills/*/SKILL.md` and hands them over. That second half matters more than it looks: for a while the registry existed and nothing called it, so the one-writer check ran only over dictionaries typed into its own unit test — a check that cannot fail. It now runs over the real set from `python -m daydag.manifests` (a `scripts/preflight.sh` step, so every push) and from `tests/test_manifests.py`. Plant a second `writes:` on `Fact Base/Workstreams.md` and both go red.
+**Built, and actually loaded.** All five shipped skills carry the block. `daydag.registry` holds the checks and reads `.claude/skills/*/SKILL.md` itself. That second half matters more than it looks: for a while the registry existed and nothing called it, so the one-writer check ran only over dictionaries typed into its own unit test — a check that cannot fail. It now runs over the real set from `python -m daydag.registry` (a `scripts/preflight.sh` step, so every push) and from `tests/test_manifests.py`. Plant a second `writes:` on `Fact Base/Workstreams.md` and both go red.
 
 Two validation rules exist because the failures they catch are silent rather than loud: an unknown key in the block is an error (`write:` for `writes:` would leave an artifact with no declared owner, so a second writer sails through), and so is an unknown `sensitivity:` (`privat` reads as "not private").
 

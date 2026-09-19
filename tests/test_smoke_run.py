@@ -16,7 +16,7 @@ exception.
 
 No test in this file touches the network. Probes are injected callables and
 their outcomes are fixtures, which is also the design constraint on the module:
-`smoke.py` holds no client, so there is nothing for it to reach even by
+`observe.py` holds no client, so there is nothing for it to reach even by
 accident. `test_the_module_carries_no_client_of_its_own` asserts that.
 """
 
@@ -27,8 +27,8 @@ from pathlib import Path
 
 import pytest
 
-from daydag import smoke
-from daydag.smoke import (
+from daydag import observe
+from daydag.observe import (
     AUTH,
     CHECKS,
     FETCH,
@@ -91,7 +91,7 @@ def raises(error: Exception):
 
 def test_one_run_reports_a_row_for_every_source():
     """The point of the run is completeness: a source with no row was not checked."""
-    report = smoke.run(probes())
+    report = observe.run(probes())
 
     assert [result.name for result in report.results] == [check.name for check in CHECKS]
     assert {result.source for result in report.results} == {
@@ -114,7 +114,7 @@ def test_every_check_declares_what_reached_means_and_how_it_is_bounded():
 
 
 def test_a_healthy_run_reaches_everything_that_is_connected():
-    report = smoke.run(probes())
+    report = observe.run(probes())
 
     assert report.reached == tuple(HEALTHY)
     assert report.skipped == ()
@@ -143,7 +143,7 @@ def test_a_deliberately_broken_connector_reports_rather_than_raising(failure: Ex
     the run returns a report. The healthy sources still say they were reached,
     because a brief that ships six sources and one apology is the whole point.
     """
-    report = smoke.run(probes(gmail=raises(failure)))
+    report = observe.run(probes(gmail=raises(failure)))
 
     assert result_for(report, "gmail").status == SKIPPED
     assert "calendar" in report.reached
@@ -154,7 +154,7 @@ def test_a_deliberately_broken_connector_reports_rather_than_raising(failure: Ex
 @pytest.mark.guardrail
 def test_the_broken_connector_is_named_in_the_line_the_brief_ships():
     """Guardrail 6 verbatim: a one-line "couldn't check X", never a stall."""
-    report = smoke.run(probes(databricks=raises(RuntimeError("workspace unreachable"))))
+    report = observe.run(probes(databricks=raises(RuntimeError("workspace unreachable"))))
 
     lines = report.degrade_lines()
     assert lines == ["couldn't check databricks - workspace unreachable"]
@@ -174,7 +174,9 @@ def test_every_probe_runs_exactly_once_even_when_it_fails():
 
         return probe
 
-    smoke.run(probes(calendar=counted("calendar", None), gmail=counted("gmail", HEALTHY["gmail"])))
+    observe.run(
+        probes(calendar=counted("calendar", None), gmail=counted("gmail", HEALTHY["gmail"]))
+    )
 
     assert calls == ["calendar", "gmail"]
 
@@ -198,7 +200,7 @@ def test_a_payload_over_the_ceiling_is_a_skip_not_a_quiet_day(name: str, measure
     assert measured > OUTPUT_CEILING_CHARS, "the ceiling no longer catches a measured overflow"
     oversized = {"issues": [{"key": "CDI-1", "status": "x" * measured}]}
 
-    report = smoke.run(probes(**{name: lambda: oversized}))
+    report = observe.run(probes(**{name: lambda: oversized}))
 
     result = result_for(report, name)
     assert result.status == SKIPPED
@@ -230,8 +232,8 @@ def test_an_overflow_reported_as_text_is_read_as_overflow(text: str):
     Either way it is the same failure, and neither is authentication - which is
     why classifying on the message beats classifying on "did it throw".
     """
-    by_return = smoke.run(probes(calendar=lambda: text))
-    by_raise = smoke.run(probes(calendar=raises(RuntimeError(text))))
+    by_return = observe.run(probes(calendar=lambda: text))
+    by_raise = observe.run(probes(calendar=raises(RuntimeError(text))))
 
     assert result_for(by_return, "calendar").reason == OVERFLOW
     assert result_for(by_raise, "calendar").reason == OVERFLOW
@@ -266,7 +268,7 @@ def test_a_call_that_did_not_raise_is_still_not_proof_the_source_answered(
     carries no record. Reading any of them as "reached" is how a brief reports
     a quiet day on a board that was never actually queried.
     """
-    report = smoke.run(probes(**{name: lambda: payload}))
+    report = observe.run(probes(**{name: lambda: payload}))
 
     result = result_for(report, name)
     assert result.status == SKIPPED, f"{payload!r} was read as a reachable {name}"
@@ -276,7 +278,7 @@ def test_a_call_that_did_not_raise_is_still_not_proof_the_source_answered(
 
 def test_a_databricks_answer_must_actually_be_the_one_that_was_asked_for():
     """SELECT 1 returning anything but 1 is a warehouse that is not answering."""
-    report = smoke.run(probes(databricks=lambda: {"rows": [[0]]}))
+    report = observe.run(probes(databricks=lambda: {"rows": [[0]]}))
 
     assert result_for(report, "databricks").status == SKIPPED
 
@@ -287,7 +289,7 @@ def test_slack_resolving_nothing_is_a_skip_because_the_failure_is_silent():
     That is the documented trap (SPEC section 4), so the empty result is the
     thing this check exists to catch - it can never be read as "reached".
     """
-    report = smoke.run(probes(slack=lambda: {"members": []}))
+    report = observe.run(probes(slack=lambda: {"members": []}))
 
     result = result_for(report, "slack")
     assert result.status == SKIPPED
@@ -301,7 +303,7 @@ def test_jira_returning_no_issues_is_a_skip_not_a_quiet_board():
     likely means the JQL names a dormant project, and the cost of being wrong
     is one honest "couldn't check jira" line rather than a board reported clear.
     """
-    report = smoke.run(probes(jira=lambda: {"issues": []}))
+    report = observe.run(probes(jira=lambda: {"issues": []}))
 
     assert result_for(report, "jira").status == SKIPPED
 
@@ -311,7 +313,7 @@ def test_a_calendar_day_with_no_events_is_still_reached():
 
     The guard against an overflow hiding here is the ceiling, not the count.
     """
-    report = smoke.run(probes(calendar=lambda: {"events": []}))
+    report = observe.run(probes(calendar=lambda: {"events": []}))
 
     assert result_for(report, "calendar").status == REACHED
 
@@ -335,7 +337,7 @@ def test_the_schema_error_is_reported_as_expired_auth_with_the_fix(text: str):
     reading the report goes looking at the query. The classification, and the
     fix, are encoded here instead.
     """
-    report = smoke.run(probes(databricks=raises(RuntimeError(text))))
+    report = observe.run(probes(databricks=raises(RuntimeError(text))))
 
     result = result_for(report, "databricks")
     assert result.reason == AUTH, "the schema error was read as a broken query"
@@ -344,7 +346,7 @@ def test_the_schema_error_is_reported_as_expired_auth_with_the_fix(text: str):
 
 @pytest.mark.parametrize("text", ["401 unauthorized", "oauth token expired", "forbidden"])
 def test_a_plain_auth_failure_is_still_read_as_auth(text: str):
-    report = smoke.run(probes(notion=raises(RuntimeError(text))))
+    report = observe.run(probes(notion=raises(RuntimeError(text))))
 
     assert result_for(report, "notion").reason == AUTH
 
@@ -361,8 +363,8 @@ def test_a_mirror_fetch_failure_is_a_distinct_skip_from_an_api_failure():
     place, which is the same reasoning `MirrorUnavailable.reason` already
     encodes for the pulse.
     """
-    fetch_broke = smoke.run(probes(**{"github mirror": lambda: False}))
-    api_broke = smoke.run(probes(**{"github api": raises(RuntimeError("bad credentials"))}))
+    fetch_broke = observe.run(probes(**{"github mirror": lambda: False}))
+    api_broke = observe.run(probes(**{"github api": raises(RuntimeError("bad credentials"))}))
 
     assert result_for(fetch_broke, "github mirror").reason == FETCH
     assert result_for(fetch_broke, "github api").status == REACHED
@@ -376,12 +378,12 @@ def test_github_counts_as_reached_only_when_both_halves_answer():
     GitHub is two probes under one name, so the source-level answer has to be
     the conjunction: half of GitHub answering is not GitHub answering.
     """
-    half_broken = smoke.run(probes(**{"github mirror": lambda: False}))
+    half_broken = observe.run(probes(**{"github mirror": lambda: False}))
 
     assert "github mirror" not in half_broken.reached
     assert "github api" in half_broken.reached
     assert "github" not in half_broken.reached_sources
-    assert smoke.run(probes()).reached_sources == (
+    assert observe.run(probes()).reached_sources == (
         "calendar",
         "gmail",
         "slack",
@@ -400,7 +402,7 @@ def test_github_counts_as_reached_only_when_both_halves_answer():
 def test_granola_reports_as_deliberately_not_connected():
     """It was never wired up: Gemini covers the corpus. A skip would read as an
     outage, and someone would go and try to fix it every morning."""
-    report = smoke.run(probes())
+    report = observe.run(probes())
 
     result = result_for(report, "granola")
     assert result.status == NOT_CONNECTED
@@ -412,7 +414,7 @@ def test_granola_reports_as_deliberately_not_connected():
 @pytest.mark.guardrail
 def test_a_source_with_no_probe_is_skipped_rather_than_assumed_reached():
     """An unconfigured environment must fail closed, and say so per source."""
-    report = smoke.run({})
+    report = observe.run({})
 
     assert report.reached == ()
     assert set(report.skipped) == set(HEALTHY)
@@ -422,7 +424,7 @@ def test_a_source_with_no_probe_is_skipped_rather_than_assumed_reached():
 def test_a_probe_under_an_unknown_name_is_refused():
     """A typo would otherwise leave a source unchecked and silently 'not wired'."""
     with pytest.raises(ValueError, match="calender"):
-        smoke.run({"calender": lambda: HEALTHY["calendar"]})
+        observe.run({"calender": lambda: HEALTHY["calendar"]})
 
 
 # --------------------------------------------------------------------------
@@ -431,7 +433,7 @@ def test_a_probe_under_an_unknown_name_is_refused():
 
 
 def test_the_report_renders_one_line_per_check_plus_a_summary():
-    report = smoke.run(probes(jira=raises(RuntimeError("down"))))
+    report = observe.run(probes(jira=raises(RuntimeError("down"))))
     lines = report.render().splitlines()
 
     assert lines[0] == "sources: 7 reached, 1 skipped, 1 not connected"
@@ -442,7 +444,7 @@ def test_the_report_renders_one_line_per_check_plus_a_summary():
 
 def test_the_report_is_rows_before_it_is_text():
     """#26 appends a run line to State.md and needs fields, not a parsed string."""
-    rows = smoke.run(probes(slack=raises(RuntimeError("401 unauthorized")))).as_rows()
+    rows = observe.run(probes(slack=raises(RuntimeError("401 unauthorized")))).as_rows()
 
     assert all(set(row) == {"name", "source", "status", "reason", "detail"} for row in rows)
     assert all(isinstance(value, str) for row in rows for value in row.values())
@@ -458,32 +460,32 @@ def test_the_report_is_rows_before_it_is_text():
 
 def test_the_run_is_deterministic_and_ordered():
     """A report whose row order moves between runs cannot be diffed in a log."""
-    first, second = smoke.run(probes()), smoke.run(probes())
+    first, second = observe.run(probes()), observe.run(probes())
 
     assert first.as_rows() == second.as_rows()
     assert first.render() == second.render()
 
 
 def test_the_report_reads_in_the_house_voice():
-    report = smoke.run(probes(databricks=raises(RuntimeError("outputSchema"))))
+    report = observe.run(probes(databricks=raises(RuntimeError("outputSchema"))))
 
     assert voice_violations(report.render()) == []
     assert voice_violations("\n".join(report.degrade_lines())) == []
 
 
 def test_ok_is_true_only_when_every_connected_source_answered():
-    assert smoke.run(probes()).ok is True
-    assert smoke.run(probes(gmail=lambda: {"messages": []})).ok is False
+    assert observe.run(probes()).ok is True
+    assert observe.run(probes(gmail=lambda: {"messages": []})).ok is False
 
 
 def test_a_detail_never_carries_more_than_a_line():
     """A stack trace pasted into a brief is how the one-line rule dies."""
     noisy = "Traceback (most recent call last):\n  File 'x'\n" + "y" * 500
-    report = smoke.run(probes(gmail=raises(RuntimeError(noisy))))
+    report = observe.run(probes(gmail=raises(RuntimeError(noisy))))
 
     detail = result_for(report, "gmail").detail
     assert "\n" not in detail
-    assert len(detail) <= smoke.DETAIL_LIMIT
+    assert len(detail) <= observe.DETAIL_LIMIT
 
 
 def test_a_shape_failure_is_trimmed_like_a_raised_one():
@@ -496,11 +498,11 @@ def test_a_shape_failure_is_trimmed_like_a_raised_one():
     the DM-sized paste `DETAIL_LIMIT` exists to prevent.
     """
     garbled = "ERROR: " + "x" * 800
-    report = smoke.run(probes(databricks=lambda: {"rows": [[garbled]]}))
+    report = observe.run(probes(databricks=lambda: {"rows": [[garbled]]}))
 
     result = result_for(report, "databricks")
-    assert result.status == smoke.SKIPPED
-    assert len(result.detail) <= smoke.DETAIL_LIMIT
+    assert result.status == observe.SKIPPED
+    assert len(result.detail) <= observe.DETAIL_LIMIT
     assert all(len(line) <= 200 for line in report.degrade_lines())
 
 
@@ -510,20 +512,21 @@ def test_a_shape_failure_is_trimmed_like_a_raised_one():
 
 
 def test_the_module_carries_no_client_of_its_own():
-    """Probes are injected, so `smoke.py` imports nothing that can reach out.
+    """Probes are injected, so `observe.py` imports nothing that can reach out.
 
     This is the structural half of "tests must not hit the network": there is
     no import here that could, whatever a future edit passes in. It also keeps
     the connector-client tripwire in `test_guardrails.py` meaningful.
     """
-    source = Path(smoke.__file__).read_text(encoding="utf-8")
+    source = Path(observe.__file__).read_text(encoding="utf-8")
     imported = {
         node.module.split(".")[0] if isinstance(node, ast.ImportFrom) else alias.name.split(".")[0]
         for node in ast.walk(ast.parse(source))
         if isinstance(node, ast.Import | ast.ImportFrom)
         for alias in node.names
     }
-    assert imported <= {"__future__", "collections", "dataclasses", "re", "typing", "daydag"}
+    stdlib = {"__future__", "collections", "contextlib", "dataclasses", "datetime", "re", "typing"}
+    assert imported <= stdlib | {"daydag"}
 
 
 def test_the_bounds_are_anchored_to_the_recipes_that_enforce_them():
@@ -543,8 +546,8 @@ def test_the_bounds_are_anchored_to_the_recipes_that_enforce_them():
     """
     import importlib
 
+    from daydag import observe as smoke_module
     from daydag import recipes
-    from daydag import smoke as smoke_module
 
     original = recipes.JIRA_MAX_RESULTS_CAP
     try:
@@ -582,7 +585,7 @@ def test_the_login_fix_survives_a_realistic_schema_error():
         "outputSchema validation failed for tool execute_sql: no structured "
         "output was returned by the serving endpoint"
     )
-    report = smoke.run(probes(databricks=raises(RuntimeError(real))))
+    report = observe.run(probes(databricks=raises(RuntimeError(real))))
 
     detail = result_for(report, "databricks").detail
     assert detail.endswith("re-run the workspace login first"), detail
@@ -598,7 +601,7 @@ def test_a_rate_limit_is_not_reported_as_an_overflow(text: str):
     Reading one as the other sends whoever is on it to rewrite a query that was
     never the problem.
     """
-    report = smoke.run(probes(slack=raises(RuntimeError(text))))
+    report = observe.run(probes(slack=raises(RuntimeError(text))))
 
     assert result_for(report, "slack").reason != OVERFLOW
 
@@ -618,7 +621,7 @@ def test_an_error_handed_back_as_an_object_is_classified_not_read_as_a_shape(pay
     and never mentions the 401 at all, so the operator goes and looks at the
     query rather than re-authenticating.
     """
-    report = smoke.run(probes(calendar=lambda: payload))
+    report = observe.run(probes(calendar=lambda: payload))
 
     result = result_for(report, "calendar")
     assert result.status == SKIPPED
@@ -633,14 +636,14 @@ def test_gmail_metadata_alone_is_not_a_reachable_note():
     correction was that the *subject* is the parseable part. A result set with
     no subject in it has not shown the note corpus is readable.
     """
-    report = smoke.run(probes(gmail=lambda: {"messages": [{"id": "m1", "threadId": "t1"}]}))
+    report = observe.run(probes(gmail=lambda: {"messages": [{"id": "m1", "threadId": "t1"}]}))
 
     assert result_for(report, "gmail").status == SKIPPED
 
 
 def test_a_calendar_entry_with_no_start_is_not_an_event():
     """A brief full of meetings with no times, under a healthy calendar row."""
-    report = smoke.run(probes(calendar=lambda: {"events": [{"id": "e1", "summary": "standup"}]}))
+    report = observe.run(probes(calendar=lambda: {"events": [{"id": "e1", "summary": "standup"}]}))
 
     assert result_for(report, "calendar").status == SKIPPED
 
@@ -651,7 +654,7 @@ def test_select_1_does_not_accept_a_boolean():
     This check's entire premise is that "it returned something" is not proof,
     and a boolean is the something a loose comparison accepts.
     """
-    report = smoke.run(probes(databricks=lambda: {"rows": [[True]]}))
+    report = observe.run(probes(databricks=lambda: {"rows": [[True]]}))
 
     assert result_for(report, "databricks").status == SKIPPED
 
@@ -662,8 +665,8 @@ def test_a_narrowed_run_still_takes_the_full_probe_map():
     Validating probe names against the narrowed list rejected every probe
     outside it as a typo, which made the parameter unusable for what it is for.
     """
-    report = smoke.run(probes(), checks=[CHECKS[0]])
+    report = observe.run(probes(), checks=[CHECKS[0]])
 
     assert [row["name"] for row in report.as_rows()] == ["calendar"]
     with pytest.raises(ValueError, match="calender"):
-        smoke.run({"calender": lambda: None}, checks=[CHECKS[0]])
+        observe.run({"calender": lambda: None}, checks=[CHECKS[0]])

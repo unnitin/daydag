@@ -14,13 +14,14 @@ from pathlib import Path
 
 import pytest
 
-from daydag.manifests import (
+from daydag.registry import (
+    PRIVATE_SURFACES,
     ManifestError,
+    RegistryError,
     load_registry,
     read_manifests,
     repo_skills_dir,
 )
-from daydag.registry import PRIVATE_SURFACES, RegistryError
 
 REPO_SKILLS = Path(__file__).resolve().parents[1] / ".claude" / "skills"
 

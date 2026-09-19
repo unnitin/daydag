@@ -771,8 +771,13 @@ class StateFolder:
         chase: Iterable[ChaseItem | Mapping[str, Any]] = (),
         watch: Iterable[Mapping[str, Any]] = (),
         notes_gaps: Iterable[str | Mapping[str, Any]] = (),
+        run_lines: Iterable[str] = (),
     ) -> None:
         """Append anything derived that is not already in ``State.md``.
+
+        ``run_lines`` are the run log's own projection lines (SPEC 7: one per
+        run, free text withheld), appended under `## Run log` - the section
+        he was writing by hand at the end of every run.
 
         Nothing is removed, reordered or reflowed. A run that derived nothing
         writes nothing at all - which is the whole of #130: on 2026-09-14 an
@@ -829,6 +834,11 @@ class StateFolder:
             if not gap.title or doc.is_line(gap.title, section="Notes gaps"):
                 continue
             doc.append("Notes gaps", [f"- {gap.title}", ""])
+        for line in run_lines:
+            text = str(line).strip()
+            if not text or doc.is_line(text, section="Run log"):
+                continue
+            doc.append("Run log", [f"- {text}"])
 
         after = doc.render()
         if after == before:
