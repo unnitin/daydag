@@ -152,7 +152,7 @@ which is the one thing this system does that nothing else does.
 | "run my morning" | morning brief, SPEC §3.1 | since 6pm yesterday |
 | "prep me for <meeting>" | meeting prep, §3.2 | that meeting's last ~4 weeks |
 | "ingest" / a note landed | meeting-note ingestion, §3.3 | since the last sweep |
-| "chase" / "what's owed to me" | open-loop chaser, §3.4 | the whole chase list |
+| "chase" / "what's owed to me" / "what's on my plate" | open-loop chaser, §3.4 - `plan chase` names one read per ask; do every one before `render` | the whole chase list, Owed by you, Decisions.md |
 | "wrap up" | EOD wrap, §3.5 | today |
 | "week ahead" | Sunday week-ahead, §3.6 | next 7 days |
 | "what shipped" / `ship` | engineering pulse, §3.7 | since the stored cursor |
@@ -181,7 +181,7 @@ but knowing which is which before you start saves a wasted round-trip.
 |---|---|
 | `prep <meeting or person>` | `python -m daydag.run plan prep --for "<name or title words>"`, then fetch, then `render prep --for ...`. Searches the next 7 days in his zone. When the name fits several meetings it ASKS - narrow with words from the title (`"ruwen / nitin"`), never pick one for him. Without `--for`, `prep` takes the next qualifying meeting |
 | `ship <repo>` | `render ship`, with a `Pulse` built from the mirrors. Without one it degrades to a line |
-| `sweep` | you, following SPEC §3.8 - a pending-items pass across Slack/Gmail/Notion/Obsidian, triaged, every item with a permalink |
+| `sweep` | you, following SPEC §3.8 - a pending-items pass across Slack/Gmail/Notion/Obsidian, triaged, every item with a permalink. **Before any line is reported open, run `chase` first**: it reads the reply under every ask State.md already carries, and a sweep that re-lists those from their ask text repeats the 2026-09-18 miss |
 | `find <question>` | you - person-scoped Slack (`from:<@ID>`, `sort:timestamp asc`), then Gmail, then read the thread. Answer with quote + link, never from memory |
 | `draft <what>` | you, in the voice above. A draft, never a send |
 | `status <workstream>` | you - read the Workstreams block, then the freshest evidence, report the delta |
@@ -232,6 +232,18 @@ U+26A0 the vault actually uses, not the emoji-presentation variant.
 - **Slack by id, not display name.** `from:<@USER_ID> in:<#CHANNEL_ID> after:…` beats
   keyword search; `from:@displayname` fails *silently*. Follow `message_ts` into the
   thread - a top-level read misses every reply.
+- **Open is a verdict, not a default.** Nothing in `Chase list`, `Owed by you`,
+  `promises you made` or `Decisions.md` is reported open until the conversation
+  AFTER the ask and the thread UNDER it have been read this run. `python -m
+  daydag.run plan chase` lists exactly those reads, keyed by permalink; pass what
+  you read back as `{"closure": {"<permalink>": [messages]}}` and `render chase`
+  sorts every line into open / answered-strike? / couldn't verify. An ask you did
+  not read renders as "couldn't verify", never as open - on 2026-09-18 three
+  items were reported open that he had already answered in the thread, because
+  the ask text was matched and the reply never read. His words: *"these are
+  things you should already try before coming back to me for directions"*. The
+  same rule applies to anything you surface by hand: read the reply first, then
+  come back with the answer, not the question.
 - **Gemini notes have a structured subject** - `Notes: "<meeting title>" <date>`, from
   `gemini-notes@google.com`, all labelled `meeting notes`. Parse the subject; it
   resolves the back-to-back-1:1 case that fuzzy body matching gets wrong.

@@ -67,7 +67,7 @@ from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any
 
-from daydag import brief, eod_wrap, recipes, week_ahead
+from daydag import brief, closure, eod_wrap, recipes, week_ahead
 from daydag.config import ConfigError, resolve_reference, timezone_for
 from daydag.ingestion import classify_items, unplaced
 from daydag.ledger import Ledger, Match, title_from_gemini_subject
@@ -82,7 +82,6 @@ from daydag.state import (
     StateFolder,
     StateNotWritable,
     classify_sensitivity,
-    read_section,
 )
 
 __all__ = ["LOOPS", "Plan", "RunError", "Step", "main", "plan", "render"]
@@ -232,6 +231,15 @@ def plan(loop: str, *, now: datetime, identities: Mapping[str, str], selector: s
         ),
         *_extra_notes(loop, day),
     ]
+    if loop == "chase":
+        # The chaser reads the file he corrects by hand and then READS THE
+        # REPLIES. Open is a verdict, not a default: on 2026-09-18 three items
+        # were reported open that were answered in the thread under the ask,
+        # because the ask's text was matched and the reply never read. So the
+        # plan is one read per ask - the conversation after it, and its thread
+        # - and `_chase` renders anything not read as "couldn't verify",
+        # never as open. The generic steps above fetch nothing this loop uses.
+        return Plan(loop=loop, at=now.isoformat(), steps=tuple(_closure_reads(identities)))
     if loop == "prep" and selector:
         # `_prep` reads the calendar and the Slack payload, nothing else. No
         # note can attach to a meeting that has not happened, and the weekly
@@ -264,6 +272,39 @@ def _extra_notes(loop: str, day: date) -> list[Step]:
             {"paths": [recipes.weekly_note(next_week), recipes.meeting_prep(next_week)]},
         )
     ]
+
+
+def _closure_reads(identities: Mapping[str, str]) -> list[Step]:
+    """One `slack` step per checkable ask in `State.md` and `Decisions.md`.
+
+    Without a vault there is nothing to check, and the plan says so in one
+    step rather than emitting an empty list that reads as "nothing owed".
+    """
+    folder = _vault(identities)
+    if folder is None:
+        return [Step("vault", "no vault configured - nothing to chase", {})]
+    try:
+        state_text = folder.read_state()
+    except OSError:
+        return [Step("vault", "couldn't read State.md - nothing to chase", {})]
+    try:
+        decisions_text = folder.decisions_path.read_text(encoding="utf-8")
+    except OSError:
+        decisions_text = ""
+    reads = closure.closure_steps(closure.asks_in(state_text, decisions_text))
+    steps = [
+        Step(
+            "vault",
+            "State.md and Decisions.md were read to build the steps below; no payload needed",
+            {"state": str(folder.state_path), "decisions": str(folder.decisions_path)},
+        )
+    ]
+    steps += [Step("slack", read.how, read.to_dict()) for read in reads]
+    if not reads:
+        steps.append(
+            Step("slack", "no ask carries a slack permalink - nothing can be verified", {})
+        )
+    return steps
 
 
 def _calendar_windows(
@@ -546,8 +587,14 @@ def _jsonable(value: Any) -> Any:
     return value.isoformat() if isinstance(value, datetime) else value
 
 
-def _chase(folder: StateFolder | None, log: EventLog | None) -> str:
-    """What is owed to him, oldest first.
+def _chase(
+    folder: StateFolder | None,
+    log: EventLog | None,
+    *,
+    fetched: Mapping[str, Any] | None = None,
+    principal: str = "",
+) -> str:
+    """What is owed to him and what he owes, each verified against its thread.
 
     Not yet marked against the 2-business-day clock - that is the chaser's
     work (#18) and needs asked-on dates this loop does not have. An earlier
@@ -558,6 +605,13 @@ def _chase(folder: StateFolder | None, log: EventLog | None) -> str:
     over derived state. A chaser that rebuilt the list from Slack every run
     would silently undo every correction he made.
 
+    ``fetched`` is the `closure` payload: what the agent read for each ask the
+    plan named, keyed by the ask's permalink. An ask that is not in it renders
+    as "couldn't verify", never as open (`closure` contract 1) - the whole
+    reason this loop stopped listing the chase list verbatim. Absent
+    altogether, the push says the reads were skipped rather than reporting
+    every line open, which was the 2026-09-18 failure.
+
     The nudges are drafted, never sent - guardrail 1. Nothing here addresses
     anyone but him.
     """
@@ -567,17 +621,26 @@ def _chase(folder: StateFolder | None, log: EventLog | None) -> str:
         written = folder.read_state()
     except Exception:
         return "owed to you: couldn't read State.md"
+    try:
+        decisions = folder.decisions_path.read_text(encoding="utf-8")
+    except OSError:
+        decisions = ""
 
-    lines = read_section(written, "Chase list", top_level=True)
-    if not lines:
+    asks = closure.asks_in(written, decisions)
+    if not asks:
         return "owed to you: nothing open"
 
-    # The same shape the morning brief gives the same file: each bullet through
-    # `split_link` -> `claim`, so a trailing permalink renders as `(link)` and an
-    # item without one is admitted as unsourced - which is what lets the shared
-    # `brief.unsourced_claims` check see this loop's output at all. Hand-rolled
-    # `f"- {line}"` bullets were a second format for one list.
-    sections = [brief.Section("chase list", tuple(brief.line_from_state(b) for b in lines))]
+    verdicts = closure.judge(asks, fetched, principal=principal)
+    established = closure.Closure(tuple(verdicts))
+    sections: list[brief.Section] = []
+    for name in ("Chase list", "Owed by you", "Pending decisions"):
+        sections += closure.render_closure(verdicts, section=name)
+    unreachable: list[str] = []
+    if fetched is None and established.read_nothing:
+        # Not one thread was read. Say so once, up top, rather than letting
+        # three "couldn't verify" buckets stand in for the reads that were
+        # skipped - the plan named them, and skipping them is the bug.
+        unreachable.append("the replies - no `closure` payload, so nothing here is verified")
 
     # Items the log is carrying that the file has not got to yet. `_visible`
     # is the ONE gate on sensitivity and it lives in `state`; this reads what
@@ -607,7 +670,9 @@ def _chase(folder: StateFolder | None, log: EventLog | None) -> str:
                     ),
                 )
             )
-    return brief.render_push(f"owed to you ({len(lines)})", sections, ())
+    return brief.render_push(
+        f"open loops - {established.open_count} open, verified", sections, unreachable
+    )
 
 
 def _ingest(sources: _Payloads) -> str:
@@ -816,7 +881,12 @@ def render(
                 return "shipped: couldn't check - no pulse was built"
             return pulse.render()
         if loop == "chase":
-            return _chase(folder, events)
+            return _chase(
+                folder,
+                events,
+                fetched=payloads.get("closure"),
+                principal=identities.get("SLACK_USER_PRINCIPAL", ""),
+            )
         if loop == "ingest":
             return _ingest(sources)
         if loop == "prep":
