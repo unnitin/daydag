@@ -40,6 +40,7 @@ artifact is the load-bearing rule; the rest is plumbing.
 | `ledger` | Calendar-driven meeting rows, so a meeting that produced **no** notes is visible |
 | `pulse` | Repo state: local mirrors for history, API for review state |
 | `board` | Board state: Jira deltas and the ticket-key join, read never driven |
+| `closure` | Open is a verdict, not a default: the reply under every ask is read before the ask is reported open |
 | `vault` | Targeted line edits to a note, with an iCloud-aware compare-and-swap |
 | `voice` | The house voice as assertions, and the templates for every push |
 | `smoke` | One pre-flight pass over every source: reached, skipped, or never connected |

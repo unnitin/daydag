@@ -91,6 +91,8 @@ This loop is what keeps the agent's model of the world current without Nitin fee
 
 Scans the chase list: any ask or question with no responsive activity for **2 business days** (configurable per owner/urgency) surfaces in a DM with the original quote + permalink and a pre-drafted nudge in his voice ("hey - circling back on the compute-engine consolidation, is that on the board or should we make a ticket? lmk"). One tap to approve → posted as him via draft flow; ignore → re-raised in 2 more days, then parked with a flag in the weekly note.
 
+**Open is a verdict, not a default.** An item is reported open only after the conversation after the ask and the thread under it have been read *in that run*; one not read renders as "couldn't verify", never as open. The same rule covers the inverse list - `Owed by you`, `promises you made`, pending decisions - where the closing signal is his own reply. `daydag.closure` is the mechanical form: `plan chase` names the reads, `render chase` sorts each line into open / answered / unverified, and an answered item carries the closing message's quote and permalink for him to strike (it is surfaced, not resolved - principle 5). Added after 2026-09-18, when three items were reported open that he had answered in-thread.
+
 Detection sources: thread replies on the original message, mentions of the owner + topic keywords, and engineering-pulse evidence (§3.7) when the ask references a ticket key, PR, or repo — Jira status/assignee changes for the data team, GitHub PR/board activity elsewhere. A nudge for an ask that already has a ticket carries the key and current status rather than asking "is that on the board?" again.
 
 ### 3.5 EOD wrap — 4:30pm PT
