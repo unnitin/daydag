@@ -172,7 +172,7 @@ what gives a stacked PR CI (CONTRIBUTING, "Branches").
 | 4 | `chore/simplify-04-sources` | one `judge` behind `qualifies`/`part_of_the_week` (#110); one name-token rule in `ledger` for the selector and the directory; `payloads` folded into `recipes` and `run` reads records through it; `config.path_from` replaces the env-path readers; the pulse cites GitHub commit URLs (#139) and loses its fault-injection hook | −250 | medium - mirror tests run real `git clone --mirror`; keep them |
 | 5 | `chore/simplify-05-observe` | `observe.py` (smoke + runlog, one `Result` from probe to projection); the run-log line written into State.md (SPEC 7); `registry` absorbs `manifests`; `delivery` and the runner build rows from `Result`; `cli.py` argparse behind the four entries (#117, #126); seven unmarked duplicates of guardrail tests deleted | −350 | medium - the run-log tests derive their rows from the pre-flight, which is why it stays |
 | 6 | `chore/simplify-06-prose` | docstring pass: a contract a test pins becomes one line and the test's name; calibration facts to `reference/meeting-ledger.md`, `reference/sensitivity.md`, `reference/state-incidents.md`; connector numbers already in `reference/connector-audit.md` become pointers; `USING IT` blocks kept | −1,600 prose | low - `test_docstring_examples` catches a broken example |
-| 7 | `chore/simplify-07-docs` | README absorbs USAGE; SPEC absorbs BUILD's status table; ARCHITECTURE keeps ownership, invariants and seams; SKILL.md loses the documentation-about-DayDAG its own README says it should not carry; `build_docs.REQUIRED_DOCS` updated | −700 doc lines | low |
+| 7 | `chore/simplify-07-docs` | README absorbs USAGE and BUILD's status; `build_docs.REQUIRED_DOCS` updated; the last stale module names in ARCHITECTURE and `reference/` fixed | −180 doc lines | low |
 
 Order matters: 1 is pure deletion and the biggest single win, so it goes
 first and alone; 2 before 3 because the loops read the state through the
@@ -200,8 +200,9 @@ otherwise and the PR follows that.
 - **D4 Monday prep queue** - decided 2026-09-18: keep and render it. SPEC
   §3.6 rule 2 asks for it, the code works, and only the last line (discarding
   the object) was missing. PR 3 renders it as a section of the week-ahead push.
-- **D5 `BUILD.md` and `USAGE.md`** - fold into README and SPEC (recommended).
-  Alternative: keep both and only fix the stale claims.
+- **D5 `BUILD.md` and `USAGE.md`** - decided 2026-09-18: folded into README.
+  BUILD's status table is README's "what actually works today"; its milestone
+  tables were the tracker's already.
 
 ## 7. What was verified by hand, and what was not
 
@@ -216,3 +217,34 @@ duplications in §1 (the functions were confirmed, the ranges were not
 re-read), the per-PR line estimates (they are estimates), and the claim
 that `test_guardrails.py` duplicates ~220 lines of module tests. Each PR
 re-checks what it touches.
+
+## 8. Outcome, 2026-09-18
+
+Measured on the stack's last branch against the `pre-simplification` tag.
+
+| | tag | after PR 7 |
+|---|---|---|
+| modules | 24 | 22 |
+| source lines | 12,199 | 10,793 |
+| of which code | 4,992 | 4,669 |
+| of which docstrings + comments | 5,225 | 4,351 |
+| test lines | 15,900 | 15,834 |
+| docs (README + USAGE + BUILD) | 427 | 211 |
+
+The source did not halve; §3's estimate assumed the prose pass would cut
+most of the 42%, and it did not, on purpose: CONTRIBUTING says keep the
+reasoning, and the pass kept it, removing only what was said twice. The
+consolidations §1 listed are all done - every duplication in that list is
+one thing now - and the capabilities §2 listed all work from the same
+commands, two of them (`ship` from the CLI, the Monday prep queue) for the
+first time.
+
+Kept against the plan, each for its ticket: `vault.py` as the one write path
+(#16), `people.py` as its own module, `prep.Schedule` (#25), the ledger's
+reingest queue (#17), the pre-flight pass in `observe` (#25, and the run-log
+tests derive their rows from it), and `soak.py`, which is live.
+
+Tickets settled by the stack: #145 filed (M4-7); D-3 (#30) and D-5 (#62)
+closed by practice; #109, #110, #115, #117, #124, #126, #138, #139 closed
+by PRs; #16, #17, #22, #25, #27, #88, #112 carry a pointer to where their
+code now lives.
