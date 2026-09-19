@@ -89,7 +89,7 @@ the same output shape. The parity check in §4 is what proves it.
 |---|---|---|
 | morning brief | `run plan/render morning` | same |
 | EOD wrap | `run plan/render eod` | same |
-| Sunday week-ahead | `run plan/render week-ahead` | same, minus a Monday prep queue that never rendered (decision D4) |
+| Sunday week-ahead | `run plan/render week-ahead` | same, plus the Monday prep queue it computes and today discards (PR 3 renders it) |
 | prep, named or next | `run plan/render prep [--for]` | same |
 | ingest | `run plan/render ingest` | same |
 | chase, with closure reads | `run plan/render chase` | same |
@@ -104,7 +104,7 @@ The house rules are untouched: one writer per artifact, evidence or silence,
 surface don't resolve, sensitivity never reaches the vault, the event log
 outside the vault, Jira read-only, bounded queries, id-scoped Slack search.
 
-## 3. Target shape - 25 modules to 16
+## 3. Target shape - 25 modules to 17
 
 | after | from | holds |
 |---|---|---|
@@ -113,10 +113,11 @@ outside the vault, Jira read-only, bounded queries, id-scoped Slack search.
 | `push.py` | `brief` primitives + `voice` | `Section`, `claim`, `render_push`, `Reader`, red items, overlap clusters, `unsourced_claims`, `clipped`, `WARN`, one `Push`, one `PushError` |
 | `loops.py` | `brief` body + `eod_wrap` + `week_ahead` + `run._chase/_ingest/_prep` | one `Loop` descriptor (windows, needs_ledger, assemble) and the seven bodies sharing prologue helpers |
 | `run.py` | `run` | plan, render, the payload adapter. No loop bodies |
-| `prep.py` | `prep` + `prep_selector` | qualification, selection, the ping. `Schedule`/`due_at` gone until #25 |
-| `closure.py` | `closure` | plan the reads, judge, render. Vault reading moves to `statedoc` |
-| `statedoc.py` | `state` (folder half) + `vault` (atomic write) | `StateDoc`/`Block`/`StateFolder`/`update_state`; one parser, `Block.body()`, `StateDoc.asks()`; the write is atomic and refuses a placeholder |
-| `eventlog.py` | `state` (log half) | `EventLog`, one decoder, `classify_sensitivity`, `record_fetch`/`last_fetch` |
+| `prep.py` | `prep` + `prep_selector` | qualification, selection, the timed-ping window (`Schedule`, kept for #25), the ping |
+| `closure.py` | `closure` | plan the reads, judge, render. Reads the vault through `StateDoc` |
+| `statedoc.py` | `state` (folder half) | `StateDoc`/`Block`/`StateFolder`/`update_state`; one parser, `Block.body`/`link`/`struck`, `StateDoc.blocks_in`; writes through `vault` |
+| `eventlog.py` | `state` (log half) | `EventLog`, one decoder, `record_fetch`/`last_fetch` |
+| `vault.py` | `vault` | how bytes reach the vault safely: atomic write, placeholder refusal, compare-and-swap line edits - the one write path, used by `statedoc` now and by #16's write-back later |
 | `meetings.py` | `ledger` + `people` | rows, one `qualifies(for_week=)`, notes gaps, the directory folded from the same attendee parse |
 | `ingestion.py` | `ingestion` + `evalset` vocabularies | the classifier and its three vocabularies. `load_items`/`score` move to `tests/evalset.py` |
 | `evidence.py` | `pulse` | mirrors, the join, one watchlist parser, one `apply_evidence`. `board` retired until M2-4 wires it |
@@ -165,7 +166,7 @@ what gives a stacked PR CI (CONTRIBUTING, "Branches").
 |---|---|---|---|---|
 | 0 | `chore/simplify-00-plan` | this document | 0 | none |
 | 1 | `chore/simplify-01-retire` | tag `pre-simplification`; delete `board.py`, the `gh_*` builders, the runlog projection half, `DecisionQueue`, the ledger backfill path, `prep.Schedule`/`due_at`, the Monday prep chain, `evalset`'s test-only half (to `tests/`), `people`'s unread fields; add the golden renders; fix the three stale doc claims | −2,300 (−1,500 tests) | low - deletions of unreached code, no behaviour change |
-| 2 | `chore/simplify-02-state` | `state.py` → `statedoc.py` + `eventlog.py`; one parser, one decoder; `vault`'s atomic write and placeholder refusal move into the writer, rest of `vault.py` retired (decision #24 recorded); `StateDoc.asks()` replaces `closure.asks_in`'s block walk; one `line_from_state` | −900 | medium - the round-trip and sensitivity guardrails are the safety net |
+| 2 | `chore/simplify-02-state` | `state.py` → `statedoc.py` + `eventlog.py`; one State.md reader (`Block`), one log decoder; State.md written through `vault`'s atomic writer and read through its placeholder check; `closure` reads the vault through `StateDoc`; one `line_from_state` | −300 | medium - the round-trip and sensitivity guardrails are the safety net |
 | 3 | `chore/simplify-03-loops` | `push.py` + `loops.py`; `run.py` keeps plan/render only; `prep` absorbs `prep_selector`; `main` gains `--mirrors` so `ship` works; window arithmetic lives once (#109, #111) | −1,000 | medium - `test_plan_feeds_render` parametrises over every loop |
 | 4 | `chore/simplify-04-sources` | `meetings.py` (ledger + people, one qualifier, #110); `evidence.py` (pulse, one watchlist parser, one evidence rule); `connectors.py` (recipes + payloads, `run` adopts `records()`); `config.path_from`/`host_from` | −700 | medium - mirror tests run real `git clone --mirror`; keep them |
 | 5 | `chore/simplify-05-observe` | `observe.py` (smoke + runlog + soak, one `Row`); `registry` absorbs `manifests`; `delivery` trimmed to the guardrail shape; `cli.py` argparse (#117, #126); the ~220 duplicated guardrail lines deleted, scanners re-pointed | −900 (−600 tests) | medium - the module-scoped "no function takes a Draft and a Transport" assertion must move with `draft` |
@@ -187,17 +188,17 @@ otherwise and the PR follows that.
   (recommended: it is unreached, BUILD.md already lists it as not built, and
   `connectors.jira_search` keeps the bound). Alternative: merge into
   `evidence.py` now, −450 instead of −974.
-- **D2 `vault.py`** - move the atomic write and placeholder refusal into the
-  State.md writer and retire the line-splicing/CAS half (recommended: it
-  closes a real gap in the live writer and keeps the guardrails that matter).
-  Alternative: keep whole, still unwired.
+- **D2 `vault.py`** - decided 2026-09-18: wire it. `vault` stays as the one
+  write path (atomic write, placeholder refusal, compare-and-swap line edits);
+  `statedoc` writes State.md through it in PR 2, and #16's write-back uses the
+  line edits later.
 - **D3 `delivery.py`** - keep, trimmed to the shape the guardrails inspect
   (recommended: it is the only executable statement of "one autonomous
   channel" and the AST tripwire alone is weaker). Alternative: delete with
   its 25 tests and 8 guardrail sections.
-- **D4 Monday prep queue** - delete (recommended: computed and discarded
-  since it was written). Alternative: wire it into the week-ahead push,
-  which is new behaviour, not simplification.
+- **D4 Monday prep queue** - decided 2026-09-18: keep and render it. SPEC
+  §3.6 rule 2 asks for it, the code works, and only the last line (discarding
+  the object) was missing. PR 3 renders it as a section of the week-ahead push.
 - **D5 `BUILD.md` and `USAGE.md`** - fold into README and SPEC (recommended).
   Alternative: keep both and only fix the stale claims.
 

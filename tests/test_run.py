@@ -22,7 +22,7 @@ import pytest
 
 from daydag import brief, run
 from daydag.config import Identities
-from daydag.state import StateFolder
+from daydag.statedoc import StateFolder
 
 MONDAY = datetime(2026, 9, 7, 6, 40, tzinfo=UTC)
 
@@ -745,7 +745,7 @@ def test_a_shaped_attendee_does_not_break_the_ping_rules(identities):
 def test_a_named_prep_does_not_persist_the_week_it_fetched(identities, tmp_path):
     """A prep is a question, not a day's seeding. Remembering its seven fetched
     days made a meeting cancelled after the snapshot a permanent notes gap."""
-    from daydag.state import EventLog
+    from daydag.eventlog import EventLog
 
     log = tmp_path / "events.db"
     payloads = _payloads(
@@ -869,7 +869,8 @@ def test_ingest_lines_are_bulleted_like_every_other_section(identities):
 def test_a_carried_chase_item_keeps_its_quote_and_permalink(identities, tmp_path):
     """House rule 1. Bare `owner: ask` dropped both, and was invisible to
     `brief.unsourced_claims` for want of a bullet."""
-    from daydag.state import EventLog, StateFolder
+    from daydag.eventlog import EventLog
+    from daydag.statedoc import StateFolder
 
     folder = StateFolder.create(tmp_path / "vault" / "DayDAG")
     folder.update_state(chase=[{"owner": "VP-Data", "ask": "the compute plan"}])
@@ -927,8 +928,8 @@ def test_a_room_never_reaches_the_stored_attendees(identities):
 
 
 def test_a_past_meeting_teaches_the_directory_and_a_future_one_does_not(identities, tmp_path):
+    from daydag.eventlog import EventLog
     from daydag.people import People
-    from daydag.state import EventLog
 
     log = tmp_path / "events.db"
     payloads = _payloads(

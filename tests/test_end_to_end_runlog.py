@@ -34,9 +34,10 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from daydag import smoke
+from daydag.eventlog import EventLog
 from daydag.pulse import Mirror, Pulse
 from daydag.runlog import FAILURE_LIMIT, RUN, UNCHECKED, RunLog, RunRow
-from daydag.state import EventLog, StateFolder
+from daydag.statedoc import StateFolder
 
 PT = timezone(timedelta(hours=-7))
 #: 6:40am PT: the pre-brief slot, which is the run whose absence gets noticed.

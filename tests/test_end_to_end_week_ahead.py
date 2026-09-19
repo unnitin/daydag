@@ -25,8 +25,9 @@ import subprocess
 from datetime import datetime, timedelta, timezone
 
 from daydag import brief, week_ahead
+from daydag.eventlog import EventLog
 from daydag.pulse import Mirror, Pulse
-from daydag.state import EventLog, StateFolder
+from daydag.statedoc import StateFolder
 from daydag.voice import voice_violations
 
 PT = timezone(timedelta(hours=-7))

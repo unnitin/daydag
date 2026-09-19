@@ -76,12 +76,12 @@ from datetime import date, datetime, timedelta
 from typing import Any
 
 from daydag import recipes
-from daydag.brief import UNSOURCED, Section, Sources, overlap_clusters, red_items
+from daydag.brief import UNSOURCED, Section, Sources, line_from_state, overlap_clusters, red_items
 from daydag.ledger import Ledger, part_of_the_week
 from daydag.prep import Audience, Reason, SourcePlan, prep_worthy
 from daydag.prep import sources as build_source_plan
 from daydag.pulse import Pulse
-from daydag.state import StateFolder, read_section, split_link
+from daydag.statedoc import StateDoc, StateFolder
 from daydag.voice import Push, render
 
 __all__ = [
@@ -211,11 +211,6 @@ def _claim(text: str, *permalinks: str | None) -> str:
     if not links:
         return f"- {text} ({UNSOURCED})"
     return "- " + text + "".join(f" ({link})" for link in links)
-
-
-def _line_from_state(body: str) -> str:
-    text, link = split_link(body)
-    return _claim(text, link)
 
 
 # --------------------------------------------------------------------------
@@ -478,12 +473,12 @@ def assemble(
     # -- chase + watch, read out of the file he corrects by hand -------------
     watch_lines: list[str] = []
     if state is not None:
-        written = read("the chase list", state.read_state, "")
+        doc = StateDoc.parse(read("the chase list", state.read_state, ""))
         carrying += [
-            _line_from_state(body) for body in read_section(written, "Chase list", top_level=True)
+            line_from_state(block) for block in doc.blocks_in("Chase list") if not block.struck
         ]
         watch_lines = [
-            _line_from_state(body) for body in read_section(written, "Watch items", top_level=True)
+            line_from_state(block) for block in doc.blocks_in("Watch items") if not block.struck
         ]
 
     if carrying:

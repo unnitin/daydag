@@ -18,8 +18,8 @@ from datetime import date
 
 import pytest
 
+from daydag.eventlog import EventLog
 from daydag.soak import REQUIRED_DAYS, Soak
-from daydag.state import EventLog
 
 MON = date(2026, 9, 14)
 

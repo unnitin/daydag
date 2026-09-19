@@ -29,7 +29,7 @@ from datetime import datetime, timedelta, timezone
 from daydag import prep
 from daydag.config import Identities
 from daydag.ledger import Ledger, Match
-from daydag.state import StateFolder
+from daydag.statedoc import StateFolder
 from daydag.voice import Push, voice_violations
 
 PT = timezone(timedelta(hours=-7))

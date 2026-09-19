@@ -285,7 +285,7 @@ def test_closure_knows_when_the_run_skipped_every_read():
 
 @pytest.fixture
 def vault(tmp_path):
-    from daydag.state import StateFolder
+    from daydag.statedoc import StateFolder
 
     env = tmp_path / ".env"
     env.write_text(

@@ -428,7 +428,7 @@ def test_ingestion_writes_nothing_to_the_vault(tmp_path, monkeypatch):
 
 @pytest.mark.guardrail
 def test_ingestion_module_imports_no_vault_or_state_write_surface():
-    """TRIPWIRE. `daydag.vault` and `daydag.state` are where a write to the
+    """TRIPWIRE. `daydag.vault`, `daydag.statedoc` and `daydag.eventlog` are where a write to the
     vault or the event log would come from. Neither is imported here, and this
     fails loudly the day one is - the fix is to move the write into #16, not to
     import it here."""
@@ -439,7 +439,7 @@ def test_ingestion_module_imports_no_vault_or_state_write_surface():
             imported.update(alias.name for alias in node.names)
         elif isinstance(node, ast.ImportFrom) and node.module:
             imported.add(node.module)
-    banned = {"daydag.vault", "daydag.state"}
+    banned = {"daydag.vault", "daydag.statedoc", "daydag.eventlog"}
     hit = imported & banned
     assert not hit, f"ingestion.py imports a write surface: {hit}"
 

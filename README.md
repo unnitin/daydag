@@ -36,11 +36,12 @@ artifact is the load-bearing rule; the rest is plumbing.
 | `config` | Identifiers resolved from a local `.env`. This repo is public; nothing real is committed |
 | `registry` | The ownership table as startup checks — two writers to one artifact is an error, not a convention |
 | `manifests` | Reads the `daydag:` block out of every `.claude/skills/*/SKILL.md`, so those checks run over what ships |
-| `state` | The `DayDAG/` vault folder and the SQLite event log. Two stores, opposite requirements |
+| `statedoc` | The `DayDAG/` vault folder: State.md as a document, the sensitivity gate, the one State.md reader every push shares |
+| `eventlog` | The SQLite event log outside the vault: every transition, the meeting ledger, the sensitive partition |
 | `ledger` | Calendar-driven meeting rows, so a meeting that produced **no** notes is visible |
 | `pulse` | Repo state: local mirrors for history, API for review state |
 | `closure` | Open is a verdict, not a default: the reply under every ask is read before the ask is reported open |
-| `vault` | Targeted line edits to a note, with an iCloud-aware compare-and-swap |
+| `vault` | How bytes reach the vault safely: atomic writes, placeholder refusal, an iCloud-aware compare-and-swap for line edits |
 | `voice` | The house voice as assertions, and the templates for every push |
 | `smoke` | One pre-flight pass over every source: reached, skipped, or never connected |
 | `runlog` | One row per run in the event log, so a brief that never arrived can still be explained |

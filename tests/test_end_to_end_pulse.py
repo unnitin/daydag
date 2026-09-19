@@ -19,8 +19,9 @@ from datetime import UTC, datetime
 
 import pytest
 
+from daydag.eventlog import EventLog
 from daydag.pulse import Item, MirrorStore, Pulse, WatchedRepo, read_watchlist
-from daydag.state import EventLog, StateFolder
+from daydag.statedoc import StateFolder
 
 FRIDAY = datetime(2026, 9, 4, 6, 40, tzinfo=UTC)
 MONDAY = datetime(2026, 9, 7, 6, 40, tzinfo=UTC)

@@ -85,6 +85,7 @@ from __future__ import annotations
 
 import ast
 import inspect
+import os
 import re
 import subprocess
 from datetime import UTC, datetime
@@ -93,9 +94,10 @@ from pathlib import Path
 import pytest
 
 from daydag import delivery
+from daydag.eventlog import EventLog
 from daydag.pulse import Item, Mirror, Pulse
 from daydag.registry import PRIVATE_SURFACES, Registry, RegistryError
-from daydag.state import EventLog, NotesGap, StateFolder
+from daydag.statedoc import NotesGap, StateFolder
 from daydag.voice import Push
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -425,6 +427,7 @@ def test_a_loop_rewrites_no_vault_file_but_state_md_and_only_with_its_old_text_k
     truncated: list[Path] = []
     real_write_text = Path.write_text
     real_open = Path.open
+    real_replace = os.replace
 
     def spy_write_text(self: Path, *args, **kwargs):
         truncated.append(Path(self))
@@ -435,9 +438,16 @@ def test_a_loop_rewrites_no_vault_file_but_state_md_and_only_with_its_old_text_k
             truncated.append(Path(self))
         return real_open(self, mode, *args, **kwargs)
 
+    def spy_replace(src, dst, *args, **kwargs):
+        # The atomic writer never opens the destination: it writes a temp file
+        # and renames it over the target. The rename IS the overwrite.
+        truncated.append(Path(dst))
+        return real_replace(src, dst, *args, **kwargs)
+
     folder = StateFolder.create(tmp_path / "DayDAG")
     monkeypatch.setattr(Path, "write_text", spy_write_text)
     monkeypatch.setattr(Path, "open", spy_open)
+    monkeypatch.setattr(os, "replace", spy_replace)
 
     folder.add_decision("draft nudge to the VP? · status: open")
     folder.update_state(
@@ -468,7 +478,7 @@ def test_the_vault_write_path_joins_only_literal_names(tmp_path: Path):
     variable is how a caller-supplied name (a meeting title, a repo name, a
     string from a DM) becomes `../../Weekly Notes/...`, which issue #23 forbids.
     """
-    source = PACKAGE / "state.py"
+    source = PACKAGE / "statedoc.py"
     tree = ast.parse(source.read_text(encoding="utf-8"))
     dynamic = [
         node.lineno
@@ -480,7 +490,7 @@ def test_the_vault_write_path_joins_only_literal_names(tmp_path: Path):
         and not (isinstance(node.right, ast.Constant) and isinstance(node.right.value, str))
     ]
     assert not dynamic, (
-        f"state.py:{dynamic} joins a non-literal onto the vault root. A "
+        f"statedoc.py:{dynamic} joins a non-literal onto the vault root. A "
         "caller-supplied name must be validated against a fixed set of file "
         "names before it can address anything under the vault."
     )
