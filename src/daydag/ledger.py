@@ -4,7 +4,7 @@ USING IT
     ledger = Ledger()
     ledger.seed_day(events)             # every qualifying event gets a row
     ledger.offer_note(note)             # -> Match; attaches to a row
-    ledger.notes_gaps()                 # meetings that produced NO notes
+    ledger.notes_gaps(as_of=now)        # meetings that produced NO notes
     ledger.ambiguous()                  # note matched >1 row, needs a human
     ledger.close_day()
 
@@ -15,16 +15,15 @@ CONTRACTS
     1. Calendar is the DRIVER. Seed rows first; a note is only ever attached to
        a row that already exists. Ingestion driven by arriving notes cannot
        notice the note that never came, which is the whole point.
-    2. Qualification disqualifies on `response_status == "declined"` only. It
-       does NOT require `accepted` - about 70% of real invites are never
-       answered, and requiring it dropped 61% of real meetings silently.
+    2. Qualification disqualifies on `response_status == "declined"` only, never
+       on a missing `accepted` - see `DISQUALIFYING_RESPONSES` for what
+       requiring one cost.
     3. An ambiguous match is SURFACED, never guessed. Back-to-back 1:1s with
        the same person are the case that produces one.
     4. A calendar event may DECLARE its note (`notes_attached`), and that beats
-       every heuristic here: it is the source stating the fact rather than this
-       module inferring it from a title and a time window. Matching still runs,
-       because the gap list is not the only consumer - ingestion wants the note
-       itself - but a declared row is never reported as missing.
+       every heuristic here: the source stating the fact, not this module
+       inferring it from a title and a time window. Matching still runs, because
+       ingestion wants the note itself, but a declared row is never a gap.
 
 WHY IT EXISTS
     The gap this closes is an absence, not a presence. Gemini mail puts the
@@ -50,18 +49,19 @@ from typing import Any
 #: WROTE them. Source-dependent by necessity: one constant would either reject
 #: every real Notion note or accept a Gemini note from two meetings later.
 #:
-#: Measured across 49 real Gemini notes: delivery is tight (median 5 min, p90
-#: 19, max 94 from generation to inbox) but GENERATION runs late, and a Sep 10
-#: 11:00-12:00 meeting was generated at 00:52 the next morning - 12.9 hours out.
-#: Six hours dropped it and the meeting was a gap forever.
+#: Measured across ~100 real Gemini notes: delivery is tight (median 5 min, p90
+#: 19, max 94 from generation to inbox) but GENERATION runs late - a Sep 10
+#: 11:00-12:00 meeting was written up at 00:52 the next morning, 12.9 hours out,
+#: and six hours dropped it forever. So the window is the generation lag, not
+#: the delivery lag (`test_a_note_generated_hours_late_still_attaches`).
 #:
 #: This is now the FALLBACK path. When the calendar declares the note outright
 #: (`notes_attached`, see `Row.notes_declared`) no window is consulted at all.
 #:
-#: Bounded BELOW 24 hours on purpose, and that is the real constraint rather
-#: than a guess: a daily standup has rows 24 hours apart, so a wider window
-#: lets one note match two rows - and an ambiguous note attaches to neither,
-#: which trades a late gap for a lost note.
+#: Bounded BELOW 24 hours on purpose: a daily standup has rows 24 hours apart,
+#: so a wider window lets one note match two rows - and an ambiguous note
+#: attaches to neither, trading a late gap for a lost note
+#: (`test_the_window_stays_short_enough_that_a_daily_standup_is_unambiguous`).
 ARRIVAL_WINDOW = {
     "gemini": timedelta(hours=18),
     "granola": timedelta(hours=6),
@@ -72,17 +72,16 @@ DEFAULT_ARRIVAL_WINDOW = timedelta(hours=6)
 #: How far BEFORE a meeting's scheduled end its notes may still arrive. A
 #: meeting that runs short ends when it ends, and Gemini sends notes then.
 #:
-#: 45, not 30: a real note arrived 37 minutes before its scheduled end
-#: (Discovery Content Discussions, scheduled 10:15-11:00, note at 10:08), so
-#: 30 dropped it. Still far short of a meeting's own length, which is what
-#: keeps it from reaching back into whatever ran before.
+#: 45, not 30: a real note arrived 37 minutes before its scheduled end, so 30
+#: dropped it and the meeting was reported as a gap while its own note was
+#: listed directly above. Still far short of a meeting's own length, which is
+#: what keeps it from reaching back into whatever ran before.
 ENDS_EARLY = timedelta(minutes=45)
 
-#: Gemini's subject line, which the issue #2 audit found to be rigidly
-#: structured: `Notes: "<meeting title>" <date>`. SPEC section 4 claimed the
-#: opposite - that the title lived in the body and the subject was inconsistent -
-#: and every one of 201 notes over 30 days contradicts it. The quotes are the
-#: typographic pair, not ASCII.
+#: Gemini's subject line, which the issue #2 audit found rigidly structured:
+#: `Notes: "<meeting title>" <date>`. SPEC section 4 claimed the opposite - the
+#: title in the body, the subject inconsistent - and all 201 notes over a 30-day
+#: window contradict it. The quotes are the typographic pair, not ASCII.
 _GEMINI_SUBJECT = re.compile(
     r'^Notes:\s*(?:\u201c(?P<curly>[^\u201d]+)\u201d|"(?P<straight>[^"]+)")(?:\s|$)'
 )
@@ -91,9 +90,8 @@ _GEMINI_SUBJECT = re.compile(
 def title_from_gemini_subject(subject: str) -> str | None:
     """The exact meeting title from a Gemini subject, or None if it is not one.
 
-    Returning None rather than a best guess matters: an unparseable subject
-    falls back to fuzzy matching, which knows how to surface an ambiguity.
-    A guess here would look like certainty.
+    None rather than a best guess: an unparseable subject falls back to fuzzy
+    matching, which knows how to surface an ambiguity. A guess looks certain.
     """
     match = _GEMINI_SUBJECT.match(subject or "")
     if not match:
@@ -111,9 +109,8 @@ NON_MEETING_KINDS = frozenset({"ooo", "focus", "hold"})
 #:
 #: Measured over 5 real days (issue #2 connector audit): of 77 calendar events,
 #: 23 were "accepted" but 60 were genuine meetings - most invites are simply
-#: never answered. Requiring "accepted" dropped 61% of them, including standups
-#: with 13 and 21 attendees, and dropped them silently: a meeting with no row
-#: can never be surfaced as a notes gap, so the absence is invisible by design.
+#: never answered. Requiring "accepted" dropped 61% of them, and dropped them
+#: SILENTLY: a meeting with no row can never surface as a notes gap.
 DISQUALIFYING_RESPONSES = frozenset({"declined"})
 
 
@@ -139,10 +136,9 @@ class Row:
     note: Match | None = None
     day_closed: bool = False
     #: Display names, aligned with `attendees`, "" where google gave none. Kept
-    #: APART from the addresses on purpose: every consumer of `attendees` -
-    #: `Audience.has_external`, `has_leadership`, `_score`, the prep selector's
-    #: principal skip - compares bare emails, and a display name folded into
-    #: that string broke all four at once (see `attendee_parts`).
+    #: APART from the addresses: every consumer of `attendees` compares bare
+    #: emails, and a display name folded into that string breaks all of them at
+    #: once - see `attendee_parts`.
     attendee_names: list[str] = field(default_factory=list)
     #: The CALENDAR said a note artifact exists for this instance - Google
     #: attaches the "Notes by Gemini" doc to the event itself. Independent of
@@ -168,12 +164,14 @@ def attendee_parts(attendee: Any) -> tuple[str, str]:
 
     Google's native ``{"email": ..., "displayName": ...}``, RFC-style
     ``"Full Name <addr>"``, or a bare address all come out the same way; the
-    name is ``""`` when there is none. THIS is why the split lives at the seam:
-    a first attempt carried the name inside the attendee string, and every
-    consumer that partitions on ``@`` or compares whole strings - `has_external`
-    read the domain as ``example.com>`` and called every colleague external,
-    `has_leadership` never matched, note-to-meeting attendee overlap went to
-    zero, the principal skip died - broke together. Parse once, compare bare.
+    name is ``""`` when there is none.
+
+    The split lives at this seam because a first attempt carried the name inside
+    the attendee string, and every consumer that partitions on ``@`` or compares
+    whole strings broke together: `prep.Audience.has_external` read the domain as
+    ``example.com>`` and called every colleague external, `has_leadership` never
+    matched, attendee overlap between a note and a meeting went to zero, and
+    prep's principal skip died. Parse once, compare bare.
     """
     if isinstance(attendee, Mapping):
         return str(attendee.get("email", "")).strip(), str(attendee.get("displayName", "")).strip()
@@ -195,19 +193,19 @@ def is_resource(attendee: Any) -> bool:
 
 
 #: Google attaches the Gemini notes doc to the calendar event. Measured as
-#: per-INSTANCE: the "1:1 | 2x weekly" series carries one on the Sep 1
-#: instance, which produced a note, and none on the Sep 10 one, which did not.
+#: per-INSTANCE: one series carries a doc on the instance that produced a note
+#: and none on the instance that did not.
 #:
 #: Identified by this URL marker, which Meet's notetaker puts on the docs it
 #: creates, rather than by the attachment's TITLE. Two reasons, both measured:
 #:
-#: * The title is LOCALIZED. A real event carries both "Notes by Gemini" and
-#:   "Anotacoes do Gemini" - and a meeting run in a pt-BR locale would carry
-#:   only the second. Matching English would report it as a gap forever, and
-#:   this org has a large Brazilian contingent on exactly these invites.
-#: * "Has an attachment" is too loose in the other direction: a Drive RECORDING
-#:   is attached to the series master and shows on every instance, so
-#:   "Data Health Check" carries a 2024 recording on every 2026 occurrence.
+#: * The title is LOCALIZED - a real event carries "Notes by Gemini" and
+#:   "Anotacoes do Gemini" both. Matching English would report a pt-BR meeting
+#:   as a gap forever, and this org has a large Brazilian contingent on exactly
+#:   these invites.
+#: * "Has an attachment" is too loose the other way: a Drive RECORDING hangs off
+#:   the series master and shows on every instance, so one 2024 recording would
+#:   declare a note on every 2026 occurrence.
 #:
 #: A recording's url carries `usp=drive_web` instead, so the marker separates
 #: the two without reading a word of any language.
@@ -222,9 +220,8 @@ def _declares_note(event: Mapping[str, Any]) -> bool:
     """Whether the calendar entry itself says a note artifact exists.
 
     Takes the shaped boolean when the caller supplied one, and otherwise reads
-    Google's raw `attachments` - because the realistic failure here is an agent
-    passing the connector payload through unshaped, and silently losing the
-    signal is exactly the docs-ahead-of-code gap this repo keeps finding.
+    Google's raw `attachments`: the realistic failure is an agent passing the
+    connector payload through unshaped, and losing the signal there is silent.
     """
     if "notes_attached" in event:
         return bool(event["notes_attached"])
@@ -242,12 +239,12 @@ MEETING, NOT_MEETING, UNKNOWN = "meeting", "not a meeting", "unknown"
 def judge(event: Mapping[str, Any]) -> str:
     """One verdict on a calendar entry: MEETING, NOT_MEETING or UNKNOWN (#110).
 
-    `qualifies` and `part_of_the_week` were two predicates over the same
-    four rules with a documented policy difference in two cases, and they
-    drifted. Now both are one-line readings of this: the ledger tracks what
-    is positively a meeting, the week page drops only what is positively
-    not - an UNKNOWN record is kept on the page (losing a real meeting is the
-    failure he cannot notice) and left out of the ledger (nothing to track).
+    `qualifies` and `part_of_the_week` were two predicates over the same rules
+    and they drifted, so both are now one-line readings of this one. The ledger
+    tracks what is positively a meeting; the week page drops only what is
+    positively not - an UNKNOWN record is kept on the page (losing a real
+    meeting is the failure he cannot notice) and left out of the ledger
+    (nothing to track).
 
     * declined, or a non-meeting kind (OOO, focus, hold) - NOT_MEETING
     * two or more people once rooms are filtered - MEETING
@@ -303,8 +300,7 @@ def name_tokens(address: str, name: str = "") -> set[str]:
     display name, domain discarded - every colleague shares the domain, so a
     selector or a directory lookup that hit it would match everybody.
 
-    One rule for the prep selector and the people directory, which each had
-    their own copy."""
+    One rule for `prep` and `people`, which each had their own copy."""
     return tokens(str(address).split("@", 1)[0]) | tokens(name)
 
 
@@ -325,9 +321,9 @@ class Ledger:
                 continue
             # The one place an attendee is parsed. Everything downstream reads
             # `attendees` as bare addresses and `attendee_names` beside them.
-            # Rooms filtered HERE, not only in the qualifying count: stored, a
-            # room's resource.calendar.google.com domain read as an outside
-            # party to has_external and as the second person of a "1:1".
+            # Rooms are filtered HERE, not only in the qualifying count: stored,
+            # a room reads as an outside party to `has_external` and as the
+            # second person of a "1:1".
             parts = [
                 attendee_parts(a) for a in (event.get("attendees") or []) if not is_resource(a)
             ]
@@ -387,25 +383,11 @@ class Ledger:
     def _in_window(self, row: Row, note: Match) -> bool:
         """Whether ``note`` arrived close enough to ``row`` ending to be its own.
 
-        The lower bound is the SCHEDULED end minus `ENDS_EARLY`, not the
-        scheduled end itself. Meetings finish early and Gemini sends notes when
-        the meeting actually ends, so a strict `row.end <= arrived` dropped
-        notes that arrived first: a real Friday had "Discovery Content
-        Discussions" scheduled 10:15-11:00 with its note at 10:48, and the
-        brief reported it as a meeting with no notes while listing its note in
-        the section directly above.
-
-        Bounded rather than open: a note arriving long before a meeting ends
-        belongs to something else. `ENDS_EARLY` is 45 minutes, measured rather
-        than chosen - a real note landed 37 minutes before its meeting's
-        scheduled end, so half an hour was not enough.
-
-        The upper bound is per-source and much wider, because the lag is not
-        delivery. Measured across ~100 real notes: generation-to-inbox runs 2
-        to 94 minutes, while meeting-end-to-generation has a long tail - one
-        Sep 10 meeting was written up at 00:52 the next morning, 12.9 hours
-        after it ended, and delivered four minutes later. See `ARRIVAL_WINDOW`,
-        which also carries why the window stays under 24 hours.
+        Both bounds are wider than "between the end and the end plus a lag"
+        looks. The lower one is the SCHEDULED end minus `ENDS_EARLY`, because
+        meetings finish early and Gemini sends notes when the meeting actually
+        ends; the upper one is per-source and much wider, because what runs late
+        is generation, not delivery. Each constant carries its measurement.
         """
         window = ARRIVAL_WINDOW.get(note.source, DEFAULT_ARRIVAL_WINDOW)
         return row.end - ENDS_EARLY <= note.arrived <= row.end + window
@@ -413,10 +395,9 @@ class Ledger:
     def offer_note(self, note: Match) -> Row | None:
         """Attach a note to the row it belongs to, or surface that it is unclear.
 
-        Two near-identical back-to-back 1:1s is the case that breaks naive
-        matching, and it is common. When the best two candidates are
-        indistinguishable the note attaches to neither - invariant 5 says
-        surface, do not resolve.
+        When the best two candidates are indistinguishable - two back-to-back
+        1:1s with the same person, which is common - the note attaches to
+        neither. Invariant 5 says surface, do not resolve.
         """
         exact = self._exact_title_match(note)
         if exact is not None:
@@ -470,10 +451,9 @@ class Ledger:
         notes" line, which is how a missing note becomes visible at all.
 
         A row whose calendar entry DECLARES a note is never a gap, even with
-        nothing ingested yet. Google attaches the notes doc to the event, so
-        the source states the fact the arrival window was reconstructing by
-        guesswork - and states it as soon as the meeting ends rather than
-        whenever the mail happens to land.
+        nothing ingested yet: the source states the fact `ARRIVAL_WINDOW` was
+        reconstructing, and states it when the meeting ends rather than whenever
+        the mail lands.
         """
         return [
             row.summary for row in self.open_rows() if row.end < as_of and not row.notes_declared

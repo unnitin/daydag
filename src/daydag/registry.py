@@ -9,7 +9,7 @@ USING IT
     registry.schedule()                     # -> {skill: cron-ish string}
     registry.producers_for(skill)           # who emits what it consumes
 
-    python -m daydag.registry               # the ownership table and schedule, from disk
+    python -m daydag.registry [skills_dir]   # the ownership table and schedule
 
     A manifest is the `daydag:` block of a skill's SKILL.md frontmatter:
 
@@ -31,11 +31,12 @@ CONTRACTS
        it counts as an audience.
 
 WHY IT EXISTS
-    ARCHITECTURE states one-writer-per-artifact as invariant 1, and notes that
-    an invariant enforced by documentation has a half-life: the next skill gets
-    written by someone who never read the table. This turns the table into
-    startup checks, so a second writer is a loud failure rather than a
-    corrupted file discovered on a Friday.
+    ARCHITECTURE states one-writer-per-artifact as invariant 1, and an invariant
+    enforced by documentation has a half-life: the next skill gets written by
+    someone who never read the table. This turns the table into startup checks,
+    so a second writer is a loud failure rather than a corrupted file discovered
+    on a Friday. Reading the manifests off disk is the second half, below, and
+    was its own module until the two halves were only ever used together.
 """
 
 from __future__ import annotations
@@ -169,8 +170,8 @@ class Registry:
 
 # ---------------------------------------------------------------------------
 # reading manifests off disk - the step that makes the checks real. Validation
-# is STRICT (an unknown key or sensitivity is an error, because both failures
-# are silent otherwise), artifact ids stay literal, and ids match exactly.
+# is STRICT: an unknown key or an unknown sensitivity is an error, because both
+# failures are silent otherwise. Artifact ids stay literal and match exactly.
 # ---------------------------------------------------------------------------
 
 #: The file a skill directory must contain to be one.

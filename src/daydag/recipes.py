@@ -2,15 +2,14 @@
 
 USING IT
     calendar_day(day)                       # ONE day. Never a week - see 1
+    loop_windows("morning", day)            # the days ONE loop reads
     slack_overnight(now, mentioning=principal, identities=ids, since_hour=17)
     gmail_gemini_notes(after=day, before=day)   # from:GEMINI_SENDER + label
     jira_jql(["PROJ"], updated_within_days=14)  # bounded fields and results
-    gh_open_prs(repo)
-    gh_pr_checks(repo, 42)
-    gh_recent_runs(repo, branch="main")
-    vault_path(ids, "Weekly Notes", weekly_note(day))
+    vault_relative(WEEKLY_NOTES, "0817-0821.md")
     week_range(day), week_label(day), next_week_label(day)
     title_from_gemini_subject(subject)
+    records(payload), has(record, "ts"), error_text(payload)   # the read side
 
 CONTRACTS
     1. Calendar is queried DAY BY DAY. One 5-day pull returned 156,681 chars
@@ -18,7 +17,7 @@ CONTRACTS
     2. Jira always names `fields` explicitly and bounds `maxResults`. Never
        `*all`: a 14-day 4-project query with unbounded fields returned 125,231
        chars. `JIRA_MAX_RESULTS_CAP` and `GH_LIMIT_CAP` are the caps, and
-       `smoke` builds its reported bounds FROM them.
+       `observe` builds its reported bounds FROM them.
     3. Slack is addressed by ID, never display name. `from:@someone` does not
        fail, it silently matches nothing.
     4. Gmail matches the SUBJECT: `Notes: "<title>" <date>`, plus the
@@ -27,10 +26,14 @@ CONTRACTS
        body, and it resolves the back-to-back-1:1 ambiguity body matching
        cannot.
     5. Nothing here performs I/O. Pure functions from parameters to a query
-       string or a parameter dict - which is what makes the part that must be
-       right checkable without a connector.
+       string or a parameter dict, and from a returned payload to the records
+       inside it - which is what makes the part that must be right checkable
+       without a connector.
     6. A recipe RAISES (`RecipeError`) rather than returning a best-effort
        query, because every failure it guards is silent at the connector.
+    7. Both halves of the connector edge live here: the query going out, and
+       `records`/`has`/`error_text` reading what comes back. They are one
+       concept - what this codebase believes a source looks like.
 
 WHY IT EXISTS
     Every loop asks the same handful of questions of the same six sources.
@@ -179,7 +182,7 @@ class DayWindow:
     """One local day, half-open: ``[midnight, next midnight)``.
 
     Half-open rather than ``23:59:59`` so consecutive windows are contiguous
-    without overlapping - an event starting exactly at midnight belongs to one
+    without overlapping: an event starting exactly at midnight belongs to one
     day, and to exactly one.
     """
 
@@ -196,9 +199,9 @@ class DayWindow:
 def calendar_day(day: date, *, tz: ZoneInfo = PACIFIC) -> DayWindow:
     """The RFC3339 window for a single local day.
 
-    Built from local midnights rather than ``start + 24h``: two days a year a
-    PT day is 23 or 25 hours long, and fixed arithmetic silently clips an hour
-    off one of them.
+    Built from local midnights, never ``start + 24h``: two days a year a PT day
+    is 23 or 25 hours long, and fixed arithmetic silently clips an hour off one
+    of them (test_windows_follow_dst_rather_than_adding_24_hours).
     """
     start = datetime.combine(day, time.min, tzinfo=tz)
     end = datetime.combine(day + timedelta(days=1), time.min, tzinfo=tz)
@@ -208,10 +211,10 @@ def calendar_day(day: date, *, tz: ZoneInfo = PACIFIC) -> DayWindow:
 def calendar_days(start: date, end: date, *, tz: ZoneInfo = PACIFIC) -> list[DayWindow]:
     """One window per day across an inclusive range - never a single wide one.
 
-    A 5-day pull was measured at 156,681 characters and exceeded the connector's
-    output limit (#2 audit), so a week of calendar is seven requests. Returning
-    a list rather than a generator keeps the count assertable by callers and by
-    the guardrail test.
+    A 5-day pull measured 156,681 characters and exceeded the connector's
+    output limit (`reference/connector-audit.md`), so a week of calendar is
+    seven requests. A list rather than a generator, so the count stays
+    assertable by callers and by the guardrail test.
     """
     if end < start:
         raise RecipeError(f"end {end} is before start {start}")
@@ -238,10 +241,9 @@ _DAY = timedelta(days=1)
 def is_user_id(value: str) -> bool:
     """Whether ``value`` is shaped like a Slack user id rather than a name.
 
-    Public because the shape check was only reachable by building a query, and
-    a *destination* needs it too: guardrail 1 permits exactly one, and an id
-    that is not one addresses a DM at nothing. One regex, one concept - a
-    second copy beside the caller would be a second set of bugs.
+    Public because a *destination* needs this check too, not just a query:
+    guardrail 1 permits exactly one, and an id that is not one addresses a DM
+    at nothing. One regex, one concept.
     """
     return bool(_USER_ID.match((value or "").strip()))
 
@@ -269,9 +271,7 @@ def slack_search(
     """A scoped, chronologically ordered Slack search query.
 
     ``from:<@USER_ID>`` and ``in:<#CHANNEL_ID>`` beat keyword search, and both
-    take ids: ``from:@display-name`` returns zero results *and no error*, which
-    is the worst failure available - the brief then reports a silence it never
-    checked. So a non-id raises here instead.
+    take ids (contract 3), so a non-id raises here rather than reaching Slack.
 
     ``sort:timestamp`` is explicit because Slack's default is relevance, and a
     relevance-ordered read of a conversation is not a chronology.
@@ -332,22 +332,21 @@ def slack_overnight(
     """
     if now.tzinfo is None:
         raise RecipeError("now must be timezone-aware; the cutoff is a local wall-clock time")
-    # Move a real instant rather than pinning `now.tzinfo` onto another date: an
-    # aware datetime's tzinfo is a FIXED offset, so across a DST change
-    # yesterday-at-6pm came out an hour wrong and silently dropped an hour of
-    # overnight Slack - the window nobody would think to check.
-    # PACIFIC, not `astimezone()` with no argument: the bare form converts to
-    # whatever the MACHINE's timezone is, so this passed on a Pacific laptop and
-    # was seven hours wrong on a UTC CI runner. The cutoff is the principal's
-    # local 6pm wherever the loop happens to run, and a real zone (not the fixed
-    # offset `now.tzinfo` carries) is what makes it survive a DST change.
+    # Move a real instant, and into PACIFIC by name. An aware datetime's tzinfo
+    # is a FIXED offset, so pinning `now.tzinfo` onto another date put
+    # yesterday-at-6pm an hour out across a DST change and silently dropped an
+    # hour of overnight Slack - the window nobody would think to check. And a
+    # bare `astimezone()` converts to the MACHINE's zone: right on a Pacific
+    # laptop, seven hours wrong on a UTC CI runner. The cutoff is his local 6pm
+    # wherever the loop runs, and only a real zone survives a DST change.
     local = now.astimezone(PACIFIC)
-    # Keep the cutoff in the PRINCIPAL's zone and take its date from there.
-    # Converting first and then reading .date() was the bug: `cutoff` carries
-    # the caller's tzinfo, so a UTC-aware `now` rolled the date forward (6pm PT
-    # is 01:00 UTC) and, `after:` being exclusive, the window skipped the exact
-    # 6pm-to-midnight hours it exists to capture - while min_ts still claimed
-    # them. Query and cutoff disagreed silently, which reads as a complete brief.
+    # The cutoff stays in the PRINCIPAL's zone and its date is read from there
+    # (test_the_overnight_after_date_does_not_depend_on_the_callers_tzinfo).
+    # Converting first and reading `.date()` off the result rolled a UTC-aware
+    # `now` forward a day - 6pm PT is 01:00 UTC - and `after:` being exclusive,
+    # the window then skipped the exact 6pm-to-midnight hours it exists to
+    # capture while min_ts still claimed them. Query and cutoff disagreed
+    # silently, which reads as a complete brief.
     cutoff_local = datetime.combine(local.date() - _DAY, time(hour=since_hour), tzinfo=PACIFIC)
     after_day = cutoff_local.date() - _DAY
     cutoff = cutoff_local.astimezone(now.tzinfo)
@@ -357,11 +356,7 @@ def slack_overnight(
             # A raw id in angle brackets is how a mention appears in message
             # text, so this finds threads he was pulled into as well as his own.
             f"<@{user}>",
-            # local.date(), NOT cutoff.date(): `cutoff` is converted back to the
-            # caller's tzinfo, so on a UTC-aware `now` its .date() rolls forward
-            # a day - 6pm PT is 01:00 UTC. `after:` is exclusive, so the window
-            # then skipped the exact 6pm-to-midnight hours it exists to capture,
-            # while min_ts still claimed them. The two disagreed silently.
+            # Derived from `cutoff_local`, never from `cutoff` - see above.
             f"after:{after_day.isoformat()}",
             # DESCENDING, and this is load-bearing rather than cosmetic.
             # `after:` resolves to a whole day, so the query returns from
@@ -401,10 +396,8 @@ def gmail_gemini_notes(
     filed there, and the sender alone includes notes for meetings that are not
     his. Together they are the exact set.
 
-    ``title`` searches the **subject**, which is the correction the #2 audit
-    made to SPEC section 4. The subject is rigidly ``Notes: "<title>" <date>``,
-    so an exact title lands on one thread - where body matching cannot separate
-    two back-to-back 1:1s, the case that actually breaks ingestion.
+    ``title`` searches the **subject** (contract 4), so it lands on one thread
+    where body matching cannot separate two back-to-back 1:1s.
 
     ``before`` is the last day the caller wants included; Gmail's own operator
     is exclusive, so it goes out as the day after.
@@ -455,9 +448,10 @@ def vault_relative(*parts: str) -> str:
     if not cleaned:
         raise RecipeError("no path given")
     # Strip the prefix whether it arrives as its own segment or joined onto the
-    # front of the first one. weekly_note() and workstreams_paths() return the
+    # front of the first one: `weekly_note()` and `meeting_prep()` return the
     # joined form, so feeding their output back in doubled the prefix and put
-    # the write in a sibling folder that only looks right.
+    # the write in a sibling folder that only looks right
+    # (test_the_prefix_is_not_doubled).
     first = cleaned[0]
     if first == VAULT_PREFIX:
         cleaned = cleaned[1:]
@@ -551,13 +545,13 @@ def meeting_prep(day: date) -> str:
 
 #: What the pulse and the chase list actually read off a ticket. Explicit
 #: because `*all` ships every custom field on every issue: that is what turned
-#: a 14-day, 4-project query into 125,231 characters (#2 audit).
+#: a 14-day, 4-project query into 125,231 characters
+#: (`reference/connector-audit.md`).
 #:
-#: ``resolutiondate`` and ``labels`` were added for the board reader (#12):
-#: the first is what lets ``closed_unannounced`` tell a close from a mention
-#: that merely predates it, the second is the "newly blocked" signal. Grown
-#: here rather than requested ad hoc by that module - a second, shorter field
-#: list for the same board is exactly the drift this module exists to prevent.
+#: ``resolutiondate`` is what tells a close from a mention that merely
+#: predates it; ``labels`` is the "newly blocked" signal. Both were grown here
+#: rather than requested ad hoc by a board reader - a second, shorter field
+#: list for the same board is the drift this module prevents.
 JIRA_FIELDS: tuple[str, ...] = (
     "key",
     "summary",
@@ -576,9 +570,9 @@ JIRA_MAX_RESULTS_CAP = 100
 JIRA_DEFAULT_MAX_RESULTS = 50
 JIRA_DEFAULT_WINDOW_DAYS = 7
 
-#: Atlassian project keys: 2-10 uppercase alphanumerics starting with a letter.
-#: A Jira project key. Public because `board` parses the same keys out of
-#: the watchlist and a second copy is how the two drift - which they had.
+#: A Jira project key: 2-10 uppercase alphanumerics starting with a letter.
+#: Public so anything reading keys out of the hand-edited watchlist validates
+#: them against this one pattern rather than a second copy of it.
 PROJECT_KEY = re.compile(r"^[A-Z][A-Z0-9]{1,9}$")
 
 
@@ -674,14 +668,12 @@ def jira_search(
 
 #: One page of anything from the GitHub API. History comes from the git
 #: mirrors; the review/CI half by API is retired at tag `pre-simplification`
-#: until M4-7 wires it, and this cap is what `smoke` still states as its bound.
+#: until M4-7 wires it, and this cap is what `observe` states as its bound.
 GH_LIMIT_CAP = 100
 
 
 # ---------------------------------------------------------------------------
-# reading what came back - the other half of the connector edge. `records`
-# returns None for "not this shape" and [] for "this shape, nothing in it";
-# which of those is a failure depends on the source and belongs to the caller.
+# reading what came back - the other half of the connector edge (contract 7)
 # ---------------------------------------------------------------------------
 
 #: Where a connector puts its error when it hands one back instead of raising.

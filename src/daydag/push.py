@@ -40,7 +40,7 @@ from daydag import recipes
 from daydag.ledger import Ledger
 from daydag.pulse import Pulse
 from daydag.statedoc import StateDoc, StateFolder
-from daydag.voice import clipped
+from daydag.voice import WARN, clipped
 
 __all__ = [
     "ADMISSIONS",
@@ -88,11 +88,6 @@ class PushError(RuntimeError):
     """
 
 
-#: The sanctioned warning glyph: plain U+26A0, not its emoji-presentation twin.
-#: Written as an escape because the difference is invisible in most editors and
-#: `voice.voice_violations` fails the whole brief over it.
-WARN = "⚠"
-
 #: What a claim says when it has no evidence. Guardrail 3's second half: "if the
 #: agent can't source it, it says so instead of asserting".
 UNSOURCED = "couldn't source this one"
@@ -122,25 +117,25 @@ QUOTE_CAP = 160
 
 
 class Sources(Protocol):
-    """The four reads the brief performs. Every one may raise.
+    """Every read a push performs. Every one may raise.
 
     Deliberately narrow, and deliberately taking the *query* rather than the
     parameters behind it: the queries come from :mod:`daydag.recipes`, so an
     adapter cannot quietly ask a different question than the one the recipe
     tests cover.
+
+    Declared here in full, including the methods only one loop uses. A read
+    left undeclared is one an adapter need not implement: `vault_note` was
+    missing for its whole life, so the wrap's Friday section raised and
+    rendered nothing, while the suite stayed green because both test doubles
+    implemented it - the fake was more capable than the adapter it stood in for.
     """
 
     def calendar(self, window: recipes.DayWindow) -> Iterable[Mapping[str, Any]]:
         """Events in one local day."""
 
     def vault_note(self, path: str) -> str:
-        """Any vault note by path. `eod_wrap` reads next week's plan and prep
-        through this, and it was never DECLARED here - so `run._Payloads`
-        implemented only `weekly_note`, both reads raised, and the Friday
-        "weekly-planning outcome" section silently never rendered on a real
-        run. Both test doubles implement it, which is why the suite was green:
-        the fake was more capable than the adapter it stood in for.
-        """
+        """Any vault note by path - the wrap's next-week plan and prep reads."""
         ...
 
     def weekly_note(self, path: str) -> str:
@@ -161,11 +156,9 @@ def short(text: str) -> str:
 def claim(text: str, *permalinks: str | None, quote: str | None = None) -> str:
     """One push line, with its citation or with an admission that it has none.
 
-    Public - and used outside this module - because "evidence or silence" is
-    not a brief-specific rule (guardrail 3). The EOD wrap cites a closed red
-    item, or tomorrow's first meeting, exactly the same way the brief cites an
-    overnight message: text, then a permalink or a path in parens, or the
-    admission that there is none.
+    Guardrail 3 in one function: text, then a permalink or a path in parens, or
+    the admission that there is neither. Every loop cites through this, so a
+    closed red item and an overnight message read the same way.
     """
     body = f'{text}: "{short(quote)}"' if quote else text
     links = [str(link) for link in permalinks if link]
@@ -211,10 +204,9 @@ class Section:
 def render_push(header: str, sections: Sequence[Section], unreachable: Sequence[str]) -> str:
     """Assemble one push: a header, its non-empty sections, then dead sources.
 
-    Shared by :meth:`Brief.render` and the EOD wrap's own render - both pushes
-    are this same shape, and it is not brief-specific: a header line, sections
-    that vanish when empty (silence is information, SPEC 3.7 rule 3), and one
-    line per source that could not be reached (guardrail 6), in that order.
+    The shape behind :meth:`Push.render`, in that order: a header line,
+    sections that vanish when empty (silence is information, SPEC 3.7 rule 3),
+    and one line per source that could not be reached (guardrail 6).
     """
     blocks = [header]
     blocks += [section.render() for section in sections if section.lines]
@@ -250,23 +242,12 @@ _ITEM = re.compile(r"^\s*[-*]\s+(?:\[(?P<tick>[ xX])\]\s*)?(?P<body>\S.*?)\s*$")
 
 
 def _scan_red_items(note: str, *, ticked: bool) -> list[tuple[int, str]]:
-    """The shared scan behind :func:`red_items` and :func:`closed_red_items`.
+    """The shared walk behind :func:`red_items` and :func:`closed_red_items`.
 
-    Both are the same walk over the same note, differing only in which side of
-    the checkbox they keep - open items for the brief's "top of the note",
-    ticked ones for the EOD wrap's "what closed today" (SPEC 3.5). Extracted
-    rather than duplicated: the heading-scoping rules below are the fiddly,
-    previously-wrong part (see the inline comments), and a second copy is a
-    second place for the same bug to come back in.
-
-    Three rules, each of them the vault's practice rather than its documentation
-    (invariant 6):
-
-    * any list item carrying 🔴, under any heading - the note's own layout wins;
-    * a checkbox's tick decides open vs. closed *in place*, even though the
-      note's header documents a strike-and-move rule it does not follow;
-    * a line naming 🟡 or 🟢 as well is the triage legend, not a priority. Notes
-      carry one, and without this the legend leads every brief.
+    The rules are stated on :func:`red_items`; the two differ only in which
+    side of the checkbox they keep. Extracted rather than duplicated, because
+    the heading scoping below is the fiddly part and a second copy is a second
+    place for the same bug to come back in.
     """
     found: list[tuple[int, str]] = []
     under_red = False
@@ -276,20 +257,17 @@ def _scan_red_items(note: str, *, ticked: bool) -> list[tuple[int, str]]:
         if heading:
             # The vault's real layout scopes priority by HEADING - `## 🔴 High -
             # needs my hand this week` - and leaves the items beneath it
-            # unmarked. Requiring the emoji in the item body returned nothing
-            # against a real note and silently dropped the brief's lead section;
-            # it only looked right because the fixtures repeated the emoji on
-            # every item. A heading naming several tiers is the triage legend.
+            # unmarked, so the tier is read off the heading and not the item.
+            # A heading naming several tiers is the triage legend, not a
+            # section (test_a_triage_legend_heading_is_not_a_priority_section).
             tiers = [t for t in (RED, *_OTHER_TIERS) if t in heading["name"]]
             level = len(heading["hashes"])
             if tiers == [RED]:
                 under_red, red_level = True, level
             elif under_red and level <= red_level:
                 # Only a heading at the SAME level or shallower ends the
-                # section. Clearing on any heading meant a `### Ingestion`
-                # nested inside `## 🔴 High` silently dropped every item under
-                # it - the same failure this block was written to fix, one
-                # level down, and no fixture nests a heading.
+                # section, so a `### Ingestion` nested inside `## 🔴 High`
+                # keeps its items (test_a_nested_heading_does_not_end_the_red_section).
                 under_red = False
             continue
         item = _ITEM.match(line)
@@ -324,10 +302,9 @@ def red_items(note: str) -> list[tuple[int, str]]:
 def closed_red_items(note: str) -> list[tuple[int, str]]:
     """Closed 🔴 items in a weekly note, as ``(line number, text)``.
 
-    The mirror of :func:`red_items`: same heading-scoped legend rules, but
-    keeps the ticked side of the checkbox instead of the open one. This is the
-    EOD wrap's "what closed today" (SPEC 3.5) - a red item struck in place is,
-    per invariant 6, ready to move to Done in Workstreams even though nothing
+    The mirror of :func:`red_items`, same rules, ticked side of the checkbox:
+    the EOD wrap's "what closed today" (SPEC 3.5). A red item struck in place
+    is, per invariant 6, ready to move to Done in Workstreams - but nothing
     here touches that file.
     """
     return _scan_red_items(note, ticked=True)
@@ -339,8 +316,9 @@ def local(value: Any) -> datetime | None:
     A NAIVE datetime is assumed to already be his local wall-clock time, not
     reinterpreted via the host's zone: `astimezone()` on a naive value adopts
     whatever TZ the runner has, so a 9am event printed as 2:00 under TZ=UTC and
-    mis-sorted against everything else. `assemble` refuses a naive `now` for the
-    same reason; event starts arrive from the connector and get the same care.
+    mis-sorted against everything else. An event start gets this reading; a
+    naive `now` is refused outright by :func:`aware`, because a cutoff that
+    guesses its own day is worse than one that stops.
     """
     if not isinstance(value, datetime):
         return None
@@ -360,10 +338,9 @@ def clock(value: Any) -> str:
 def instant(event: Mapping[str, Any]) -> float:
     """A sort key that is the real moment, not the way it was written.
 
-    Sorting on ``str(start)`` looked fine and was wrong: a calendar may express
-    a 9am PT meeting as ``16:00Z``, and the string form sorts by the digits
-    while ignoring the offset. The 3pm then led the day, and because the overlap
-    sweep trusts the order it invented a collision between two meetings six
+    Sorting on ``str(start)`` sorts by the digits and ignores the offset, so a
+    9am PT meeting expressed as ``16:00Z`` led the day - and the overlap sweep,
+    which trusts this order, then invented a collision between two meetings six
     hours apart. All-day and undated entries sort last.
     """
     moment = local(event.get("start"))
@@ -421,19 +398,17 @@ def link(record: Mapping[str, Any]) -> str | None:
 def overlap_clusters(events: Sequence[Mapping[str, Any]]) -> list[list[Mapping[str, Any]]]:
     """Groups of meetings that pile up on each other, in time order.
 
-    The other rendering of the rule `overlap_flags` applies pairwise: a single
-    day has a handful of collisions and every pair is worth a line, but across a
-    week four meetings stacked at 11:00 are six near-identical pairs for ONE
-    decision, so `week_ahead` wants the cluster. Same half-open comparison -
-    9:00-10:00 and 10:00-11:00 are back-to-back, not a clash - held once here
-    rather than spelt again in a second module.
+    The other rendering of the rule :func:`overlap_flags` applies pairwise, and
+    the same half-open comparison. A single day has a handful of collisions and
+    every pair is worth a line; across a week, four meetings stacked at 11:00
+    are six near-identical pairs for ONE decision, so `week_ahead` wants the
+    cluster.
 
     Linear after the sort: starts are ascending, so a meeting either overlaps
     the running end of the open cluster or opens a new one. Sorted on the two
-    INSTANTS only - the first version sorted `(start, end, event)` tuples, so two
-    invites at the same 11:00-12:00 fell through to comparing the event dicts
-    and raised TypeError. That is the stacked-at-11:00 case this exists for, and
-    it took the whole Sunday push down.
+    INSTANTS only - sorting `(start, end, event)` tuples made two invites at the
+    same 11:00-12:00 fall through to comparing the event dicts and raise
+    TypeError, which is the stacked case this exists for.
 
     A meeting with a start but no end is read as ending when it starts, so it
     can still fall INSIDE another's span - the same asymmetry `overlap_flags`
@@ -464,12 +439,9 @@ def first_meeting_line(events: Iterable[Mapping[str, Any]]) -> tuple[str, str] |
     """The day's earliest event, as a claim line plus its raw summary.
 
     ``None`` with nothing to report - the EOD wrap omits its "tomorrow" section
-    entirely rather than asserting an empty day, same as every other silent
-    section here. Reused by the wrap for SPEC 3.5's "tomorrow's first meeting"
-    rather than reimplemented, so the two never silently disagree on which
-    meeting counts as first: the same instant-based order as the brief's own
-    meeting lines (see :func:`instant`), the same local clock, the same
-    citation-or-admission rendering.
+    rather than asserting an empty day. Held here so the wrap's "first meeting"
+    (SPEC 3.5) and the brief's own meeting lines cannot disagree about which
+    meeting counts as first: same :func:`instant` order, same local clock.
 
     The summary travels back alongside the rendered line because the wrap
     cross-references it against the meeting ledger's notes gaps, which key on
@@ -486,10 +458,9 @@ def first_meeting_line(events: Iterable[Mapping[str, Any]]) -> tuple[str, str] |
 class Reader:
     """Runs one read, and turns a failure into one line instead of an exception.
 
-    Public because degrading a source to one "couldn't check X" line (guardrail
-    6) is not a brief-specific mechanism - the EOD wrap reads its own, smaller
-    set of sources through the same object rather than a second copy of this
-    ten-line class.
+    Guardrail 6's whole mechanism: a source that raises costs one
+    "couldn't check X" line and the push still ships. Every loop reads through
+    one of these.
     """
 
     def __init__(self) -> None:
@@ -499,9 +470,9 @@ class Reader:
         try:
             return call()
         except Exception:  # any failure degrades identically
-            # The exception text is deliberately not carried into the brief: it
-            # is source-controlled text, and the brief is read as the agent's
-            # own words. The name of the source is the whole message.
+            # The exception text is deliberately not carried into the push: it
+            # is source-controlled text, and a push is read as the agent's own
+            # words. The name of the source is the whole message.
             # Named once, not once per failing call: seven calendar windows
             # that all fail are one dead source, not seven lines.
             if name not in self.unreachable:
@@ -512,19 +483,18 @@ class Reader:
 def read_vault_note(read: Reader, fetch: Callable[[], str], *, label: str) -> tuple[str, bool]:
     """One vault note, read through the degrade path - and a third state told apart.
 
-    Returns ``(text, missing)``. Two calls into this function - the brief's
-    weekly note and the EOD wrap's - both need the same three-way split, and
-    conflating any two of them is the exact bug this exists to prevent:
+    Returns ``(text, missing)``, three ways
+    (test_read_vault_note_tells_apart_clean_missing_and_downed):
 
     * read cleanly - ``missing`` is ``False``, ``text`` is the note.
     * never written (``FileNotFoundError``) - not a failure. The note is
       hand-written and CLAUDE.md records a gap in the series, so the first
       real run meets one. ``missing`` is ``True``, ``text`` is ``""``.
-    * the source itself could not be reached (anything else) - recorded on
-      ``read`` like every other degrade, exactly as if this were "calendar" or
-      "slack". ``missing`` is ``False`` - an absent note is a fact, a downed
-      source is a degrade, and the two must not read the same in a rendered
-      push.
+    * the source could not be reached (anything else) - recorded on ``read``
+      like any other degrade, ``missing`` is ``False``.
+
+    An absent note is a fact and a downed source is a degrade; conflating any
+    two of the three is the bug this exists to prevent.
     """
     try:
         return fetch(), False
@@ -601,14 +571,14 @@ def seed_ledger(
     ledger: Ledger,
     events: Sequence[Mapping[str, Any]],
     *,
-    required: Sequence[str] = ("id", "start", "end", "attendees"),
+    required: Sequence[str] = ("id", "start", "end", "summary", "attendees"),
 ) -> None:
     """Seed ``ledger`` from calendar records, refusing one that cannot qualify.
 
-    A payload missing a key the ledger reads seeds ZERO rows and says nothing:
-    the notes-gap section simply vanishes, and tomorrow's gap is never
-    created. A missing ``id`` or ``end`` already raised; the asymmetry was the
-    bug, so every required key raises the same way.
+    Every required key raises the same way
+    (test_a_calendar_record_without_attendees_is_refused_not_ignored). A
+    payload missing one otherwise seeds ZERO rows and says nothing: the
+    notes-gap section simply vanishes, and tomorrow's gap is never created.
     """
     for event in events:
         missing = [key for key in required if key not in event]

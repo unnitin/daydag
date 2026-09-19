@@ -43,11 +43,11 @@ from typing import Any
 
 from daydag import vault
 from daydag.recipes import has
-from daydag.voice import WARN
 
-#: The sanctioned warning glyph (plain U+26A0, not its emoji-presentation
-#: twin) - `daydag.voice` is the register authority on this; a chase item that
-#: cannot be rendered in full still has to stay inside house voice.
+# WARN is the sanctioned glyph (plain U+26A0, not its emoji-presentation twin);
+# `daydag.voice` is the register authority, and a chase item that cannot be
+# rendered in full still has to stay inside house voice.
+from daydag.voice import WARN
 
 README = """# DayDAG
 
@@ -141,13 +141,11 @@ class ChaseItem(Mapping[str, Any]):
            existing caller on either side of the log/vault seam.
 
     WHY IT EXISTS
-        Issue #63: `EventLog.chase_items()` returned whatever a caller
-        recorded, and `update_state` assumed `owner` and `ask` would be in it.
-        A payload recorded with only `key` rendered as a bare `- ?` in
-        `State.md` - a formatting glitch standing in for data nobody had
-        agreed had to be there. One shape, read the same way on both sides of
-        the seam, is what stops that disagreement from recurring the next
-        time either module changes.
+        Issue #63: the log returned whatever a caller recorded and
+        `update_state` assumed `owner` and `ask` were in it, so a key-only
+        payload rendered as a bare `- ?` in `State.md`. One shape, read the
+        same way on both sides of the log/vault seam, is what keeps the two
+        from disagreeing again the next time either module changes.
     """
 
     key: str = "?"
@@ -159,12 +157,10 @@ class ChaseItem(Mapping[str, Any]):
     last_activity: str = ""
     status: str = "open"
     sensitivity: str = "normal"
-    #: Everything else the caller recorded. The nine above are GUARANTEED to
-    #: exist; they were never meant to be all there is. Whitelisting them
+    #: Everything else the caller recorded. Whitelisting the fields above
     #: dropped `day` - which `loop_opened` records on every call - and made
-    #: contract 3's "drop-in" false: an existing `item["day"]` became a
-    #: KeyError. Carried, not merged into the fields, so a payload cannot
-    #: overwrite a guaranteed one.
+    #: contract 3's "drop-in" false: `item["day"]` became a KeyError. Carried
+    #: apart, not merged, so a payload cannot overwrite a guaranteed field.
     extra: Mapping[str, Any] = field(default_factory=dict)
 
     @classmethod
@@ -182,10 +178,10 @@ class ChaseItem(Mapping[str, Any]):
         if isinstance(payload, cls):
             return payload
         if not isinstance(payload, Mapping):
-            # "Never raises" has to hold for a hand-written row too: valid JSON
-            # that is not an object (`null`, a list, a scalar) reached here and
-            # took `update_state` down with an AttributeError - the torn-row
-            # tolerance `_rows` exists for, undone one layer up.
+            # "Never raises" holds for a hand-written row too: valid JSON that
+            # is not an object (`null`, a list, a scalar) took `update_state`
+            # down with an AttributeError - undoing, one layer up, the torn-row
+            # tolerance `eventlog.recorded` exists for.
             return cls(sensitivity=sensitivity)
         kwargs = {name: payload[name] for name in _CHASE_FIELDS if payload.get(name)}
         extra = {
@@ -194,12 +190,9 @@ class ChaseItem(Mapping[str, Any]):
             if name not in _CHASE_FIELDS and name != "sensitivity"
         }
         # An explicit ``sensitivity`` is the LOG'S COLUMN and outranks anything
-        # the payload claims: the column is the trusted fact, the payload is
-        # whatever was written into the row. Reading the payload first let a
-        # hand-edited row carrying `"normal"` override a column saying
-        # `"private"` and reach plaintext `State.md`. Omitted means there is no
-        # column to trust - `update_state` is handed a bare dict whose own value
-        # is the only source there - so the payload wins.
+        # the payload claims - the column is the trusted fact, the payload is
+        # whatever was written into the row. Omitted means there is no column to
+        # trust (`update_state` is handed a bare dict), so the payload wins.
         resolved = sensitivity if sensitivity is not None else payload.get("sensitivity", "normal")
         return cls(sensitivity=str(resolved), extra=extra, **kwargs)
 
@@ -207,10 +200,10 @@ class ChaseItem(Mapping[str, Any]):
     def has_owner_or_ask(self) -> bool:
         """Whether there is anything real to render.
 
-        `payloads.has` rather than a hand-rolled truthiness check - the same
+        `recipes.has` rather than a hand-rolled truthiness check - the same
         "at least one of these alternatives" rule that keeps a Gmail
-        metadata-only result from passing as a match applies here: an item
-        with neither field is not half-missing data, it is no data.
+        metadata-only result from passing as a match. An item with neither
+        field is not half-missing data, it is no data.
         """
         return has(self, "owner", "ask")
 
@@ -245,12 +238,11 @@ class NotesGap:
            working.
 
     WHY IT EXISTS
-        Issue #61 / the guardrail file's GAP 3: `notes_gaps` was a list of
-        bare strings with no sensitivity tag to read, so a meeting whose own
-        title was sensitive had no way to be withheld - its caller had to
-        pre-filter, which is exactly the failure direction `chase` and
-        `watch` are filtered inside `update_state` to avoid: "the boundary has
-        to hold even when a caller forgets."
+        Issue #61 / guardrail GAP 3: `notes_gaps` was bare strings with no tag
+        to read, so a sensitive meeting title could only be withheld by its
+        caller pre-filtering. The boundary has to hold even when a caller
+        forgets, which is why `chase` and `watch` are filtered inside
+        `update_state` - and why this shape exists, so gaps can be too.
     """
 
     title: str
@@ -260,16 +252,12 @@ class NotesGap:
     def from_value(cls, value: str | Mapping[str, Any] | NotesGap) -> NotesGap:
         """A `NotesGap` from one of its own, a bare string, or a dict.
 
-        The already-a-`NotesGap` case is FIRST and is not a convenience. This
+        The already-a-`NotesGap` case is FIRST and is not a convenience: this
         class carries a `get()` but does not subclass `Mapping`, so without it
-        an instance fell through to the bare-string branch and became
-        `cls(title=str(value))` - the dataclass repr as the title, and
-        `sensitivity` reset to "normal". Handing the module its own type
-        laundered a private gap into a visible one.
-
-        `ChaseItem` never had the bug because it DOES subclass `Mapping`, which
-        is the whole lesson: one coercion, two shapes, and the guard held on
-        only one of them.
+        an instance fell through to the bare-string branch, took the dataclass
+        repr as its title and reset `sensitivity` to "normal" - laundering a
+        private gap into a visible one. `ChaseItem` never had the bug because
+        it does subclass `Mapping`: one coercion, two shapes, one guard.
         """
         if isinstance(value, cls):
             return value
@@ -298,12 +286,11 @@ def _is_private(item: Any) -> bool:
 def _visible(items: Iterable[Any]) -> list[Any]:
     """Every item in ``items`` that is not private.
 
-    `update_state`'s one gate for `chase`, `watch` and `notes_gaps` alike - the
-    filter that a private carry-forward once slipped past because `watch` had
-    no version of it while `chase` already did (and, before #61, `notes_gaps`
-    had no `sensitivity` field to check at all). One function, applied the
-    same way three times, is what makes "forgotten on the third list" a
-    contradiction rather than a recurring incident.
+    `update_state`'s one gate for `chase`, `watch` and `notes_gaps` alike. A
+    private carry-forward once slipped past because `watch` had no version of
+    the check while `chase` did, and before #61 `notes_gaps` had no field to
+    check. One function applied three times makes "forgotten on the third
+    list" a contradiction rather than a recurring incident.
     """
     return [item for item in items if not _is_private(item)]
 
@@ -428,9 +415,8 @@ class Block:
 
         Not `lines[0]`: `append` prepends a blank separator when the previous
         block does not end in one, so `lines[0]` was `""` for exactly those
-        blocks and `matches` never saw the bullet. Two chase items recorded on
-        different days arrive in one `chase_items()` call, so the same ask was
-        filed twice within a single run.
+        blocks and `matches` never saw the bullet - which filed the same ask
+        twice inside one run.
         """
         return next((line for line in self.lines if line.strip()), "")
 
@@ -442,10 +428,9 @@ class Block:
         files a duplicate, which he can see and delete, while a false match
         silently drops a real ask.
 
-        A needle ending in something identifier-shaped is matched at a
-        BOUNDARY rather than as a bare substring - ticket keys nest, and
-        `CDI-9` inside an existing `CDI-91` line read as already-filed and
-        dropped the ask.
+        A needle ending identifier-shaped is matched at a BOUNDARY, not as a
+        bare substring: ticket keys nest, so `CDI-9` read as already-filed
+        inside an existing `CDI-91` line and dropped the ask.
         """
         flat = _flatten(self.head)
         return any(n and _found(_flatten(n), flat) for n in needles)
@@ -502,14 +487,12 @@ class StateDoc:
            dropped and nothing is normalised - not indentation, not blank
            runs, not the trailing newline.
 
-           Split on `"\\n"` and nothing else. `str.splitlines()` also breaks on
-           `\\r`, `\\x0b`, `\\x0c`, `\\x1c`, `\\x85`, `\\u2028` and `\\u2029`,
-           all of which paste in from a browser or a Slack copy - and `render`
-           rejoined with `\\n`, so a file carrying one did not survive its own
-           parse and every loop then refused to write it. Worse, house rule 1
-           makes a verbatim quote mandatory, so ONE quoted line separator
-           written into `State.md` froze the file permanently and raised on
-           every run afterwards.
+           Split on `"\\n"` and nothing else. `str.splitlines()` also breaks
+           on `\\r`, `\\x0b`, `\\x0c`, `\\x1c`, `\\x85`, `\\u2028` and
+           `\\u2029`, which paste in from a browser or a Slack copy, while
+           `render` rejoins with `\\n` - so a file carrying one did not survive
+           its own parse. House rule 1 makes a verbatim quote mandatory, so one
+           quoted line separator froze `State.md` permanently.
         2. `append` only ever adds lines. There is no method that removes or
            edits a block, which is the structural half of house rule 3: a
            caller cannot clobber what it did not derive, because no call does.
@@ -616,15 +599,13 @@ class StateDoc:
     def is_line(self, text: str, *, section: str) -> bool:
         """Whether a bullet in ``section`` IS ``text``, not merely contains it.
 
-        Two narrowings from `contains`, and both matter for the short-phrase
-        lists:
+        Two narrowings from `contains`, both for the short-phrase lists:
 
         * whole line, because `contains("1:1")` is true of almost any file -
           "prep for the 1:1 with the CFO" is not a duplicate of the gap `1:1`;
-        * one section, because `contains` searches all of them by design
-          (contract 3) and a watch item named `1:1` is not the same fact as a
-          notes gap named `1:1`. Cross-section suppression there would drop
-          whichever of the two was written second.
+        * one section, because a watch item named `1:1` is not the same fact as
+          a notes gap named `1:1`, and cross-section suppression would drop
+          whichever was written second.
         """
         found = self.section(section)
         return any(block.equals(text) for block in found.blocks) if found else False
@@ -687,9 +668,9 @@ def _needles_for(item: ChaseItem) -> tuple[str, ...]:
     one owner, and matching on the owner would read every one of them as
     already filed.
 
-    Returns ``()`` when neither clears its floor. The caller then falls back to
-    the rendered bullet itself - without that, `contains(*())` is vacuously
-    False and the item is appended on EVERY run: four loops a day, four copies
+    Returns ``()`` when neither clears its floor; the caller falls back to the
+    rendered bullet itself. Without that fallback `contains(*())` is vacuously
+    False and the item is appended on EVERY run - four loops a day, four copies
     a day, unbounded, in the one file this whole change exists to protect.
     """
     return tuple(
@@ -784,12 +765,8 @@ class StateFolder:
         `eod` run that derived nothing rendered exactly that over four
         hand-written chase items and six run-log lines.
 
-        ``chase``, ``watch`` and ``notes_gaps`` still pass through ``_visible``
-        first - one filter, applied the same way to all three, so
-        ``sensitivity == "private"`` cannot be wired to two of them and
-        forgotten on the third. Appending rather than replacing must not route
-        around the gate a private carry-forward once slipped past.
-
+        ``chase``, ``watch`` and ``notes_gaps`` all pass through ``_visible``
+        first; appending rather than replacing must not route around that gate.
         ``chase`` is coerced to :class:`ChaseItem` and ``notes_gaps`` to
         :class:`NotesGap` whether a caller passes one already or a bare dict
         (#63, #61). An item with neither ``owner`` nor ``ask`` degrades to a
@@ -821,10 +798,9 @@ class StateFolder:
             doc.append("Chase list", lines)
         for item in _visible(watch):
             what = str(item.get("what", ""))
-            # `is_line` and not `contains`: a watch item is a short phrase, and
-            # a substring test is satisfied by any line anywhere in the file -
-            # the run log, a sub-bullet, a struck row - which drops the item
-            # silently.
+            # `is_line` and not `contains` - see `is_line`. A watch item is a
+            # short phrase, and a substring test is satisfied by any line
+            # anywhere in the file, which drops the item silently.
             if not what or doc.is_line(what, section="Watch items"):
                 continue
             doc.append("Watch items", [f"- {what}", ""])
@@ -880,9 +856,9 @@ class StateFolder:
 
 
 #: Kinds `chase_items` projects into `State.md`. Recording one without an
-#: explicit, well-formed sensitivity is refused - see contract 7. Meeting
-#: rows are not here: their titles reach `State.md` through the ledger's
-#: `notes_gaps`, and `run._project` classifies each one on the way out.
+#: explicit, well-formed sensitivity is refused - `eventlog` contract 2.
+#: Meeting rows are not here: their titles reach `State.md` through the
+#: ledger's `notes_gaps`, and `run._project` classifies each on the way out.
 VAULT_BOUND = frozenset({"loop_opened", "carry_forward"})
 
 #: House rule 7's categories, as the words that carry them. A FLOOR, not a

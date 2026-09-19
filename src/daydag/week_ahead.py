@@ -3,9 +3,9 @@
 USING IT
     pushed = assemble(
         now=datetime(2026, 9, 6, 17, 30, tzinfo=recipes.PACIFIC),  # a Sunday
-        sources=connectors,     # daydag.brief.Sources - the same four reads
+        sources=connectors,     # daydag.push.Sources - the same reads
         identities=identities,
-        state=state_folder,     # optional: chase + watch, read like `brief` reads them
+        state=state_folder,     # optional: chase + watch, via push.state_lines
         pulse=pulse,             # optional: the shipping block
     )
     pushed.render()              # the one Slack DM
@@ -14,7 +14,7 @@ USING IT
 CONTRACTS - break one and the guarantee is gone
     1. Read, never re-derive (SPEC 3.6, and ARCHITECTURE's ownership table).
        The week's plan is `weekly-planning`'s Friday output; this module's only
-       interaction with it is :func:`daydag.brief.red_items` over the text it
+       interaction with it is :func:`daydag.push.red_items` over the text it
        already wrote. Nothing here writes to ``Weekly Notes/`` or
        ``Fact Base/Workstreams.md`` - those stay `weekly-planning`'s.
     2. A missing plan LEADS the message (rule 3), not a footnote: when the
@@ -22,19 +22,19 @@ CONTRACTS - break one and the guarantee is gone
        of a single meeting - the week-ahead never fabricates Priorities from
        the closing week's note instead.
     3. No chase goes out on a weekend (rule 1). This module holds no send path
-       and drafts no nudge text: ``carrying_in`` is a plain, evidenced list,
-       never a decision queued for a yes.
+       and drafts no nudge text: the carrying-in section is a plain, evidenced
+       list, never a decision queued for a yes.
     4. Monday prep is pre-built, not pre-sent (rule 2). ``monday_preps`` names
        every Monday meeting that qualifies, reusing :mod:`daydag.ledger` for
        qualification and :mod:`daydag.prep` for the reason and the source
        queries - so the loop that threads the actual ping does not re-derive
        either, only fetches and reads what the query already names.
-    5. Evidence or silence, same as `brief`: every claim carries a permalink
-       or a note path#line, or says out loud that it has neither.
-    6. Silence is information: an empty section is omitted, not labelled -
-       a day with nothing on the calendar does not get a line saying so.
-    7. Degrade, never stall: a source that raises costs one line and the push
-       still ships.
+    5. Silence is information, evidence or silence, degrade never stall -
+       `daydag.push`'s contracts 1-3, inherited by rendering through its
+       `Section`, `claim` and `Reader` rather than restated here.
+    6. Nothing in this module renders. The push shape, the clock, the
+       weekly-note scan and the overlap rule are all `daydag.push`'s,
+       imported and never re-derived.
 
 WHY IT EXISTS
     Nothing else runs on a weekend, and Monday morning is too late to move a
@@ -42,23 +42,24 @@ WHY IT EXISTS
     module exists for are cheap only if done Sunday night: pre-running Monday
     so 6:45am holds no surprise, and naming a collision - a meeting still on
     the books with someone who is flying - while there is still time to text
-    about it. Both are composition over what four other modules already know
-    (`brief.red_items`, `state.read_section`, `pulse.render`, `ledger` +
-    `prep`'s qualification), which is the whole point: SPEC 3.6 calls this
-    "largely composition of existing pieces," and every seam defect this repo
-    has had came from a loop re-deriving a rule some other module already got
-    right.
+    about it. Both are composition over what other modules already know
+    (`push.red_items` and `push.overlap_clusters`, `statedoc`'s chase and watch
+    sections, `pulse.render`, `ledger` + `prep`'s qualification), which is the
+    whole point: SPEC 3.6 calls this "largely composition of existing pieces,"
+    and every seam defect this repo has had came from a loop re-deriving a rule
+    some other module already got right.
 
 KNOWN LIMIT
-    The chase list's clock is not yet ACTED on. ``state.update_state`` does
-    render ``asked-on`` now (#130), but the open-loop chaser (SPEC 3.4) that
-    would compare it against today has not shipped, and most rows are his own
-    and carry whatever he typed - so ``carrying_in`` lists the WHOLE chase
-    list rather than only the loops whose clock expires Monday-Wednesday,
-    which is what rule 1 literally asks for. That is the
-    honest degrade available today: a narrower cut would be inventing a date
-    this module does not have, and CLAUDE.md's "surface, don't resolve"
-    applies to a gap in the agent's own data the same as to anyone else's.
+    The chase list's clock is not yet ACTED on.
+    ``statedoc.StateFolder.update_state`` does render ``asked-on`` now (#130),
+    but the open-loop chaser (SPEC 3.4) that would compare it against today
+    has not shipped, and most rows are his own and carry whatever he typed -
+    so the carrying-in section lists the WHOLE chase list rather than only the
+    loops whose clock expires Monday-Wednesday, which is what rule 1 literally
+    asks for. That is the honest degrade available today: a narrower cut would
+    be inventing a date this module does not have, and CLAUDE.md's "surface,
+    don't resolve" applies to a gap in the agent's own data the same as to
+    anyone else's.
 
     OOO/travel detection reads Nitin's OWN calendar only. "The people he's
     waiting on" have no calendar this agent can query directly, so a travel
@@ -256,16 +257,16 @@ def _clash_lines(
 ) -> list[str]:
     """Overlapping meetings across the week, one line per pile-up.
 
-    CLUSTERED, not pairwise, which is the difference between a usable line and
-    a wall. `brief._overlap_flags` reports every pair because a single day has
-    a handful of collisions; a real week measured FOUR meetings stacked at
-    Thursday 11:00, and pairwise that is six near-identical lines for one
-    conflict. Here they collapse into one item naming the span and everything
-    in it, so the count matches the number of decisions he has to make.
+    CLUSTERED (`push.overlap_clusters`), not pairwise like the brief's
+    `push.overlap_flags`, which is the difference between a usable line and a
+    wall: a real week measured FOUR meetings stacked at Thursday 11:00, and
+    pairwise that is six near-identical lines for one conflict. Here they
+    collapse into one item naming the span and everything in it, so the count
+    matches the number of decisions he has to make
+    (test_a_pile_up_is_one_line_not_every_pair).
 
-    Half-open, same as `brief._overlap_flags`: 9:00-10:00 and 10:00-11:00 are
-    back-to-back, not a collision. Which invite wins is his call - surfacing
-    that there is a choice is the job (invariant 4).
+    Which invite wins is his call - surfacing that there is a choice is the job
+    (invariant 4).
     """
     lines: list[str] = []
     for day in days:
@@ -295,8 +296,10 @@ def _monday_preps(
     """Qualifying Monday meetings, reusing the ledger and `prep` verbatim.
 
     A payload missing a field the ledger needs is refused rather than
-    tolerated, same as `brief._seed_and_gaps`: silently seeding zero rows here
-    means Monday's prep queue is empty and nothing says why.
+    tolerated - `push.seed_ledger`'s rule, with the extra keys this queue
+    reads. Silently seeding zero rows here means Monday's prep queue is empty
+    and nothing says why
+    (test_a_malformed_monday_event_degrades_the_prep_queue_not_the_whole_push).
     """
     ledger = Ledger()
     seed_ledger(ledger, events, required=("id", "start", "end", "summary", "attendees"))
@@ -396,16 +399,16 @@ def assemble(
     travel = _travel_index(events)
     by_day: dict[date, list[Mapping[str, Any]]] = {}
     for event in events:
-        # `ledger.part_of_the_week`, NOT a local `kind` check. This used to
-        # apply one rule where the ledger applies four, so a meeting he had
-        # DECLINED and a personal errand with no attendees rendered as part of
-        # his week - while `monday_prep_queue`, reading the same events through
-        # the ledger, dropped both. Two paths in one module, disagreeing.
+        # `ledger.part_of_the_week`, NOT a local `kind` check. A local rule
+        # applied one test where the ledger applies four, so a DECLINED meeting
+        # and a solo errand rendered as part of his week while `_monday_preps`,
+        # reading the same events through the ledger, dropped both - two paths
+        # in one module, disagreeing.
         #
-        # Its own function rather than `qualifies` for one reason, written out
-        # there: an UNREADABLE record is kept here and dropped by the ledger,
-        # because losing a real meeting off this page is the failure he cannot
-        # notice.
+        # Its own ledger function rather than `qualifies`, for the reason
+        # written out there: an UNREADABLE record is kept here and dropped by
+        # the ledger, because losing a real meeting off this page is the
+        # failure he cannot notice.
         if not part_of_the_week(event):
             continue
         moment = local(event.get("start"))
@@ -424,10 +427,9 @@ def assemble(
 
     # -- clashes, across the WHOLE week ------------------------------------
     # The single most valuable thing on a "prepare my week" page, and it was
-    # absent: `brief._overlap_flags` does exactly this for one day and the
-    # week-ahead never called it. Measured on a real week - 15 overlapping
-    # clusters, including four meetings stacked at Thursday 11:00 - every one
-    # unflagged.
+    # absent: the brief has done this for one day since the start, and the
+    # week-ahead never called it. Measured on a real week: 15 overlapping
+    # clusters, every one unflagged.
     clash_lines = _clash_lines(by_day, weekdays)
     if clash_lines:
         sections.append(Section(f"clashes ({len(clash_lines)})", tuple(clash_lines)))

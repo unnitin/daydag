@@ -18,16 +18,15 @@ USING IT
 CONTRACTS
     1. Silence is information (SPEC 3.7 rule 3). An empty section - nothing
        closed, nothing moved, no meeting tomorrow - is OMITTED, not labelled.
-    2. Evidence or silence (guardrail 3). Every claim carries a permalink or a
-       vault path, or admits it could not be sourced - checked with
-       `daydag.brief.unsourced_claims`, the same scanner the brief is checked
+    2. Evidence or silence (guardrail 3), checked with
+       `daydag.push.unsourced_claims` - the same scanner the brief is checked
        with, because the rule is not brief-specific.
     3. Degrade, never stall (guardrail 6). A source that raises costs one
        "couldn't check X" line; the wrap still ships regardless.
-    4. A naive `now` is REFUSED with `PushError`, never read against the
-       host's zone - `astimezone()` with no argument adopts the runner's
-       timezone, which is the bug `daydag.brief.assemble` was fixed for and
-       this must not reintroduce.
+    4. A naive `now` is REFUSED with `PushError` (`push.aware`), never read
+       against the host's zone - `astimezone()` with no argument adopts the
+       runner's timezone, which is the bug the brief was fixed for and this
+       must not reintroduce.
     5. Friday never OFFERS to run `weekly-planning`. On that one day it states,
        as a fact either way and never a question, whether the two files that
        routine writes for the coming week exist yet - because the routine
@@ -36,29 +35,28 @@ CONTRACTS
        than by a Friday-only suppression: the offer is simply never built.
     6. Reads exactly three of its own - `Sources.calendar` for tomorrow,
        `Sources.weekly_note` for THIS week's plan of record, and
-       `Sources.vault_note` for any other vault path. The first two are one
-       method fewer than they look: `weekly_note` exists because `run.plan`
-       emits this week's note under `vault` and every other note under
-       `vault_notes`, and the wrap read the wrong one of the two for its whole
-       life (#131) - the payload was there, and the wrap said "no weekly note"
-       over a 17,703-character file. Everything else it reports comes from a
-       `Ledger` or `Pulse` the caller already built and owns; this module
+       `Sources.vault_note` for any other vault path. The last two are a real
+       split, not a redundancy: `run.plan` emits this week's note under `vault`
+       and every other note under `vault_notes`. Reading the wrong one of the
+       two had the wrap reporting "no weekly note" over a 17,703-character file
+       that was sitting in the payload (#131). Everything else it reports comes
+       from a `Ledger` or `Pulse` the caller already built and owns; this module
        never queries either directly.
 
 WHY IT EXISTS
     It owns no source and no query, same as `daydag.brief`. Tomorrow's window
     and every vault path come from `daydag.recipes`; the notes-gap cross
     reference from `daydag.ledger`; the moved block from `daydag.pulse`; the
-    header template from `daydag.voice`; and the degrade path, the citation
-    renderer, the missing-vs-downed note split and the push shape all come
-    from `daydag.brief` itself - `Reader`, `claim`, `read_vault_note`,
-    `render_push` - factored out there rather than copied here. What is left
-    is ASSEMBLY, same as the brief: a header plus three sections - what closed
-    today (`daydag.brief.closed_red_items`, the ticked side of the same note
-    the brief reads for its open items), what moved (the pulse's own block,
-    reused verbatim), and tomorrow's first meeting plus any prep gap (the same
-    ordering as `daydag.brief.first_meeting_line`, cross-referenced against
-    the ledger's notes gaps).
+    header template from `daydag.voice`; and everything it renders with -
+    the push shape, the degrade path, the citation renderer, the
+    missing-vs-downed note split, the weekly-note scan - from `daydag.push`,
+    where the brief and the week-ahead take theirs from too.
+
+    What is left is ASSEMBLY, same as the brief: a header plus three sections -
+    what closed today (the ticked side of the same note the brief reads for its
+    open items), what moved (the pulse's own block, reused verbatim), and
+    tomorrow's first meeting plus any prep gap, cross-referenced against the
+    ledger's notes gaps.
 
 KNOWN LIMIT
     Friday's addition is narrower than SPEC 3.5's full description of the
@@ -117,8 +115,8 @@ def assemble(
 
     ``ledger`` and ``pulse`` are optional because they are *state the caller
     owns*, not sources: a run with no pulse has no moved block, and that is
-    silence rather than a failure - the same contract as
-    :func:`daydag.brief.assemble`.
+    silence rather than a failure - the same contract
+    :func:`daydag.brief.assemble` states.
     """
     aware(now, "today's close and tomorrow's first meeting are local wall-clock questions")
     day = now.astimezone(recipes.PACIFIC).date()
@@ -147,18 +145,18 @@ def assemble(
 
     # -- what moved: the pulse's own block, reused verbatim ----------------
     moved_lines = shipping_lines(read, pulse)
+    count = 0
     if moved_lines and pulse is not None:
         # Counted from `items()`, not from the rendered lines: the block also
-        # carries stale-mirror and unparsed-watchlist notices, and a failure
-        # to read is not a thing that moved.
+        # carries stale-mirror and unparsed-watchlist notices, and a failure to
+        # read is not a thing that moved
+        # (test_the_moved_count_counts_movement_not_failure_notices).
         count = len(read("the pulse", pulse.items, []))
         sections.append(Section(f"moved ({count})", tuple(moved_lines)))
 
     # -- tomorrow's first meeting, plus any prep gap -----------------------
     (window,) = recipes.loop_windows("eod", day)
-    # `list` inside the lambda, not outside it - see brief.assemble for why:
-    # a paginated adapter is a generator that raises on iteration, and
-    # materialised outside the guard that failure walks past the degrade path.
+    # `list` inside the lambda, not outside it - see `brief.assemble` for why.
     events = read("calendar", lambda: list(sources.calendar(window)), [])
     picked = first_meeting_line(events)
     if picked is not None:
@@ -180,7 +178,7 @@ def assemble(
         voice.Push.EOD_WRAP,
         {
             "closed": "?" if "the weekly note" in read.unreachable else len(closed),
-            "moved": "?" if "the pulse" in read.unreachable else len(moved_lines),
+            "moved": "?" if "the pulse" in read.unreachable else count,
         },
     )
     return Push(
@@ -194,11 +192,10 @@ def assemble(
 def _friday_outcome(read: Reader, sources: Sources, day: date) -> list[Section]:
     """Whether the two files `weekly-planning` writes on Fridays landed.
 
-    A statement of fact either way, never a question: SPEC 3.5 is explicit
-    that the wrap does not offer to run `weekly-planning` again at 4:30pm, and
-    a line ending in "?" here would read as exactly that offer. A source that
-    could not be read asserts neither "landed" nor "not yet" - it degrades
-    like any other, via `read.unreachable`, and says nothing here at all.
+    A statement of fact either way, never a question (contract 5): a line
+    ending in "?" here would read as the offer SPEC 3.5 rules out. A file that
+    could not be read asserts neither "landed" nor "not yet" - it degrades via
+    `read.unreachable` and says nothing here at all.
     """
     next_week_day = day + _NEXT_WEEK
     checks = (

@@ -27,10 +27,9 @@ WHY IT EXISTS
     for free is now rendered into several templates instead of one.
 
     SPEC §8 adds the rule that actually changes the product: *anything he asks
-    twice gets folded into the skill*. That makes a repeat more informative
-    than the count. A falling count with an outstanding repeat means a known,
-    named defect is still sitting in the brief, and the arithmetic is flattering
-    it.
+    twice gets folded into the skill*. That makes a repeat more informative than
+    the count, because a falling count with an outstanding repeat means a known,
+    named defect is still in the brief and the arithmetic is flattering it.
 
 KNOWN LIMIT
     `report.trending` over five points is a direction, not a statistic. It
@@ -197,9 +196,7 @@ def _repeats(edits: list[tuple[date, str]], folded: set[str]) -> tuple[str, ...]
 def _trending_down(per_day: Mapping[date, int]) -> bool:
     """Whether the edit count is falling.
 
-    First two days against the last two, middle ignored. Over five points that
-    is a direction rather than a statistic - see KNOWN LIMIT - but it survives
-    one noisy morning, which comparing day five to day one does not.
+    First two days against the last two, middle ignored - see KNOWN LIMIT.
 
     Fewer than four days cannot show a trend, and says so rather than
     defaulting to True: the gate's failure mode to avoid is the flattering one.

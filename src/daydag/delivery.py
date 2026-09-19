@@ -29,16 +29,16 @@ CONTRACTS - break one and the guarantee is gone
        `prep.may_interrupt`. Its detail is a reply threaded under that
        headline's own `ts`, never a second top-level DM. If the headline posts
        and the detail then fails, the headline is not lost: it is observed
-       into `runlog` before the raise, and the raised `DeliveryError` carries
-       it as `error.headline` - a retry replies into that thread rather than
-       resending the interrupt.
+       into the run log before the raise, and the raised `PartialPrepDelivery`
+       carries it as `error.headline` - a retry replies into that thread
+       rather than resending the interrupt.
     4. No Slack client is imported here. `Transport` is a callable the caller
-       injects, exactly like `smoke.py`'s probes and `brief.py`'s sources -
+       injects, exactly like `observe.py`'s probes and `brief.py`'s sources -
        what makes this module testable without a network, and what keeps the
        guardrail-suite tripwire in `tests/test_guardrails.py` meaningful.
-    5. `runlog` is optional, and when given, a raised failure is recorded
-       before it is re-raised. `RunLog.run` already does both halves; this
-       module only has to hand it a `Run` to observe into.
+    5. ``runlog`` is optional, and when given, a raised failure is recorded
+       before it is re-raised. `observe.RunLog.run` already does both halves;
+       this module only has to hand it a `Run` to observe into.
 
 WHY IT EXISTS
     Nothing in `src/daydag/` could deliver anything before this - every loop
@@ -87,7 +87,7 @@ class DeliveryError(RuntimeError):
 
     Raised for a caller mistake - a misconfigured principal id, a transport
     that did not actually post - never used to represent a Slack-side error;
-    those degrade like every other source (`daydag.smoke`), and a delivery
+    those degrade like every other source (`daydag.observe`), and a delivery
     failure is loud on purpose (see the module docstring's contract 5).
     """
 
@@ -96,12 +96,11 @@ class PartialPrepDelivery(DeliveryError):
     """The headline posted; its threaded detail did not.
 
     A typed field rather than an attribute bolted onto a plain `DeliveryError`
-    at the raise site. That form needed a `type: ignore[attr-defined]`, existed
-    on exactly one raise path, and left `error.headline` invisible to a type
-    checker - so any later branch raising a bare `DeliveryError` from the same
+    at the raise site: that form left `error.headline` invisible to a type
+    checker, so a later branch raising a bare `DeliveryError` from the same
     function would hand a caller an object it reasonably expects to carry one.
-    `pulse.MirrorUnavailable` and `vault.ConflictError` already carry their
-    context this way; this follows them.
+    `pulse.MirrorUnavailable` and `vault.ConflictError` carry their context the
+    same way.
 
     ``headline`` is the message that DID go out. A retry must reply into its
     thread, never resend the interrupt.
@@ -165,14 +164,14 @@ class Draft:
 def _principal_channel(identities: Mapping[str, str]) -> str:
     """The one Slack id every autonomous send may address (guardrail 1).
 
-    Mirrors `prep.recipient` and `brief._principal` - both already resolve
-    this same reference with their own error type, and a shared helper would
-    have to pick one caller's wording for every other caller's failure. The
-    shape is checked as well as the presence: `.env` is hand-edited, and an
-    empty value or a display name would otherwise address a conversation that
-    does not exist. Never echoes the value in an error - `config.ConfigError`
-    holds the same rule, because printing the id defeats keeping it out of a
-    public repo.
+    Mirrors `prep.recipient` and `brief._principal` - each resolves this same
+    reference with its own error type, and a shared helper would have to pick
+    one caller's wording for every other caller's failure.
+
+    The SHAPE is checked as well as the presence, because `.env` is hand-edited
+    and an empty value or a display name addresses a conversation that does not
+    exist. The error never echoes the value, the same rule `config.ConfigError`
+    holds: printing the id defeats keeping it out of a public repo.
     """
     value = resolve_reference(
         "${SLACK_USER_PRINCIPAL}",
@@ -189,8 +188,8 @@ def _principal_channel(identities: Mapping[str, str]) -> str:
 
 
 def _posted_row(name: str) -> Result:
-    """One observation: a message went out. The same `Result` a probe produces -
-    something was asked of a source and it answered."""
+    """One observation: a message went out. The same `observe.Result` a probe
+    produces - something was asked of a source and it answered."""
     return Result(name, "slack", REACHED, detail="posted")
 
 
@@ -199,10 +198,10 @@ def _send(
 ) -> SentMessage:
     """Call the transport once and turn its answer into a `SentMessage`.
 
-    Never trusts "it did not raise" as proof of success (the same lesson
-    `smoke` encodes for every other source): a transport that swallows its
-    own failure and returns something without a `ts` is refused here rather
-    than handed back as a message nothing can thread under.
+    Never trusts "it did not raise" as proof of success (`observe`'s contract 2,
+    for every other source): a transport that swallows its own failure and
+    returns something without a `ts` is refused here rather than handed back as
+    a message nothing can thread under.
     """
     response = transport(channel=channel, text=text, thread_ts=thread_ts)
     ts = response.get("ts") if isinstance(response, Mapping) else None
@@ -215,15 +214,13 @@ def _send(
 
 
 def _delivered(runlog: RunLog | None, loop: str, body: Callable[[Run | None], _T]) -> _T:
-    """Run ``body``, observing into a real `Run` when ``runlog`` is given.
+    """Run ``body``, observing into a real `observe.Run` when ``runlog`` is given.
 
     The one place `deliver_push` and `deliver_prep_ping` share: both need "do
     the send, and if a run log was handed to us, record what happened either
-    way" - without this they each carried their own copy of the same
-    ``if runlog is None: ... else: with runlog.run(...) as run: ...`` branch.
-    ``body`` gets the live `Run` to observe into, or ``None`` when there is
-    nowhere to record - it is responsible for calling ``run.observe(...)``
-    itself, because only it knows what was actually reached.
+    way". ``body`` gets the live `Run` to observe into, or ``None`` when there
+    is nowhere to record - it calls ``run.observe(...)`` itself, because only it
+    knows what was actually reached.
     """
     if runlog is None:
         return body(None)
@@ -245,9 +242,9 @@ def deliver_push(
     """Post one already-rendered push to the principal's DM. See contract 1.
 
     ``kind`` names which push this is (`Push.MORNING_BRIEF`, `Push.EOD_WRAP`,
-    ...) for the run-log row only - it is rendered VERBATIM there, so only a
-    fixed `Push` member reaches it, never text a connector or a note wrote
-    (`runlog`'s contract 3).
+    ...) for the run-log row only - a loop name is rendered VERBATIM into the
+    State.md projection, so only a fixed `Push` member reaches it, never text a
+    connector or a note wrote (`observe.RunLog.projection_line`).
 
     ``registry`` and ``skill`` are both optional and used together: give both
     to have this call `Registry.route` before sending, so a `sensitivity:
@@ -262,11 +259,11 @@ def deliver_push(
     """
 
     def _do(run: Run | None) -> SentMessage:
-        # Resolved and routed INSIDE the run, not before it. Contract 5 says a
-        # raised failure is recorded before it is re-raised, and that held for
-        # a transport failure while its twin - a bad SLACK_USER_PRINCIPAL, a
-        # stale skill name - raised with no row at all. A caller asking the run
-        # log "did the brief even try to send" saw the previous success.
+        # Resolved and routed INSIDE the run, so contract 5 covers a refusal as
+        # well as a transport failure. Outside it, a bad SLACK_USER_PRINCIPAL or
+        # a stale skill name raised with no row at all, and "did the brief even
+        # try to send" answered with the previous success
+        # (`test_a_preflight_failure_also_leaves_a_run_row`).
         channel = _principal_channel(identities)
         if registry is not None and skill is not None:
             registry.route(skill, to=DM_SURFACE)
@@ -287,26 +284,23 @@ def deliver_prep_ping(
 ) -> PrepDelivery:
     """Post ``ping``'s headline as the interrupt, its detail as the reply.
 
-    Uses `prep.may_interrupt` rather than restating which push kind is
-    allowed to arrive off-schedule - see contract 3. Raises if that gate ever
-    stops naming `Push.PREP_PING`, because this function's whole justification
-    is that it is the one push permitted to skip the decision queue.
+    Uses `prep.may_interrupt` rather than restating which push kind may arrive
+    off-schedule, and raises if that gate ever stops naming `Push.PREP_PING`:
+    this function's whole justification is that it is the one push permitted to
+    arrive unannounced.
 
-    If the headline posts but the threaded detail then fails, the headline is
-    NOT lost: it was already observed into ``runlog`` (so the run row shows a
-    partial send rather than a blank one), and the raised `DeliveryError`
-    carries it as ``error.headline`` - a caller must not resend the headline
-    on retry, only reply into the thread that already exists.
+    Raises `PartialPrepDelivery` when the headline posts and its threaded detail
+    then fails - contract 3 for what a retry must then do.
     """
 
     def _do(run: Run | None) -> PrepDelivery:
-        # Gate and channel INSIDE the run, for the same reason as deliver_push:
-        # a refusal is a failed attempt and has to leave a row saying so.
+        # Gate and channel INSIDE the run, as in deliver_push: a refusal is a
+        # failed attempt and has to leave a row saying so.
         if not may_interrupt(Push.PREP_PING):
             raise DeliveryError(
                 "Push.PREP_PING is no longer flagged as the one interrupt "
                 "(prep.may_interrupt); a push that cannot arrive off-schedule "
-                "must not jump the decision queue by being sent here"
+                "must not arrive off-schedule by being sent here"
             )
         channel = _principal_channel(identities)
         headline = _send(transport, channel=channel, text=ping.headline())
@@ -315,10 +309,9 @@ def deliver_prep_ping(
         try:
             detail = _send(transport, channel=channel, text=ping.detail(), thread_ts=headline.ts)
         except Exception as exc:
-            # The interrupt already reached the principal - a retry must not
-            # repeat it. Attached to the exception because there is no return
-            # value to attach it to, and dropping it here is exactly the
-            # "which one went out" question a caller has no other way to ask.
+            # Carried on the exception because there is no return value to
+            # carry it on, and "which one went out" is a question the caller
+            # has no other way to ask.
             raise PartialPrepDelivery(
                 f"the ping's headline posted (ts={headline.ts}) but its threaded "
                 f"detail did not ({exc}); do not resend the headline, reply into "
