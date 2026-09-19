@@ -14,9 +14,10 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from daydag.eod_wrap import WrapError, assemble
+from daydag.eod_wrap import assemble
 from daydag.ledger import Ledger
 from daydag.pulse import Item, Mirror, Pulse
+from daydag.push import PushError
 from daydag.voice import voice_violations
 
 PT = ZoneInfo("America/Los_Angeles")
@@ -301,7 +302,7 @@ def test_the_header_does_not_count_a_note_it_could_not_read():
 
 
 def test_the_wrap_refuses_a_naive_clock():
-    with pytest.raises(WrapError, match="timezone"):
+    with pytest.raises(PushError, match="timezone"):
         assemble(now=datetime(2026, 9, 7, 16, 30), sources=FakeSources())
 
 
@@ -342,7 +343,7 @@ def test_every_claim_in_a_full_wrap_carries_evidence_or_admits_it(fake_repo):
         pulse=Pulse(mirrors=[Mirror.attach(fake_repo, cursor="HEAD~2")]),
     ).render()
 
-    from daydag.brief import unsourced_claims
+    from daydag.push import unsourced_claims
 
     assert unsourced_claims(text) == []
 
@@ -364,7 +365,7 @@ def test_items_from_the_pulse_render_with_their_own_links():
     """A defensive check on the seam: the wrap must not rebuild the pulse's
     line and lose the link `Item` carries."""
     item = Item(title="CDI-596 cutover", permalink="mirrors/x.git#abc1234")
-    from daydag.brief import unsourced_claims
+    from daydag.push import unsourced_claims
 
     assert unsourced_claims(f"- {item.title} ({item.permalink})") == []
 

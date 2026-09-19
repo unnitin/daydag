@@ -17,9 +17,10 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from daydag import brief as brief_module
-from daydag.brief import BriefError, assemble, red_items, unsourced_claims
+from daydag.brief import assemble
 from daydag.ledger import Ledger
 from daydag.pulse import Item, Mirror, Pulse
+from daydag.push import PushError, red_items, unsourced_claims
 from daydag.statedoc import StateFolder
 from daydag.voice import voice_violations
 
@@ -539,14 +540,14 @@ def test_a_broken_state_file_degrades_like_any_other_source(tmp_path):
 def test_the_brief_refuses_a_naive_clock():
     """The 6pm cutoff is a local wall-clock time; a naive `now` is seven hours
     wrong on a UTC runner and silently drops an evening of Slack."""
-    with pytest.raises(BriefError, match="timezone"):
+    with pytest.raises(PushError, match="timezone"):
         assemble(now=datetime(2026, 9, 7, 6, 45), sources=FakeSources(), identities=IDENTITIES)
 
 
 def test_an_unresolved_identity_reference_is_refused():
     """`${SLACK_USER_PRINCIPAL}` as literal text is a query matching nothing,
     which is indistinguishable from a quiet night."""
-    with pytest.raises(BriefError):
+    with pytest.raises(PushError):
         assemble(now=NOW, sources=FakeSources(), identities={})
 
 
@@ -741,7 +742,7 @@ def test_a_naive_event_start_is_his_local_time_not_the_hosts():
     """
     from datetime import datetime as _dt
 
-    from daydag.brief import _local
+    from daydag.push import local as _local
 
     naive = _local(_dt(2026, 9, 7, 9, 0))
     assert naive is not None
@@ -830,7 +831,7 @@ def test_a_calendar_record_without_attendees_is_refused_not_ignored():
 def test_closed_red_items_is_the_mirror_of_red_items():
     """Same note, same heading-scoped legend rules - the opposite side of the
     checkbox. The wrap's "what closed today" (SPEC 3.5) reads this."""
-    from daydag.brief import closed_red_items
+    from daydag.push import closed_red_items
 
     assert [text for _, text in closed_red_items(NOTE_PRIORITIES)] == [
         "🔴 send the pod update *(mine)*",
@@ -844,7 +845,7 @@ def test_closed_red_items_is_the_mirror_of_red_items():
 
 def test_closed_red_items_respects_the_same_heading_scoping():
     """The heading-scoped `## 🔴 High` layout, mirrored for the ticked side."""
-    from daydag.brief import closed_red_items
+    from daydag.push import closed_red_items
 
     note = (
         "## 🔴 High — needs my hand this week\n"
@@ -857,19 +858,19 @@ def test_closed_red_items_respects_the_same_heading_scoping():
 
 
 def test_closed_red_items_skips_the_triage_legend_too():
-    from daydag.brief import closed_red_items
+    from daydag.push import closed_red_items
 
     assert closed_red_items("- [x] triage: 🔴 high, 🟡 medium, 🟢 low") == []
 
 
 def test_first_meeting_line_is_none_with_no_events():
-    from daydag.brief import first_meeting_line
+    from daydag.push import first_meeting_line
 
     assert first_meeting_line([]) is None
 
 
 def test_first_meeting_line_picks_the_earliest_by_instant_not_by_order():
-    from daydag.brief import first_meeting_line
+    from daydag.push import first_meeting_line
 
     events = [_event("b", "later thing", 15), _event("a", "pod steering", 9)]
     result = first_meeting_line(events)
@@ -882,7 +883,7 @@ def test_first_meeting_line_picks_the_earliest_by_instant_not_by_order():
 
 
 def test_first_meeting_line_admits_a_missing_link():
-    from daydag.brief import first_meeting_line, unsourced_claims
+    from daydag.push import first_meeting_line, unsourced_claims
 
     event = _event("a", "mystery hold", 9)
     del event["permalink"]
@@ -899,7 +900,7 @@ def _raise(exc):
 
 
 def test_read_vault_note_tells_apart_clean_missing_and_downed():
-    from daydag.brief import Reader, read_vault_note
+    from daydag.push import Reader, read_vault_note
 
     read = Reader()
     text, missing = read_vault_note(read, lambda: "hello", label="x")
@@ -915,7 +916,7 @@ def test_read_vault_note_tells_apart_clean_missing_and_downed():
 
 
 def test_render_push_omits_empty_sections_and_names_dead_sources():
-    from daydag.brief import Section, render_push
+    from daydag.push import Section, render_push
 
     text = render_push(
         "wrap: 1 closed, 0 moved",

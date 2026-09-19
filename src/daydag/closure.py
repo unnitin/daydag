@@ -43,7 +43,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
-from daydag import brief
+from daydag import push
 from daydag.statedoc import StateDoc
 
 __all__ = [
@@ -316,7 +316,7 @@ def judge(
 # ---------------------------------------------------------------------------
 
 
-def render_closure(verdicts: Iterable[Verdict], *, section: str) -> list[brief.Section]:
+def render_closure(verdicts: Iterable[Verdict], *, section: str) -> list[push.Section]:
     """The three buckets for one State.md section, evidence on every line.
 
     Empty buckets do not render (`render_push` drops them), so a section where
@@ -325,25 +325,25 @@ def render_closure(verdicts: Iterable[Verdict], *, section: str) -> list[brief.S
     """
     chosen = [v for v in verdicts if v.ask.section == section]
     answered = [
-        brief.claim(f"{v.ask.text} - answered, strike?", v.permalink, quote=v.quote or None)
+        push.claim(f"{v.ask.text} - answered, strike?", v.permalink, quote=v.quote or None)
         for v in chosen
         if v.status == "answered"
     ]
     open_ = [
-        brief.claim(f"{v.ask.text} - {v.reason}", v.ask.permalink)
+        push.claim(f"{v.ask.text} - {v.reason}", v.ask.permalink)
         for v in chosen
         if v.status == "open"
     ]
     unchecked = [
-        brief.claim(f"{v.ask.text} - unchecked: {v.reason}", v.ask.permalink or None)
+        push.claim(f"{v.ask.text} - unchecked: {v.reason}", v.ask.permalink or None)
         for v in chosen
         if v.status == "unchecked"
     ]
     label = section.casefold()
     return [
-        brief.Section(f"{label} - open ({len(open_)})", tuple(open_)),
-        brief.Section(f"{label} - answered, not yet struck ({len(answered)})", tuple(answered)),
-        brief.Section(f"{label} - couldn't verify ({len(unchecked)})", tuple(unchecked)),
+        push.Section(f"{label} - open ({len(open_)})", tuple(open_)),
+        push.Section(f"{label} - answered, not yet struck ({len(answered)})", tuple(answered)),
+        push.Section(f"{label} - couldn't verify ({len(unchecked)})", tuple(unchecked)),
     ]
 
 

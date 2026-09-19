@@ -47,12 +47,12 @@ artifact is the load-bearing rule; the rest is plumbing.
 | `runlog` | One row per run in the event log, so a brief that never arrived can still be explained |
 | `recipes` | SPEC §4's prose as literal, testable queries |
 | `payloads` | Reading a connector's answer while it is still unvalidated - `recipes` asks, this reads |
-| `brief` | SPEC §3.1's morning brief: the assembler every other loop composes from |
+| `push` | The push kernel every loop renders with: one `Push`, one `Reader`, one citation rule, one weekly-note scanner, one overlap rule |
+| `brief` | SPEC §3.1's morning brief, assembled from the kernel |
 | `eod_wrap` | SPEC §3.5's EOD wrap: what closed, what moved, tomorrow's first meeting |
-| `prep` | Meeting prep pings: the one interrupt, 30 min out, qualified by the ledger |
+| `prep` | Meeting prep pings: the one interrupt, 30 min out, qualified by the ledger - and naming the meeting to prep for without guessing between two |
 | `week_ahead` | SPEC §3.6's Sunday week-ahead: a read of Friday's plan, assembled into one push |
 | `delivery` | The shape of the one autonomous send - the principal's DM - and the threaded prep reply. Not yet wired to a transport: the skill posts by hand until the loops are scheduled (#25) |
-| `prep_selector` | Naming the meeting to prep for, and refusing to guess between two |
 | `people` | Who someone is - ids, title, DM, groups, how often met - with stated facts outranking inferred ones |
 | `run` | The two-phase contract that makes a loop runnable: plan the fetch, assemble the push |
 | `soak` | The five-day gate's journal: every edit he asks for, and whether a repeat is still outstanding |

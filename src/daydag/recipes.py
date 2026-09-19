@@ -76,7 +76,9 @@ __all__ = [
     "is_user_id",
     "jira_jql",
     "jira_search",
+    "loop_windows",
     "meeting_prep",
+    "next_monday",
     "next_week_label",
     "slack_overnight",
     "slack_search",
@@ -497,6 +499,44 @@ def week_range(day: date) -> tuple[date, date]:
     """
     monday = day - timedelta(days=day.weekday())
     return monday, monday + timedelta(days=4)
+
+
+def next_monday(day: date) -> date:
+    """The Monday after ``day``'s Mon-Fri week - what a Sunday run plans for.
+
+    Derived from `week_range` rather than ``day + 1``: the scheduled week-ahead
+    runs on a Sunday, the on-demand one runs whenever he asks.
+    """
+    monday, _ = week_range(day)
+    return monday + timedelta(days=7)
+
+
+#: How far ahead a named prep will look. A week, because that is the span the
+#: evidence a prep is built from actually covers.
+PREP_HORIZON_DAYS = 7
+
+
+def loop_windows(
+    loop: str, day: date, *, tz: ZoneInfo = PACIFIC, selector: str = ""
+) -> list[DayWindow]:
+    """The calendar days one loop reads, one window each - never a range.
+
+    The ONE place this arithmetic lives. `run.plan` asks for these windows and
+    every consumer asks for the same ones, so what was fetched and what is
+    read cannot drift apart (#109): the morning reads today, the wrap reads
+    tomorrow, the week-ahead reads next Mon-Sun, a named prep reads the next
+    seven days, and `ingest`, `chase` and `ship` read no calendar at all.
+    """
+    if loop in {"ingest", "chase", "ship"}:
+        return []
+    if loop == "prep" and selector:
+        return calendar_days(day, day + timedelta(days=PREP_HORIZON_DAYS - 1), tz=tz)
+    if loop == "eod":
+        return [calendar_day(day + timedelta(days=1), tz=tz)]
+    if loop == "week-ahead":
+        first = next_monday(day)
+        return calendar_days(first, first + timedelta(days=6), tz=tz)
+    return [calendar_day(day, tz=tz)]
 
 
 def week_label(day: date) -> str:

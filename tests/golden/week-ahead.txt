@@ -17,3 +17,7 @@ the week
 
 watch
 - nightly ingest job, since the schema change (couldn't source this one)
+
+monday prep - pre-built (2)
+- 9:00 Nitin / VP-Data 1:1 - 1:1 (https://example.com/cal/2026-09-21/11)
+- 11:00 Pod Steering - external party (https://example.com/cal/2026-09-21/steering)

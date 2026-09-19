@@ -37,7 +37,7 @@ That is the whole interface. `SKILL.md` maps the other phrasings ("wrap up",
 | "week ahead" | **works.** Run against a real week (68 events); flags clashes and reads the plan of record. |
 | "wrap up" | **runs**, including the Friday planning-outcome section, which never rendered before [#95](https://github.com/unnitin/daydag/issues/95). Exercised against real payloads rather than a live Friday. |
 | "prep me for X" | **works.** Names a meeting or a person, searches 7 days, and asks which one when the name matches several. |
-| "ingest", "chase", "what shipped" | **run**, newly wired in [#95](https://github.com/unnitin/daydag/issues/95). `chase` reads `State.md`; `ship` needs a Pulse built from the mirrors. |
+| "ingest", "chase", "what shipped" | **run**, newly wired in [#95](https://github.com/unnitin/daydag/issues/95). `chase` reads `State.md` and the replies under every ask; `ship` renders from the mirrors with `render ship --mirrors --log <db>`, which also gives the morning, wrap and week-ahead their shipping section. |
 
 All seven loops the skill advertises are now reachable. Two — morning and
 week-ahead — have been checked against real data end to end; the rest have run,
