@@ -38,7 +38,7 @@ import pytest
 from daydag import brief as brief_module
 from daydag.ledger import Ledger, Match
 from daydag.pulse import Mirror, Pulse
-from daydag.state import DecisionQueue, EventLog, StateFolder
+from daydag.state import EventLog, StateFolder
 from daydag.voice import voice_violations
 
 PT = timezone(timedelta(hours=-7))
@@ -223,12 +223,12 @@ def test_a_whole_morning_arrives_as_one_assembled_brief(tmp_path, landings, git_
     assert "nightly ingest" not in written, "a private watch item reached the vault"
 
     # -- a decision survives being answered by hand ------------------------
-    queue = DecisionQueue(folder)
-    item = queue.add("close the CDI-596 loop?")
-    assert queue.status(item) == "open"
+    folder.add_decision("close the CDI-596 loop? · status: open")
     decisions = folder.decisions_path
-    decisions.write_text(decisions.read_text().replace(f"[{item}] close", f"[{item}] no - close"))
-    assert queue.answer_for(item) == "no", "a hand edit is an event and wins"
+    decisions.write_text(decisions.read_text().replace("status: open", "status: no - not yet"))
+    before = decisions.read_bytes()
+    folder.add_decision("draft the nudge? · status: open")
+    assert decisions.read_bytes().startswith(before), "a hand edit is an event and wins"
 
     # -- and the assembler turns all of it into one message ----------------
     # Every input below is the object an earlier stanza actually produced: the

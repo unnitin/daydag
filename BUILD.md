@@ -23,8 +23,8 @@ is the one that matters:
 |---|---|
 | **Built and checked against real data** | the morning brief (M2-1) and the Sunday week-ahead (M4-3), both run end to end against live connectors on days verified by hand |
 | **Built and runs, not yet verified live** | EOD wrap (M4-1), meeting prep (M4-2), the ingestion classifier (M3-2), the engineering pulse (M2-3), the chase loop's read half (part of M3-5) |
-| **Not built** | the chaser's clocks and nudge drafts (rest of M3-5), write-back (M3-3), the digest and correction handling (M3-4), most on-demand commands (M4-4), the board half of the pulse (M2-4), everything in M5 |
-| **Gate not yet passed** | the five-day soak under M2. It has not run |
+| **Not built** | the chaser's clocks and nudge drafts (rest of M3-5), write-back (M3-3), the digest and correction handling (M3-4), most on-demand commands (M4-4), the API halves of the pulse - Jira board deltas and PR review/CI state - retired at tag `pre-simplification` until M4-7 wires them, everything in M5 |
+| **Gate not yet passed** | the five-day soak under M2 - running, day 4 of 5 on 2026-09-18 (`python -m daydag.soak report`) |
 
 "Runs" is not "verified", and the gap between them is where every defect found
 so far has lived. `USAGE.md` carries the same split per loop for someone who

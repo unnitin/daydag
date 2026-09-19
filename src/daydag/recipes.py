@@ -63,7 +63,6 @@ __all__ = [
     "GEMINI_LABEL",
     "GEMINI_SENDER",
     "GH_LIMIT_CAP",
-    "GH_WRITE_VERBS",
     "JIRA_FIELDS",
     "JIRA_MAX_RESULTS_CAP",
     "PACIFIC",
@@ -73,10 +72,6 @@ __all__ = [
     "RecipeError",
     "calendar_day",
     "calendar_days",
-    "gh_default_branch",
-    "gh_open_prs",
-    "gh_pr_checks",
-    "gh_recent_runs",
     "gmail_gemini_notes",
     "is_user_id",
     "jira_jql",
@@ -667,141 +662,10 @@ def jira_search(
 
 
 # ---------------------------------------------------------------------------
-# GitHub - argv for the `gh` CLI, read-only
+# GitHub - read-only by token (reference/github-access.md)
 # ---------------------------------------------------------------------------
 
-#: Subcommands that change something on GitHub. Asserted against every recipe:
-#: SPEC section 4 lists GitHub as read-only, and guardrail 1 keeps it that way.
-GH_WRITE_VERBS = frozenset(
-    {
-        "merge",
-        "close",
-        "reopen",
-        "comment",
-        "review",
-        "edit",
-        "create",
-        "delete",
-        "ready",
-        "lock",
-        "unlock",
-        "rerun",
-        "cancel",
-    }
-)
-
-#: What the pulse reads off an open PR. `statusCheckRollup` is the CI half.
-GH_PR_FIELDS: tuple[str, ...] = (
-    "number",
-    "title",
-    "author",
-    "createdAt",
-    "updatedAt",
-    "isDraft",
-    "reviewDecision",
-    "headRefName",
-    "url",
-    "statusCheckRollup",
-)
-
-GH_RUN_FIELDS: tuple[str, ...] = (
-    "databaseId",
-    "displayTitle",
-    "headBranch",
-    "conclusion",
-    "status",
-    "createdAt",
-    "url",
-)
-
+#: One page of anything from the GitHub API. History comes from the git
+#: mirrors; the review/CI half by API is retired at tag `pre-simplification`
+#: until M4-7 wires it, and this cap is what `smoke` still states as its bound.
 GH_LIMIT_CAP = 100
-GH_DEFAULT_PR_LIMIT = 50
-GH_DEFAULT_RUN_LIMIT = 20
-
-_SLUG = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$")
-#: Git ref characters. Leading `-` excluded by the character class, so a branch
-#: cannot arrive at `gh` as a flag.
-_BRANCH = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]*$")
-
-
-def _slug(repo: object) -> str:
-    """``owner/name`` from a :class:`daydag.pulse.WatchedRepo` or a plain string.
-
-    Duck-typed on ``.slug`` rather than imported: the pulse owns ``WatchedRepo``
-    on its own path, and a shared module reaching into a path-owned one is the
-    coupling CONTRIBUTING's branch table exists to prevent.
-    """
-    slug = getattr(repo, "slug", repo)
-    if not isinstance(slug, str) or not _SLUG.match(slug):
-        raise RecipeError(f"{repo!r} is not an owner/name repo slug")
-    return slug
-
-
-def _limit(value: int, *, what: str) -> str:
-    if not isinstance(value, int) or isinstance(value, bool) or not 1 <= value <= GH_LIMIT_CAP:
-        raise RecipeError(f"{what} must be 1-{GH_LIMIT_CAP}, got {value!r}")
-    return str(value)
-
-
-def gh_open_prs(repo: object, *, limit: int = GH_DEFAULT_PR_LIMIT) -> list[str]:
-    """Open PRs for one watched repo, with review state and the CI rollup.
-
-    argv, never a shell string: the slug comes from a hand-edited watchlist, and
-    a string handed to a shell is a command injection. Same reason
-    ``pulse._run_git`` takes a list.
-    """
-    return [
-        "gh",
-        "pr",
-        "list",
-        "--repo",
-        _slug(repo),
-        "--state",
-        "open",
-        "--limit",
-        _limit(limit, what="limit"),
-        "--json",
-        ",".join(GH_PR_FIELDS),
-    ]
-
-
-def gh_pr_checks(repo: object, number: int) -> list[str]:
-    """CI check state for one PR."""
-    if not isinstance(number, int) or isinstance(number, bool) or number < 1:
-        raise RecipeError(f"PR number must be a positive integer, got {number!r}")
-    return ["gh", "pr", "checks", str(number), "--repo", _slug(repo)]
-
-
-def gh_default_branch(repo: object) -> list[str]:
-    """Resolve the default branch instead of assuming ``main``.
-
-    `createos-dsp-ingestion` defaults to ``develop``. A branch-health check
-    hardcoding ``main`` finds nothing there and reports green - guardrail 3
-    inverted, since it asserts health it never checked.
-    """
-    return ["gh", "repo", "view", _slug(repo), "--json", "defaultBranchRef"]
-
-
-def gh_recent_runs(
-    repo: object,
-    *,
-    branch: str | None = None,
-    limit: int = GH_DEFAULT_RUN_LIMIT,
-) -> list[str]:
-    """Recent CI runs. ``branch`` is omitted rather than defaulted - see above."""
-    argv = [
-        "gh",
-        "run",
-        "list",
-        "--repo",
-        _slug(repo),
-        "--limit",
-        _limit(limit, what="limit"),
-        "--json",
-        ",".join(GH_RUN_FIELDS),
-    ]
-    if branch is not None:
-        if not isinstance(branch, str) or not _BRANCH.match(branch):
-            raise RecipeError(f"{branch!r} is not a branch name")
-        argv += ["--branch", branch]
-    return argv

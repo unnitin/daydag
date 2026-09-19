@@ -1,6 +1,6 @@
 """SPEC §3.3's classifier, measured against issue #14's eval set (issue #15).
 
-`daydag.evalset.score()` is the only scorer used here - reimplementing it would
+`tests/evalset.py`'s `score()` is the only scorer used here - reimplementing it would
 be exactly the kind of redefined logic this repo's reviews keep rejecting. The
 bar itself lives in `reference/ingestion-eval.md` and is repeated at the top of
 the precision-and-recall section below so a reviewer can compare the two
@@ -24,7 +24,6 @@ from pathlib import Path
 
 import pytest
 
-from daydag.evalset import LABELS, load_items, score
 from daydag.ingestion import (
     CREATION_LANGUAGE,
     Classification,
@@ -33,6 +32,7 @@ from daydag.ingestion import (
     classify_items,
     unplaced,
 )
+from evalset import LABELS, load_items, score
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 INGESTION_MODULE = REPO_ROOT / "src" / "daydag" / "ingestion.py"

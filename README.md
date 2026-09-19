@@ -39,7 +39,6 @@ artifact is the load-bearing rule; the rest is plumbing.
 | `state` | The `DayDAG/` vault folder and the SQLite event log. Two stores, opposite requirements |
 | `ledger` | Calendar-driven meeting rows, so a meeting that produced **no** notes is visible |
 | `pulse` | Repo state: local mirrors for history, API for review state |
-| `board` | Board state: Jira deltas and the ticket-key join, read never driven |
 | `closure` | Open is a verdict, not a default: the reply under every ask is read before the ask is reported open |
 | `vault` | Targeted line edits to a note, with an iCloud-aware compare-and-swap |
 | `voice` | The house voice as assertions, and the templates for every push |
@@ -51,11 +50,10 @@ artifact is the load-bearing rule; the rest is plumbing.
 | `eod_wrap` | SPEC §3.5's EOD wrap: what closed, what moved, tomorrow's first meeting |
 | `prep` | Meeting prep pings: the one interrupt, 30 min out, qualified by the ledger |
 | `week_ahead` | SPEC §3.6's Sunday week-ahead: a read of Friday's plan, assembled into one push |
-| `delivery` | The one autonomous send - the principal's DM - and the threaded prep reply |
+| `delivery` | The shape of the one autonomous send - the principal's DM - and the threaded prep reply. Not yet wired to a transport: the skill posts by hand until the loops are scheduled (#25) |
 | `prep_selector` | Naming the meeting to prep for, and refusing to guess between two |
 | `people` | Who someone is - ids, title, DM, groups, how often met - with stated facts outranking inferred ones |
 | `run` | The two-phase contract that makes a loop runnable: plan the fetch, assemble the push |
-| `evalset` | The hand-labelled ingestion ground truth, and `score()` — so precision is measured, not asserted |
 | `soak` | The five-day gate's journal: every edit he asks for, and whether a repeat is still outstanding |
 | `ingestion` | SPEC §3.3's classifier: five labels, biased to precision, no write path |
 

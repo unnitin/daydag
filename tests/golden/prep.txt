@@ -1,0 +1,3 @@
+Pod Steering in 30 - talking points in thread
+- <@UPRINCIPAL1> the compute consolidation doc is ready for a read - raised since you last met
+  "<@UPRINCIPAL1> the compute consolidation doc is ready for a read" https://example.com/archives/CHANNELID/p1789700000000000

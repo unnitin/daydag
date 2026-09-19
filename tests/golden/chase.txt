@@ -1,0 +1,14 @@
+open loops - 3 open, verified
+
+chase list - answered, not yet struck (1)
+- vp-data · fruits metadata list · asked-on 2026-09-10 · status open - answered, strike?: "sent the list over, see the thread" (https://example.com/archives/CHANNELID/p1789400000000000)
+
+chase list - couldn't verify (1)
+- gov-lead · define project expectations + coverage timelines · asked-on 2026-09-11 · status open - unchecked: no slack permalink to read from (couldn't source this one)
+
+owed by you - open (2)
+- **gov-lead** · your read on his platform framing · waiting since 2026-09-14 06:00 - read the thread - nothing from you (https://x.slack.com/archives/DOWED00001/p1789390817581149?thread_ts=1789007120.252329&cid=DOWED00001)
+- **to vp-ai** · *"will revert before eod today"* · said 2026-09-15 09:50 · ⚠ eod has passed - read the thread - nothing from you (https://x.slack.com/archives/DPROMISE01/p1789488602000000)
+
+pending decisions - open (1)
+- **2026-09-17 · shazam attribution** · options 1-4 · slack · status: open - read the thread - nothing from you (https://x.slack.com/archives/CDECIDE001/p1789667238635309)
