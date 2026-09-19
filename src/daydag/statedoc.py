@@ -43,11 +43,11 @@ from typing import Any
 
 from daydag import vault
 from daydag.recipes import has
-from daydag.voice import WARN
 
-#: WARN is the sanctioned glyph (plain U+26A0, not its emoji-presentation
-#: twin); `daydag.voice` is the register authority. A chase item that cannot
-#: be rendered in full still has to stay inside house voice.
+# WARN is the sanctioned glyph (plain U+26A0, not its emoji-presentation twin);
+# `daydag.voice` is the register authority, and a chase item that cannot be
+# rendered in full still has to stay inside house voice.
+from daydag.voice import WARN
 
 README = """# DayDAG
 

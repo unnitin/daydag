@@ -145,6 +145,7 @@ def assemble(
 
     # -- what moved: the pulse's own block, reused verbatim ----------------
     moved_lines = shipping_lines(read, pulse)
+    count = 0
     if moved_lines and pulse is not None:
         # Counted from `items()`, not from the rendered lines: the block also
         # carries stale-mirror and unparsed-watchlist notices, and a failure to
@@ -177,7 +178,7 @@ def assemble(
         voice.Push.EOD_WRAP,
         {
             "closed": "?" if "the weekly note" in read.unreachable else len(closed),
-            "moved": "?" if "the pulse" in read.unreachable else len(moved_lines),
+            "moved": "?" if "the pulse" in read.unreachable else count,
         },
     )
     return Push(

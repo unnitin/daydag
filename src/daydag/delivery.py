@@ -300,7 +300,7 @@ def deliver_prep_ping(
             raise DeliveryError(
                 "Push.PREP_PING is no longer flagged as the one interrupt "
                 "(prep.may_interrupt); a push that cannot arrive off-schedule "
-                "must not jump the decision queue by being sent here"
+                "must not arrive off-schedule by being sent here"
             )
         channel = _principal_channel(identities)
         headline = _send(transport, channel=channel, text=ping.headline())

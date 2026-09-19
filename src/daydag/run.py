@@ -177,7 +177,7 @@ def plan(loop: str, *, now: datetime, identities: Mapping[str, str], selector: s
             ),
         )
 
-    windows = _calendar_windows(loop, day, tz=tz, selector=selector)
+    windows = recipes.loop_windows(loop, day, tz=tz, selector=selector)
     overnight = recipes.slack_overnight(now, mentioning=principal, identities=identities)
     note = recipes.weekly_note(day)
 
@@ -294,18 +294,35 @@ def _closure_reads(identities: Mapping[str, str]) -> list[Step]:
     return steps
 
 
-def _calendar_windows(
-    loop: str, day: date, *, tz: Any = recipes.PACIFIC, selector: str = ""
-) -> list[recipes.DayWindow]:
-    """The windows this loop fetches, from `recipes.loop_windows` - the one
-    place the arithmetic lives, so the plan and every consumer agree (#109)."""
-    return recipes.loop_windows(loop, day, tz=tz, selector=selector)
-
-
 def _overnight_opened(window: recipes.OvernightWindow) -> Any:
     """The date the overnight window opened - what `brief` keys its gmail
     query off, so the plan asks for the same thing the consumer will."""
     return datetime.fromtimestamp(window.min_ts, tz=recipes.PACIFIC).date()
+
+
+def _as_instant(value: Any) -> Any:
+    """A JSON timestamp as a `datetime`, or the value untouched.
+
+    The one place this seam can go wrong quietly. `push.local` returns None
+    unless the value is a `datetime` OBJECT, and the agent fetches over MCP,
+    where every instant is a string - so payloads passed through untouched
+    rendered every meeting "all day", right title and wrong time, on every
+    real run.
+
+    Google nests it as `{"dateTime": ...}`; an all-day event carries
+    `{"date": ...}` and has no instant, which stays untouched and renders
+    as the all-day it actually is. An unparseable string also stays put:
+    `push.local` will read it as no instant, which is a meeting without a
+    time rather than a meeting at a guessed one.
+    """
+    if isinstance(value, Mapping):
+        value = value.get("dateTime") or value.get("date_time") or value
+    if not isinstance(value, str):
+        return value
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return value
 
 
 class _Payloads:
@@ -320,31 +337,6 @@ class _Payloads:
     def __init__(self, payloads: Mapping[str, Any]) -> None:
         self._payloads = payloads
 
-    @staticmethod
-    def _instant(value: Any) -> Any:
-        """A JSON timestamp as a `datetime`, or the value untouched.
-
-        The one place this seam can go wrong quietly. `push.local` returns None
-        unless the value is a `datetime` OBJECT, and the agent fetches over MCP,
-        where every instant is a string - so payloads passed through untouched
-        rendered every meeting "all day", right title and wrong time, on every
-        real run.
-
-        Google nests it as `{"dateTime": ...}`; an all-day event carries
-        `{"date": ...}` and has no instant, which stays untouched and renders
-        as the all-day it actually is. An unparseable string also stays put:
-        `push.local` will read it as no instant, which is a meeting without a
-        time rather than a meeting at a guessed one.
-        """
-        if isinstance(value, Mapping):
-            value = value.get("dateTime") or value.get("date_time") or value
-        if not isinstance(value, str):
-            return value
-        try:
-            return datetime.fromisoformat(value)
-        except ValueError:
-            return value
-
     #: Every field on a calendar record that is an instant. Both ends, not just
     #: `start`: an unparsed `end` made the ledger raise and the whole notes-gap
     #: mechanism degrade to "couldn't check the meeting ledger" on every run -
@@ -358,7 +350,7 @@ class _Payloads:
         path, which reads the same JSON back out of the event log."""
         if not isinstance(record, Mapping):
             return record
-        parsed = {name: cls._instant(record[name]) for name in cls._INSTANTS if name in record}
+        parsed = {name: _as_instant(record[name]) for name in cls._INSTANTS if name in record}
         return {**record, **parsed} if parsed else record
 
     def _records(self, name: str) -> list[Mapping[str, Any]]:
@@ -923,9 +915,7 @@ def _attach_notes(ledger: Ledger, payloads: Mapping[str, Any], now: datetime) ->
         if not isinstance(mail, Mapping):
             continue
         title = title_from_gemini_subject(str(mail.get("subject", "")))
-        stamp = _Payloads._instant(
-            mail.get("arrived") or mail.get("date") or mail.get("internalDate")
-        )
+        stamp = _as_instant(mail.get("arrived") or mail.get("date") or mail.get("internalDate"))
         ledger.offer_note(
             Match(
                 title=title,

@@ -40,7 +40,7 @@ from daydag import recipes
 from daydag.ledger import Ledger
 from daydag.pulse import Pulse
 from daydag.statedoc import StateDoc, StateFolder
-from daydag.voice import clipped
+from daydag.voice import WARN, clipped
 
 __all__ = [
     "ADMISSIONS",
@@ -87,11 +87,6 @@ class PushError(RuntimeError):
     it catches all three.
     """
 
-
-#: The sanctioned warning glyph: plain U+26A0, not its emoji-presentation twin.
-#: Written as an escape because the difference is invisible in most editors and
-#: `voice.voice_violations` fails the whole brief over it.
-WARN = "⚠"
 
 #: What a claim says when it has no evidence. Guardrail 3's second half: "if the
 #: agent can't source it, it says so instead of asserting".
@@ -576,7 +571,7 @@ def seed_ledger(
     ledger: Ledger,
     events: Sequence[Mapping[str, Any]],
     *,
-    required: Sequence[str] = ("id", "start", "end", "attendees"),
+    required: Sequence[str] = ("id", "start", "end", "summary", "attendees"),
 ) -> None:
     """Seed ``ledger`` from calendar records, refusing one that cannot qualify.
 

@@ -1,6 +1,7 @@
 """The one argparse tree behind `run`, `people`, `soak` and `registry`.
 
 USING IT
+    python -m daydag registry               # one entry for all four commands
     python -m daydag.run plan morning
     python -m daydag.run render chase --log ~/.local/state/daydag/events.db < payloads.json
     python -m daydag.run render ship --mirrors --log <db> < /dev/null

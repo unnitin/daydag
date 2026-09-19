@@ -47,3 +47,19 @@ def test_a_modules_refusal_is_one_line_and_exit_one(tmp_path, monkeypatch, capsy
     assert cli.main(["run", "plan", "morning"]) == 1
     err = capsys.readouterr().err
     assert "no identity file" in err and "Traceback" not in err
+
+
+def test_the_package_itself_is_the_entry_point():
+    """`python -m daydag ...` is what the CLI docstring promises; without a
+    `__main__.py` the package refuses to run and the promise is false."""
+    import subprocess
+    import sys
+
+    done = subprocess.run(
+        [sys.executable, "-m", "daydag", "registry", str(REPO_SKILLS)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert done.returncode == 0, done.stderr
+    assert "ownership (one writer per artifact)" in done.stdout

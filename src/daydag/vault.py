@@ -209,9 +209,8 @@ class VaultNote:
 
     def read(self) -> NoteSnapshot:
         """Snapshot the note, refusing placeholders and undecodable bytes."""
-        stat_result = self.path.stat() if self.path.exists() else None
         data = read_materialised(self.path)
-        assert stat_result is not None  # read_materialised raised otherwise
+        stat_result = self.path.stat()
         try:
             data.decode("utf-8")
         except UnicodeDecodeError as exc:
