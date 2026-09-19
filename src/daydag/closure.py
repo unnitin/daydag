@@ -27,10 +27,12 @@ CONTRACTS
 
 WHY IT EXISTS
     On 2026-09-18 three items were reported to him as open that were already
-    closed in Slack: a promise answered three hours after it was made in the
-    same DM, a recording that had been posted in the thread the day before, and
-    a decision he had answered in the thread it was asked in. Every one had
-    been matched on the text of the ASK, and the reply under it was never read.
+    closed in Slack: a promise answered three hours later in the same DM, a
+    recording posted in the thread the day before, and a decision he had
+    answered in the thread it was asked in. Every one had been matched on the
+    text of the ASK, and the reply under it was never read. All three answers
+    were thread REPLIES, which a top-level channel read never sees.
+
     His words: "these are things you should already try before coming back to
     me for directions". This module is that try, made mechanical: the runner
     plans the reads, and an item cannot render as open until they happened.
@@ -146,10 +148,10 @@ def slack_permalink(text: str) -> tuple[str, str, str, str]:
     """``(conversation, ts, thread_ts, permalink)`` for the first Slack link in
     ``text``, or four empty strings.
 
-    The FIRST one: a chase block's own permalink sits on the head line or its
-    first sub-bullet, and a later sub-bullet may cite the meeting notes or a
-    related thread. Reading the wrong conversation would report "open" against
-    a channel the reply was never going to land in.
+    The FIRST one. A block's own permalink sits on its head line or first
+    sub-bullet; a later sub-bullet may cite meeting notes or a related thread,
+    and reading that conversation instead reports "open" against a channel the
+    reply was never going to land in.
     """
     found = _PERMALINK.search(text)
     if not found:
@@ -202,9 +204,8 @@ def _ask(text: str, section: str, waiting_on: str, source: str) -> Ask:
 def closure_steps(asks: Iterable[Ask]) -> list[ReadStep]:
     """One read per checkable ask: the conversation after it, and its thread.
 
-    The thread is not optional. A top-level read misses every reply, and a
-    reply is exactly where an answer lands - all three of the 2026-09-18
-    misses were replies.
+    The thread is not optional: a top-level read misses every reply, and a
+    reply is exactly where an answer lands.
     """
     steps: list[ReadStep] = []
     seen: set[str] = set()
@@ -268,14 +269,14 @@ def judge(
 ) -> list[Verdict]:
     """A verdict per ask, from what was read.
 
-    ``fetched`` maps an ask's key to the messages read for it. A key that is
-    absent - or a ``fetched`` that is ``None`` because the agent never ran the
-    closure reads at all - leaves that ask ``unchecked``. Nothing here infers
-    absence from silence (contract 1).
+    ``fetched`` maps an ask's key to the messages read for it. An absent key -
+    or a ``fetched`` of ``None``, the agent never having run the closure reads
+    at all - leaves that ask ``unchecked``; nothing here infers absence from
+    silence (contract 1).
 
-    ``owners`` maps a casefolded owner token to a Slack user id, for chase
-    items whose owner the caller can resolve; without it any non-principal
-    reply counts as the owner's.
+    ``owners`` maps a casefolded owner token to a Slack user id, for chase items
+    whose owner the caller can resolve. Without it, any non-principal reply
+    counts as the owner's.
     """
     owners = {k.casefold(): v for k, v in (owners or {}).items()}
     verdicts: list[Verdict] = []

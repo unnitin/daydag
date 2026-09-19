@@ -14,8 +14,8 @@ USING IT
 CONTRACTS
     1. One row shape. `Result` (name · source · status · reason · detail) is
        what a probe produces, what a run observes, what a row stores and what
-       the projection prints. It was converted five times between two
-       modules; now it is type-checked once, on the way in (`Result.from_row`).
+       the projection prints. Type-checked once, on the way in
+       (`Result.from_row`), and never converted again.
     2. Never trust a probe because it did not raise. Every check asserts a
        plausible SHAPE came back, and a response over `OUTPUT_CEILING_CHARS`
        is an overflow, not a quiet day - the failure the #2 audit met three
@@ -84,12 +84,14 @@ SHAPE = "shape"
 #: one is fixed with `gh auth`, the other with a clone on disk, and reporting
 #: either as "github is down" sends the reader to the wrong place.
 FETCH = "fetch"
+#: A probe raised something unrecognised. Also a run outcome below - one
+#: literal, one meaning: something did not get through.
 FAILED = "failed"
 
 #: Above this, a response never reaches the model. Five days of calendar
 #: measured 156,681 chars, so a day is roughly 31k and the ceiling has to catch
 #: the *second* day - otherwise "just widen it to the week", the exact mistake
-#: the audit recorded, passes the smoke run.
+#: the audit recorded, passes the pre-flight.
 OUTPUT_CEILING_CHARS = 50_000
 
 #: A detail is one line in a brief, not a stack trace pasted into a DM.
@@ -100,8 +102,7 @@ DETAIL_LIMIT = 120
 #: An over-limit response, however the connector phrases it. Deliberately not a
 #: bare "too many": a 429 is routine from Slack, GitHub and Jira and carries the
 #: opposite fix - an overflow says bound the query harder, a rate limit says ask
-#: again later, and reading one as the other sends the reader to rewrite a query
-#: that was never the problem.
+#: again later (`test_a_rate_limit_is_not_reported_as_an_overflow`).
 _OVERFLOW = re.compile(
     r"exceed|too (?:large|long|big)|too many (?:results|records|rows|tokens|characters|bytes)"
     r"|maximum (?:length|size)|output limit|truncat|token limit",
@@ -123,13 +124,12 @@ def _one_line(text: str, room_for: str = "") -> str:
     """A failure message, trimmed to something a brief can carry.
 
     ``room_for`` is the text that will be appended afterwards, and the trim
-    leaves space for it. Trimming first and appending second is how the
-    Databricks fix got cut mid-word off the one message it exists to annotate:
-    a real schema error names the tool and the endpoint and is already past the
-    limit on its own.
+    reserves room for it, so the appended text is not what gets cut. A real
+    schema error names the tool and the endpoint and is already past the limit
+    on its own (`test_the_login_fix_survives_a_realistic_schema_error`).
 
-    The collapse-and-clip itself is `voice.clipped`; what stays here is this
-    module's budget and the reservation, which are the parts that are ours.
+    The collapse-and-clip itself is `voice.clipped`; the budget and the
+    reservation are the parts that are ours.
     """
     return clipped(text, DETAIL_LIMIT - len(room_for))
 
@@ -154,19 +154,18 @@ def _classify(text: str, default: str = "") -> tuple[str, str]:
 
 # -- plausibility: what each source looks like when it genuinely answered ----
 #
-# The readers live in `daydag.recipes`: finding a record list or an error
-# object is the same job at every connector edge, and it was private here only
-# because this was the first edge to need it. What stays in this module is the
-# per-source judgement - which is the half that actually differs, and the half
-# that was wrong seven times in section 10 below.
+# The shared readers - find a record list, find an error object - live in
+# `daydag.recipes`, because that is the same job at every connector edge. What
+# stays here is the per-source judgement, the half that differs from source to
+# source.
 
 
 def _check_calendar(payload: Any) -> str | None:
     """One day of events. Empty is honest here and nowhere else.
 
-    A day can genuinely be clear, so a count of zero is not evidence of a
-    failure - and an overflow cannot hide behind that, because the ceiling
-    catches it before this runs.
+    A day can genuinely be clear, so zero events is not evidence of a failure
+    (`test_a_calendar_day_with_no_events_is_still_reached`). An overflow cannot
+    hide behind that, because the ceiling catches it before this runs.
     """
     events = records(payload)
     if events is None:
@@ -223,11 +222,10 @@ def _check_notion(payload: Any) -> str | None:
 def _check_jira(payload: Any) -> str | None:
     """Issues from a bounded JQL on the live project.
 
-    The audit queried four projects and every result came from one of them: the
-    other three are dormant, not quiet, and a dormant project answers exactly
-    like a healthy one with nothing in the window. So zero rows is a skip. The
-    cost of being wrong is one "couldn't check jira" line; the cost of the other
-    reading is a board reported clear that was never really queried.
+    Zero rows is a skip. The audit queried four projects and every result came
+    from one of them: a dormant project answers exactly like a healthy one with
+    nothing in the window. Being wrong costs one "couldn't check jira" line; the
+    other reading costs a jira board reported clear that was never queried.
     """
     issues = records(payload)
     if issues is None:
@@ -283,9 +281,9 @@ def _check_warehouse(payload: Any) -> str | None:
     if not rows:
         return "select 1 returned no rows at all"
     answer = first_value(rows[0])
-    # `True == 1` in Python, so the bool is excluded explicitly. A driver
-    # handing back a boolean is not the warehouse answering 1, and accepting it
-    # is the same "it returned something" reading this check exists to refuse.
+    # `True == 1` in Python, so the bool is excluded explicitly - a driver
+    # handing back a boolean is not the warehouse answering 1
+    # (`test_select_1_does_not_accept_a_boolean`).
     if isinstance(answer, bool) or answer not in (1, "1", 1.0):
         return f"select 1 came back as {answer!r}, so the warehouse is not answering"
     return None
@@ -428,11 +426,10 @@ class Result:
     def fragment(self, *, free_text: bool = True) -> str:
         """This skip inside a run row: `jira (auth)`.
 
-        `free_text=False` prints the reason only if it is one of the pre-flight's
-        own - a closed vocabulary of words like `auth` and `overflow`. This
-        fragment reaches the line offered to `State.md`, and a reason carrying
-        a connector's own sentence (a url with a token) must not land in a
-        synced plaintext file. The log keeps the reason either way.
+        `free_text=False` prints the reason only if it is one of this module's
+        own - the closed vocabulary in `_KNOWN_REASONS`. This fragment reaches
+        the line offered to `State.md`, so contract 4 applies to it. The log
+        keeps the reason either way.
         """
         reason = self.reason
         if not free_text and reason not in _KNOWN_REASONS:
@@ -443,12 +440,11 @@ class Result:
     def from_row(cls, entry: Any, *, strict_status: bool = False) -> Result:
         """One stored row back into a `Result`, type-checked field by field.
 
-        The ONE check on the way in. `Result(**entry)` accepts any value types,
-        and `fragment` renders the reason into the `State.md` line - so a row
-        that is not text degrades to `UNREADABLE` like the rest instead of
-        printing whatever it holds. ``strict_status`` refuses a status outside
-        the three the run log knows, for rows arriving from a caller rather
-        than from the log.
+        The ONE check on the way in. `Result(**entry)` would take any value
+        type and `fragment` renders the reason into the `State.md` line, so a
+        field that is not text degrades to `UNREADABLE` rather than printing
+        whatever it holds. ``strict_status`` also refuses a status outside the
+        three the run log knows, for rows arriving from a caller.
         """
         if not isinstance(entry, Mapping):
             raise TypeError(f"a row is {type(entry).__name__}, not a record")
@@ -584,13 +580,12 @@ def _probe_once(check: Check, probe: Callable[[], Any] | None) -> Result:
 
     wrong = check.plausible(payload) if check.plausible else None
     if wrong:
-        # Trimmed here rather than in each check, for the same reason the vault
-        # filters sensitivity at the writer: this is the boundary that has to
-        # hold when a caller forgets. A check builds its message from the
-        # payload - `_check_warehouse` interpolates the answer it got - and an
-        # untrimmed one put a page of garbled driver output into the line the
-        # brief ships. `_classify` already trims the raise path; this is its
-        # twin, and it was the half that was missing.
+        # Trimmed here rather than in each check, the same way the vault
+        # filters sensitivity at the writer: one boundary that holds when a
+        # caller forgets. A check builds its message out of the payload -
+        # `_check_warehouse` interpolates the answer it got - so this is the
+        # twin of the trim `_classify` does on the raise path
+        # (`test_a_shape_failure_is_trimmed_like_a_raised_one`).
         return skipped(check.shape_reason, _one_line(wrong))
     return Result(check.name, check.source, REACHED, detail=check.reaches)
 
@@ -628,13 +623,11 @@ OK = "ok"
 #: The run finished and shipped, with at least one source named as unreachable.
 #: Guardrail 6 working, not the run failing.
 DEGRADED = "degraded"
-#: The run raised before it finished (the same word `smoke` uses for a probe
-#: that raised - one literal, one meaning: something did not get through).
 #: The run reported no failure and also never observed a single source. Not `OK`:
-#: a loop that bailed before the smoke run, or that swallowed its own connector
-#: error and forgot to report it, looks identical to a healthy one otherwise -
-#: and "the agent last ran successfully at 6:40" would then be a lie told by a
-#: run that read nothing.
+#: a loop that bailed before the pre-flight, or that swallowed its own
+#: connector error and forgot to report it, looks identical to a healthy one
+#: otherwise - and "the agent last ran successfully at 6:40" would then be a
+#: lie told by a run that read nothing.
 UNCHECKED = "unchecked"
 #: A row in the log that this version of the code cannot parse. Not an outcome
 #: any run produces - it is what a *reader* reports when the schema has moved
@@ -665,11 +658,11 @@ UNSTATED = "failure reported with no message"
 
 _STATUSES = (REACHED, SKIPPED, NOT_CONNECTED)
 
-#: `smoke`'s own skip reasons, and the empty string a reached row carries. The
-#: closed vocabulary the projection is allowed to print: a reason is a word like
-#: `auth` or `overflow` that sends the reader somewhere, never a sentence a
+#: This module's own skip reasons, and the empty string a reached row carries.
+#: The closed vocabulary the projection is allowed to print: a reason is a word
+#: like `auth` or `overflow` that sends the reader somewhere, never a sentence a
 #: connector wrote. A reason outside this set is still kept in the log - see
-#: `Skip.line`.
+#: `Result.fragment`.
 _KNOWN_REASONS = frozenset({"", NO_PROBE, AUTH, OVERFLOW, SHAPE, FETCH, FAILED})
 
 #: The loop of a row whose `loop` field could not be read. Not a real loop: it
@@ -692,15 +685,15 @@ def _describe(failure: str | BaseException) -> str:
     """A failure as one line, however the caller reported it.
 
     Takes the exception itself as well as a string, because the natural call -
-    `failure=str(exc)` - is empty for `RuntimeError()`, `KeyError()` and every
-    other bare-arg exception, and a row whose failure field is blank is scored
-    as a successful run. Passing the exception is the preferred form; a string
-    that says nothing is turned into one that admits it rather than trusted.
+    `failure=str(exc)` - is empty for every bare-arg exception, and a row whose
+    failure field is blank is scored as a successful run (contract 5). A string
+    that says nothing becomes `UNSTATED` rather than being trusted.
     """
     if isinstance(failure, BaseException):
-        # Trim FIRST, then fall back. `RuntimeError("   ")` is truthy, so
+        # Trim FIRST, then fall back: `RuntimeError("   ")` is truthy, so
         # falling back on the raw string leaves the type name unused and the
-        # trim then produces "" - a failed run scored as a clean one.
+        # trim then produces ""
+        # (`test_a_whitespace_only_failure_is_reported_rather_than_swallowed`).
         return _failure_line(str(failure)) or type(failure).__name__
     trimmed = _failure_line(failure)
     return UNSTATED if failure and not trimmed else trimmed
@@ -772,12 +765,9 @@ class RunRow:
         """The one line SPEC section 7 asks for, plus the failure when there was one.
 
         `free_text=False` is the form for a line leaving the log: it keeps the
-        fact of a failure and drops its wording, and holds each skip's reason to
-        `smoke`'s own vocabulary. What is left is check names, loop names and a
-        timestamp - all of them the agent's own words. The rest is whatever a
-        connector chose to say, and a 403 that quotes the url it was refused can
-        carry a token in the query string. Fine in the log, which is outside the
-        vault; not fine in a line offered to a synced markdown file.
+        fact of a failure, drops its wording, and holds each skip's reason to
+        `_KNOWN_REASONS`. What is left is check names, loop names and a
+        timestamp - the agent's own words, never a connector's (contract 4).
         """
         parts = [
             self.at,
@@ -809,11 +799,12 @@ class RunRow:
     def from_payload(cls, payload: Mapping[str, Any]) -> RunRow:
         """Rebuild a row. Raises on a payload this version cannot read.
 
-        Strict on purpose, and strict about *types* rather than only about keys.
-        A newer schema that enriches a list - `reached: [{"name": ..., "ms": 12}]`
-        - parses fine if nothing checks, and then blows up later inside
-        `line()`, which is well past the point where `rows` could have degraded
-        it. Failing here is what makes the `UNREADABLE` fallback work at all.
+        Strict about *types*, not only about keys. A newer schema that enriches
+        a list - `reached: [{"name": ..., "ms": 12}]` - parses fine if nothing
+        checks and then blows up inside `line()`, well past the point where
+        `rows` could have degraded it
+        (`test_a_list_a_newer_schema_enriched_is_caught_here_and_not_later`).
+        Failing here is what makes the `UNREADABLE` fallback work at all.
         """
         return cls(
             at=_text(payload["at"], "at"),
@@ -831,10 +822,9 @@ class RunRow:
 
         Guardrail 6 across time rather than across sources: one row written by a
         newer schema must not take `rows`, `last_run` and the projection down
-        with it, because the moment the schema moved is exactly the moment
-        somebody is reading the history. The row keeps its place in the
-        sequence, says it cannot be read, and counts as neither a success nor a
-        failed run.
+        with it, because the moment the schema moved is the moment somebody is
+        reading the history. The row keeps its place, says it cannot be read,
+        and counts as neither a success nor a failed run.
         """
         # A payload that is not a record at all has no `.get`, and raising from
         # inside the handler that exists to degrade would take down the whole
@@ -853,9 +843,10 @@ class RunRow:
 class Run:
     """A run in progress: what it has learned so far, before anything is written.
 
-    Mutable and deliberately dumb. It collects `smoke.as_rows()` output and
-    nothing else, so a loop can hand it a pre-flight report and then a second
-    one after a retry without the log having to reconcile them.
+    Mutable and deliberately dumb. It collects `Result`s - or the dicts
+    `SmokeReport.as_rows()` produces - and nothing else, so a loop can hand it a
+    pre-flight report and then a second one after a retry without the log having
+    to reconcile them.
     """
 
     loop: str
@@ -903,9 +894,8 @@ class Run:
             outcome = FAILED
         elif not by_status[REACHED] and not skipped:
             # Keyed off what was actually asked of a source, not off how many
-            # rows arrived. A run whose every check is `not connected` observed
-            # rows and read nothing, and scoring that `OK` is the healthy-looking
-            # run that read nothing all over again - permanently, the day a
+            # rows arrived: a run whose every check is `not connected` observed
+            # rows and read nothing. That stops being hypothetical the day a
             # second source is parked as unwired.
             outcome = UNCHECKED
         elif skipped:
@@ -914,13 +904,11 @@ class Run:
             outcome = OK
         return RunRow(
             at=self.at,
-            # Trimmed here, because `RunRow.line` says the parts it keeps are
-            # "all of them the agent's own words" - and `loop` is the caller's.
-            # `unreadable()` already trims this same field on the degraded-read
-            # path, so this was one path capped and its twin not, with the live
-            # write being the uncapped one. The newline matters more than the
-            # length: `projection_line` is offered to `State.md`, and a name
-            # carrying one breaks the file rather than just making a long line.
+            # Trimmed here as `unreadable()` trims it on the degraded-read
+            # path - `loop` is the caller's word and `RunRow.line` keeps it. The
+            # newline matters more than the length: `projection_line` is offered
+            # to `State.md`, and a name carrying one breaks the file rather than
+            # just making a long line.
             loop=_failure_line(self.loop),
             outcome=outcome,
             reached=tuple(result.name for result in by_status[REACHED]),
@@ -969,9 +957,9 @@ class RunLog:
 
         Args:
             loop: which loop ran. Rendered VERBATIM by `projection_*`, so keep
-                it a literal - see contract 3 in the module docstring.
-            rows: `smoke.as_rows()` output. Anything else raises, and the row is
-                still written before the raise.
+                it a literal - contract 4, and `projection_line` on why.
+            rows: `SmokeReport.as_rows()` output. Anything else raises, and
+                the row is still written before the raise.
             started: when the run BEGAN. Without it `at` is the moment this was
                 called, which is a different meaning from `run`'s `at` - two
                 loops using the two APIs would write one field two ways and
@@ -987,17 +975,14 @@ class RunLog:
         try:
             run.observe(rows)
         except Exception as bad:
-            # Write, then raise - the same order `run` uses, and for the same
-            # reason. A caller that reached here from its own `except` would
-            # otherwise lose both rows: the malformed one it was told about, and
-            # the failure it came here to record in the first place.
+            # Write, then raise - the same order `run` uses. A caller that
+            # reached here from its own `except` would otherwise lose both rows:
+            # the malformed one it was told about, and the failure it came here
+            # to record in the first place.
             #
             # `Exception`, not `ValueError`: `rows` is whatever the caller
-            # passed. Handing over the `SmokeReport` instead of its `as_rows()`
-            # raises `TypeError` from the iteration, a list of strings raises
-            # `AttributeError`, and a generator can raise anything at all
-            # halfway through - every one of which wrote no row while this
-            # caught the one shape it had thought of.
+            # passed, and the ways it goes wrong are open-ended - the cases are
+            # in `test_any_malformed_input_still_leaves_a_run_row_behind`.
             # Both halves through `_describe`: `bad` can be a bare `TypeError()`
             # too, and interpolating it raw records "brief died; " - the exact
             # blank-failure problem, one operand over.
@@ -1016,8 +1001,7 @@ class RunLog:
         ``at`` is stamped on ENTRY, so it is the run's start time.
 
         A raise from the body is recorded and then RE-RAISED - recording is not
-        handling, and swallowing here would turn a loud failure back into a
-        silent one. `BaseException`, so a cancelled or interrupted scheduled run
+        handling. `BaseException`, so a cancelled or interrupted scheduled run
         still leaves a row.
 
         Prefer this over `record` whenever the body might not finish: a `record`
@@ -1079,19 +1063,19 @@ class RunLog:
 
         ``loop`` is required, and that is the whole point. Five loops share this
         log, so the last row overall is whichever loop ran most recently - and a
-        healthy noon chaser at 12:05 renders a perfectly clean line while the
-        morning brief has failed every day since tuesday. That is precisely the
-        silence this module exists to break, so there is no unscoped form to
-        reach for by accident. `projection_lines` covers all of them.
+        healthy noon chaser at 12:05 would render a clean line while the morning
+        brief has failed every day since tuesday
+        (`test_a_healthy_loop_cannot_render_a_clean_line_for_a_dead_one`). That
+        is the silence this module exists to break, so there is no unscoped form
+        to reach for by accident. `projection_lines` covers all of them.
 
         Leads with the *last* run rather than only the last successful one: on a
-        thursday morning "last successful run: tuesday" is the entire finding,
-        and a line that only ever showed successes would bury it. When the last
-        run did not finish, the last one that did is named after it - that pair
-        says whether this is a blip or has been broken since tuesday.
+        thursday morning "last successful run: tuesday" is the entire finding.
+        When the last run did not finish, the last one that did is named after
+        it - that pair says whether this is a blip or has been broken since
+        tuesday.
 
-        The failure's wording is withheld, because this line is offered to a
-        plaintext file synced to every device Nitin owns. Returned rather than
+        The failure's wording is withheld (contract 4). Returned rather than
         written: `State.md` has one writer and it is not this module.
 
         ``loop`` itself is rendered VERBATIM, and it is the one part of this

@@ -27,9 +27,8 @@ WHY IT EXISTS
     The system knew almost nothing about people: two config values,
     `PREP_LEADERSHIP` and `ORG_EMAIL_DOMAIN`, both unset, so `has_leadership`
     and `has_external` always answered False and two of prep's four reasons
-    could never fire. Measured on real meetings - Luminate, YouTube, the label
-    summit - every outside-party meeting got no prep at all, which is exactly
-    where walking in cold costs most.
+    could never fire. Every outside-party meeting got no prep at all, which is
+    exactly where walking in cold costs most.
 
     The roster that did exist was PROSE in CLAUDE.md as `${SLACK_USER_*}`
     references. An agent reads that; no code does. It covered about fifteen
@@ -51,10 +50,10 @@ KNOWN LIMIT
     answered from the org domain - `ORG_EMAIL_DOMAIN`, or the principal's own
     address domain when that is unset.
 
-    WIRING. `run._prep` reads leadership from here and the loops that seed a
-    ledger observe the meetings that have already happened. `brief` and
-    `week_ahead` still build their Audience from `PREP_LEADERSHIP` in `.env`
-    until #119 lands, so that key is unioned in, not replaced.
+    WIRING. `run._prep` reads leadership from here (`Audience.from_directory`)
+    and the loops that seed a ledger observe the meetings that have already
+    happened. `week_ahead` still builds its Audience from `PREP_LEADERSHIP` in
+    `.env` until #119 lands, so that key is unioned in, not replaced.
 """
 
 from __future__ import annotations
@@ -145,10 +144,10 @@ class People:
 
         If the address or slack id already belongs to someone under ANOTHER
         key - typically one `observe` minted from the address before he named
-        the role - that entry is folded into ``key`` first. Without this a
-        correction created a second person and `resolve(address)` kept
-        returning the observed stub with no dm, no title and no leadership:
-        the precedence contract bypassed entirely, verified by running it.
+        the role - that entry is folded into ``key`` first. Without the fold a
+        correction mints a second person and `resolve(address)` keeps returning
+        the observed stub, bypassing contract 1 entirely
+        (`test_a_correction_after_an_observation_lands_on_the_same_person`).
         """
         for handle in (email, slack_id):
             existing = self._by_address(handle) if handle else None
@@ -179,14 +178,13 @@ class People:
         job, so nothing here writes a title, and `OBSERVED` keeps whatever it
         does write below anything he states later.
 
-        Identity here is the EXACT address, never name tokens. A first version
-        resolved observations through the name fallback, so `wren@vendorco.com`
-        matched the VP's `{wren, alder}` and the vendor's address was appended to
-        her entry - the store that decides who to message pointed a stranger at
-        her DM.
+        Identity here is the EXACT address, never name tokens: resolving an
+        observation through the name fallback appends `wren@vendorco.com` to the
+        VP's entry, pointing a stranger at her DM in the store that decides who
+        to message (`test_a_strangers_address_never_folds_into_a_known_person`).
 
-        One marker per (person, event, DAY). `Row.event_id` is google's series
-        id, so keying on it alone counted a weekly 1:1 once and never again.
+        One marker per (person, event, DAY), because `Row.event_id` is google's
+        SERIES id - keying on it alone counts a weekly 1:1 once and never again.
         """
         event_id = str(getattr(row, "event_id", "") or "")
         start = getattr(row, "start", None)
@@ -226,11 +224,10 @@ class People:
     def resolve(self, handle: str) -> Person | None:
         """The person this key, address, id or name refers to, or None.
 
-        Key first - `people show vp-data` is the form every doc uses, and the
-        first version matched everything except the key and printed "not in
-        the directory" for it. Name tokens are tried only for a query that looks
-        like a name: an address never falls through to them, because
-        `wren@vendorco.com` must not resolve to Wren Alder.
+        Key first - `people show vp-data` is the form every doc uses. Name
+        tokens are tried only for a query that looks like a name: an address
+        never falls through to them, because `wren@vendorco.com` must not
+        resolve to Wren Alder.
         """
         handle = str(handle).strip()
         if handle in self._by_key:

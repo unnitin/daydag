@@ -55,11 +55,11 @@ DEFAULT_TIMEZONE = "America/Los_Angeles"
 def timezone_for(identities: Mapping[str, str] | None = None) -> ZoneInfo:
     """The principal's timezone, from ``TIMEZONE`` in .env, else the fallback.
 
-    An earlier version of this module claimed the value was "read from TIMEZONE
-    in .env" while nothing read it - `TIMEZONE=Europe/London` silently produced
-    Pacific day boundaries. The comment was the whole feature. This is it made
-    true; an unknown zone name is refused rather than silently falling back,
-    because a typo would otherwise present as correct-looking wrong times.
+    An earlier version claimed the value was "read from TIMEZONE in .env" while
+    nothing read it - the comment was the whole feature, and
+    `TIMEZONE=Europe/London` silently produced Pacific day boundaries. An
+    unknown zone name is refused rather than falling back, because a typo would
+    otherwise present as correct-looking wrong times.
     """
     if identities is None:
         return ZoneInfo(DEFAULT_TIMEZONE)
@@ -101,11 +101,10 @@ def resolve_reference(
     if not isinstance(found, str):
         # `Mapping[str, str]` is an annotation, not a runtime guard, and this is
         # the one function whose job is turning a bad identity into the CALLER's
-        # error. A mapping built from `os.environ.get(...)` - which returns None
-        # when unset, and is the obvious way to build one without
-        # `Identities.from_file` - reached `.strip()` and raised AttributeError:
-        # exactly the bare lookup error three frames up that `error=` exists to
-        # prevent.
+        # error. A mapping built from `os.environ.get(...)` - the obvious way to
+        # build one without `Identities.from_file`, and None when unset - reached
+        # `.strip()` and raised AttributeError: exactly the bare lookup error
+        # three frames up that `error=` exists to prevent.
         raise error(f"{key} is set to {type(found).__name__}, not a string. Check .env.")
     return found.strip()
 
@@ -160,8 +159,8 @@ class Identities(Mapping[str, str]):
         `Mapping.get` implements this by catching `KeyError`, and
         `__getitem__` raises `ConfigError`, which is not one - so `.get()`
         propagated and every caller treating a key as OPTIONAL got a crash
-        instead. `timezone_for` defaulted to Pacific and raised; `board` read
-        an optional `ATLASSIAN_SITE` the same way.
+        instead: `timezone_for` defaulted to Pacific and raised, and so did
+        `prep` and `run` reading their own optional keys.
 
         Raising loudly is right for a REQUIRED id, which is what `[]` is for.
         `.get` is the caller saying this one is optional, and that has to mean

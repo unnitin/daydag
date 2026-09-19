@@ -15,9 +15,9 @@ CONTRACTS
     2. A VAULT-BOUND kind cannot be recorded without saying how sensitive it
        is, and the mark must be exactly "private" or "normal" (#105): the gate
        compares for equality, so a default or a near miss renders as visible.
-    3. One decoder. A row that will not parse is skipped (or handed back raw
-       when asked), never raised on: one torn row must not take the chase
-       list or the run history down with it.
+    3. One decoder, `recorded`. A row that will not parse is skipped (or
+       handed back raw when asked), never raised on - one torn row must not
+       take the chase list or the run history down with it.
 
 WHY SQLITE
     Markdown cannot answer "which run came last", and five loops appending to
@@ -161,20 +161,17 @@ class EventLog:
         history, and "when did this repo stop fetching" is a question only the
         rows can answer. ``last_fetch`` reads the newest back out.
 
-        Normalised to UTC on the way in. A naive stamp is *assumed* UTC rather
-        than refused, because refusing would take the pre-step down over a
-        cosmetic detail - but it is not stored naive: one naive row beside one
-        aware row makes them incomparable, and a mixed comparison is a
-        ``TypeError`` three frames inside the 6:40am run.
+        Normalised through `_as_utc` on the way in, so the table never holds
+        one naive row beside one aware one.
         """
         self.record("mirror_fetched", repo=repo, at=_as_utc(at).isoformat())
 
     def last_fetch(self, repo: str) -> datetime | None:
         """When ``repo``'s mirror last fetched cleanly, or ``None``.
 
-        ``None`` rather than "now": a mirror that has never once been read
-        successfully must not be dated as if it were fresh, which is the exact
-        lie issue #60 is about. The stale line says so in words instead.
+        ``None`` rather than "now": a mirror that has never been read cleanly
+        must not be dated as if it were fresh (#60). `pulse` renders the
+        difference in words.
 
         A row whose stamp does not parse is skipped rather than raised on, and a
         naive one is read as UTC. This file is on disk and a human can touch it;

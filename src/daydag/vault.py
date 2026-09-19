@@ -2,10 +2,10 @@
 
 USING IT
     note = Vault(root).note("Weekly Notes/0908-0912.md")
-    snap = note.read()                      # raises if evicted or outside root
-    edit = note.plan_tick(snap, line_no)    # PURE: reads nothing, writes nothing
-    edit.diff()                             # unified diff, for Proposals/
-    note.apply(edit)                        # CAS against snap.digest
+    snap = note.read()                              # raises if evicted or outside root
+    edit = note.plan_tick(snap, contains="CDI-91")  # PURE: reads nothing, writes nothing
+    edit.diff()                                     # unified diff, for Proposals/
+    note.apply(edit)                                # CAS against snap.digest
 
 CONTRACTS
     1. Touch only what changed; leave the rest BYTE-FOR-BYTE. An edit is a byte
@@ -24,14 +24,11 @@ CONTRACTS
        A crash mid-write leaves the original note untouched.
 
 WHY IT EXISTS
-    The spike's premise was that the Obsidian connector is create/append-only,
-    so the agent could never tick a checkbox in place. That premise is wrong
-    for this context: the vault is on local disk under `iCloud~md~obsidian` and
-    is POSIX read/write. Permissions are a non-issue.
-
-    What is left once permissions stop being interesting is three real hazards
-    - wholesale rewrite, sync racing the write, and dataless placeholders - and
-    this module exists to hold all three in one place.
+    The vault is on local disk under `iCloud~md~obsidian` and is POSIX
+    read/write, so the spike's premise - a create/append-only connector that
+    can never tick a checkbox in place - does not hold here. What is left is
+    three real hazards: wholesale rewrite, sync racing the write, and dataless
+    placeholders. This module holds all three in one place.
 """
 
 from __future__ import annotations
@@ -67,10 +64,9 @@ class VaultError(RuntimeError):
 class OutsideVaultError(VaultError):
     """A path resolved outside the vault root.
 
-    Not hypothetical: a previous write landed ``claude-write-test.md`` in a
-    ``Weekly Notes/`` folder at the vault's *parent*, because the vault prefix
-    was dropped. Every path goes through :meth:`Vault.note`, which resolves
-    symlinks before comparing.
+    A dropped vault prefix once landed a write in a ``Weekly Notes/`` folder
+    at the vault's *parent*. Every path goes through :meth:`Vault.note`, which
+    resolves symlinks before comparing.
     """
 
 
@@ -142,13 +138,12 @@ class NoteSnapshot:
     def lines(self) -> list[str]:
         """Lines split on ``\\n`` only - the same model the splice uses.
 
-        Deliberately not ``str.splitlines()``. That also breaks on U+2028,
-        U+0085, form feed and friends, which arrive routinely in text pasted
-        from Slack or Google Docs. One such character mid-line and the line
-        numbers planning sees stop matching the byte spans the write uses, so a
-        tick lands on an unrelated line - and the compare-and-swap cannot catch
-        it, because the file never changed. Splitting on ``\\n`` also keeps a
-        CRLF note's ``\\r`` inside the line, so it survives a rewrite.
+        Not ``str.splitlines()``: it also breaks on U+2028, U+0085 and form
+        feed, which paste in from Slack and Google Docs. One of those mid-line
+        desyncs the line numbers from the byte spans, so a tick lands on an
+        unrelated line and the compare-and-swap cannot catch it - the file
+        never changed. Splitting on ``\\n`` also keeps a CRLF note's ``\\r``
+        inside the line, so it survives a rewrite.
         """
         return [self.data[start:end].decode("utf-8") for start, end in _line_spans(self.data)]
 
@@ -244,13 +239,13 @@ class VaultNote:
     def plan_tick(self, snapshot: NoteSnapshot, *, contains: str) -> NoteEdit:
         """Tick the one checkbox line containing ``contains``.
 
-        Ticked **in place**. reference/vault-recipes records that the weekly
-        note's own preamble says closed items are struck and moved to Done, and
-        that in practice every closed item is ``- [x]`` where it sits with
-        ``# Done this week`` left empty. Invariant 6: follow the vault.
+        Ticked **in place**: reference/vault-recipes records that the note's
+        preamble says closed items move to Done, while in practice every closed
+        item is ``- [x]`` where it sits and ``# Done this week`` is empty.
+        Invariant 6 - follow the vault, not the template.
 
-        Ambiguity is an error rather than a first-match guess (invariant 5) -
-        two near-identical standup lines is exactly the shape that recurs.
+        Ambiguity raises rather than guessing first-match (invariant 5); two
+        near-identical standup lines is the shape that recurs.
         """
         matches = [
             (n, line)
@@ -295,15 +290,14 @@ class VaultNote:
     def apply(self, edit: NoteEdit) -> None:
         """Write the edit, refusing if the note moved under us.
 
-        The compare-and-swap window narrows the race but cannot close it: no
-        POSIX call can hold off the iCloud daemon. What it does guarantee is
-        that a change the agent could have observed is never overwritten
-        silently - the remaining window is microseconds, and the failure is
-        loud when it loses.
+        KNOWN LIMIT: the compare-and-swap narrows the race but cannot close it
+        - no POSIX call holds off the iCloud daemon. What it guarantees is that
+        a change the agent could have observed is never overwritten silently;
+        the remaining window is microseconds and the failure is loud.
 
-        Raises :class:`ConflictError` if the note changed or vanished, and -
-        because the check is a real re-read - anything else the read can refuse
-        on: :class:`NotMaterialisedError` if iCloud evicted the note between
+        The check is a real re-read, so anything :meth:`read` refuses on
+        surfaces here too: :class:`ConflictError` if the note changed or
+        vanished, :class:`NotMaterialisedError` if iCloud evicted it between
         plan and apply, :class:`NoteFormatError` if it came back non-text.
         Catch :class:`VaultError` for all of them.
         """
@@ -358,9 +352,8 @@ def _reject_newlines(text: str) -> None:
     """One planned line must stay one line.
 
     Splicing several lines into a span the planner recorded as one desyncs
-    every line number derived from the same snapshot - the same class of bug as
-    a mismatched line model, and equally invisible to the compare-and-swap.
-    Callers that want more lines plan more edits, or append.
+    every line number derived from that snapshot, and the compare-and-swap
+    cannot see it. Callers that want more lines plan more edits, or append.
     """
     if "\n" in text:
         raise ValueError("a replacement line may not contain a newline - plan one edit per line")

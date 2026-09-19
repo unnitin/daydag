@@ -17,11 +17,10 @@ CONTRACTS - break one and the guarantee is gone
        malformed item. A missing or unrecognised field abstains; it does not
        crash the sweep over the other nineteen items in the note.
     3. Precision over recall, per the bar in reference/ingestion-eval.md. Every
-       rule below either fires on a structural feature this repo measured
-       across 22 real notes, or on a short, specific multi-word phrase checked
-       against the full 155-item eval set for collisions before it was kept.
-       An item that matches nothing falls to ``noise`` (body) or
-       ``assigned_ask`` (next_steps, per invariant below) rather than the rarer,
+       rule below fires either on a structural feature measured across 22 real
+       notes, or on a short multi-word phrase checked against the full 155-item
+       eval set for collisions first. An item matching nothing falls to
+       ``noise`` (body) or ``assigned_ask`` (next_steps) rather than the rarer,
        costlier labels - see WHY IT EXISTS.
     4. Every ``next_steps`` item with a named owner - including the literal
        ``[The group]`` - is real work, never ``noise``, unless it is *also*
@@ -36,8 +35,9 @@ CONTRACTS - break one and the guarantee is gone
        a note's items as a set, not resolved here and not silently dropped
        either. See KNOWN LIMIT.
     6. No write path. This decides what a note contains; #16 (blocked on
-       decision #24) does the write-back. Nothing here touches
-       ``daydag.vault`` or ``daydag.state``, and nothing here should start to.
+       decision #24) does the write-back. Nothing here imports ``daydag.vault``,
+       ``daydag.statedoc`` or ``daydag.eventlog`` - the three write surfaces -
+       and a tripwire in `tests/test_ingestion.py` fails the day one appears.
 
 WHY IT EXISTS
     Issue #14 read 22 real Gemini notes by hand and found SPEC 3.3 wrong on four
@@ -148,20 +148,19 @@ _HIS_OWNER = frozenset({"principal", "named_people"})
 #: "Move the bug fix to done on the board" is real, owned, and worth nothing on
 #: a chase list, because the board already carries it (reference/ingestion-eval.md,
 #: "Board hygiene is noise"). Two words, not one substring: "board" alone also
-#: matches a real ask ("Get access to the board..."), so a status word must
-#: also be present. Checked for collisions against the full 155-item eval set.
+#: matches a real ask ("Get access to the board..."), so a status word must also
+#: be present. Checked against the full 155-item eval set for collisions.
 _BOARD_WORD = re.compile(r"\bboard\b", re.IGNORECASE)
 _BOARD_STATUS_WORD = re.compile(r"\b(?:done|closed|resolved|complete|completed)\b", re.IGNORECASE)
 
-#: Multi-word phrases that mark something being created wholesale - a system,
-#: a programme, a parallel track - rather than a task against something that
+#: Multi-word phrases that mark something being created wholesale - a system, a
+#: programme, a parallel track - rather than a task against something that
 #: already exists. Each phrase was checked individually against the full
-#: 155-item eval set and matches only the ``new_workstream`` item(s) it was
-#: read from; single words ("build", "workflow", "platform", "programme") were
-#: tried and rejected because they also appear throughout ``noise``,
-#: ``decision`` and ``assigned_ask`` items in this domain's ordinary vocabulary,
-#: and firing on them would trade away precision on three other labels to buy
-#: recall on the thinnest one.
+#: 155-item eval set and matches only the ``new_workstream`` item(s) it was read
+#: from. Single words ("build", "workflow", "platform", "programme") were tried
+#: and rejected: they run through ``noise``, ``decision`` and ``assigned_ask``
+#: in this domain's ordinary vocabulary, so firing on them trades precision on
+#: three labels to buy recall on the thinnest one.
 CREATION_LANGUAGE = re.compile(
     r"\bstand(?:s|ing)?\s+up\b"  # "stand up a system of record"
     r"|\bparallel run\b"  # "a three-month parallel run"
@@ -228,11 +227,11 @@ def classify(item: Mapping[str, Any]) -> str | None:
     grounded = bool(item.get("grounded_in_body", True))
     text = _text(item)
 
-    # The whole `Suggested next steps` section is model-written suggestion,
-    # not transcript (reference/ingestion-eval.md). An unowned, ungrounded
-    # step is the section inventing work nobody said - a named owner with no
-    # body support can still be real (a next step the summariser chose not to
-    # carry into the body), so this carve-out is narrower than "ungrounded".
+    # The whole `Suggested next steps` section is model-written suggestion, not
+    # transcript (reference/ingestion-eval.md), so an unowned ungrounded step is
+    # the section inventing work nobody said. Narrower than "ungrounded": a
+    # named owner with no body support can still be real, a next step the
+    # summariser chose not to carry into the body.
     if section == "next_steps" and not grounded and owner_form == "the_group":
         return "noise"
 
@@ -246,11 +245,10 @@ def classify(item: Mapping[str, Any]) -> str | None:
     if CREATION_LANGUAGE.search(text):
         return "new_workstream"
 
-    # His own commitment: only a next-steps item, only imperative, only when
-    # he is named among the owners. Body-section items naming him are always
-    # something else - a status line about work already done, or (below) a
-    # delegation reported in prose - never a next step, which is what makes
-    # this rule precise rather than "mentions_principal, therefore his".
+    # His own commitment: only a next-steps item, only imperative, only when he
+    # is named among the owners. A body item naming him is a status line or
+    # (below) a delegation, never a next step - which is what makes this rule
+    # precise rather than "mentions_principal, therefore his".
     if (
         section == "next_steps"
         and modality == "imperative"
@@ -269,11 +267,11 @@ def classify(item: Mapping[str, Any]) -> str | None:
     if section == "body" and mentions_principal and PRINCIPAL_DELEGATION.search(text):
         return "assigned_ask"
 
-    # Everything left in next_steps has a named owner (the OWNER_FORMS check
-    # above already excluded "none" is impossible to reach here since
-    # next_steps never carries it in the eval set - but the check stays
-    # explicit rather than assumed) and no reason yet to call it anything but
-    # what it looks like: a step someone owns.
+    # Everything left in next_steps with a named owner is a step someone owns,
+    # and nothing above gave a reason to call it anything else. `none` is not in
+    # `_NAMED_OWNER`, so it falls through to the branch below rather than being
+    # assumed absent - the eval set never carries it here, but the check stays
+    # explicit.
     if section == "next_steps" and owner_form in _NAMED_OWNER:
         return "assigned_ask"
 
@@ -282,12 +280,12 @@ def classify(item: Mapping[str, Any]) -> str | None:
     if section == "next_steps":
         return None
 
-    # Body, no decision marker, no creation language, no delegation: measured
-    # over the eval set this is noise 29 times out of 34 - a status update, a
-    # completed task, someone else's future plan reported in passing
-    # (reference/ingestion-eval.md, "Someone else's self-reported commitment is
-    # noise"). The remaining cases are real misses, accepted per the bar: a
-    # missed item still surfaces in Slack.
+    # Body, no decision marker, no creation language, no delegation: over the
+    # eval set this is noise 29 times out of 34 - a status update, a completed
+    # task, someone else's future plan reported in passing. The other 5 are real
+    # misses, accepted per the bar, because a missed item still surfaces in
+    # Slack (reference/ingestion-eval.md, "Someone else's self-reported
+    # commitment is noise").
     return "noise"
 
 
@@ -302,11 +300,10 @@ class Classification:
 def classify_items(items: Iterable[Mapping[str, Any]]) -> list[Classification]:
     """Every item classified, in the order given. Never raises - see contract 2.
 
-    `item["item_id"]` took the whole batch down on one item missing the field,
-    which is the failure contract 2 says cannot happen, one layer above the
-    `classify` that gets it right. An item with no id comes back UNPLACED
-    rather than under a made-up key: it cannot be attributed to anything, so a
-    label for it would be a claim about a row nobody can find.
+    An item with no id comes back UNPLACED rather than under a made-up key: it
+    cannot be attributed to anything, so a label for it would be a claim about a
+    row nobody can find. Reading `item["item_id"]` instead took the whole batch
+    down on one bad item, one layer above the `classify` that gets it right.
     """
     out: list[Classification] = []
     for item in items:
@@ -316,12 +313,12 @@ def classify_items(items: Iterable[Mapping[str, Any]]) -> list[Classification]:
 
 
 def as_predictions(classifications: Iterable[Classification]) -> dict[str, str]:
-    """``{item_id: label}`` for :func:`daydag.evalset.score`, unplaced items dropped.
+    """``{item_id: label}`` for `tests/evalset.py`'s ``score``, unplaced dropped.
 
-    Dropping rather than guessing is deliberate and costs nothing extra:
-    ``score`` already counts an absent id as a miss (evalset.py), which is
-    exactly what an unplaced item is - a real item the classifier declined to
-    guess at, not a hit and not a false positive either.
+    Dropping rather than guessing costs nothing extra: ``score`` already counts
+    an absent id as a miss, which is exactly what an unplaced item is - a real
+    item the classifier declined to guess at, not a hit and not a false positive
+    either.
     """
     return {c.item_id: c.label for c in classifications if c.label is not None}
 

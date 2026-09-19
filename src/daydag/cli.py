@@ -1,18 +1,19 @@
-"""The one command line: `python -m daydag <run|people|soak|registry> ...`.
+"""The one argparse tree behind `run`, `people`, `soak` and `registry`.
 
 USING IT
-    python -m daydag run plan morning
-    python -m daydag run render chase --log ~/.local/state/daydag/events.db < payloads.json
-    python -m daydag run render ship --mirrors --log <db> < /dev/null
-    python -m daydag people show vp-data --log <db>
-    python -m daydag soak note "put the clashes above the meeting list" --log <db>
-    python -m daydag registry
+    python -m daydag.run plan morning
+    python -m daydag.run render chase --log ~/.local/state/daydag/events.db < payloads.json
+    python -m daydag.run render ship --mirrors --log <db> < /dev/null
+    python -m daydag.people show vp-data --log <db>
+    python -m daydag.soak note "put the clashes above the meeting list" --log <db>
+    python -m daydag.registry
 
-    `python -m daydag.run ...`, `daydag.people`, `daydag.soak` and `daydag.registry`
-    still work: each module's `main` hands its arguments here.
+    Each module's `main` prepends its own subcommand name and hands the rest
+    here, so those four entry points and `main(["run", "plan", "morning"])` are
+    the same parse (`tests/test_cli.py`).
 
 CONTRACTS
-    1. One parser. Four modules each hand-rolled `args.index("--log") + 1`,
+    1. One parser. The four modules each hand-rolled `args.index("--log") + 1`,
        and one of them wrote a sqlite file literally named "None" when the
        flag came last (#117, #126). argparse refuses a flag with no value.
     2. Nothing here decides anything. Every handler builds the objects the
