@@ -1,6 +1,6 @@
 """The gate's own instrument, which has to be right before it can judge.
 
-BUILD's M2 gate says: run the brief by hand for five working days, log every
+the M2-5 gate (#13) says: run the brief by hand for five working days, log every
 edit requested, and pass when the count trends down. SPEC §8 adds the rule that
 actually changes the product - *anything he asks twice gets folded into the
 skill*. So the instrument has two jobs, and the second matters more: counting,

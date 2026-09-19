@@ -1,6 +1,6 @@
 # Architecture
 
-> How the pieces fit, as of 2026-09-05. Companion to [SPEC.md](SPEC.md) (what the agent does) and [BUILD.md](BUILD.md) (what gets built when).
+> How the pieces fit, as of 2026-09-05. Companion to [SPEC.md](SPEC.md) (what the agent does) and [README.md](README.md) (what gets built when).
 
 ## The shape of it
 
@@ -120,7 +120,7 @@ A bullet that isn't a recognisable slug is skipped, because that file is hand-ed
 Two mechanical notes worth writing down before someone rediscovers them:
 
 - **Projects v2 is GraphQL-only.** The REST API does not expose the new project boards at all. Column moves come from `ProjectV2ItemFieldValue` on the org project — `gh project item-list --owner CreateMusicGroup --format json` wraps it. The old REST `/projects` endpoints are the deprecated classic boards and will return nothing useful.
-- **The Atlassian connector is authorised** (the #2 connector audit's follow-up) with a read-only token — `read:jira-work` plus Confluence read, no write scope at all. `board.py` (#12) is the reader; when the token itself is missing or expired, the Jira half of the board delta is still a "couldn't check" line, not a blocker.
+- **The Atlassian connector is authorised** (the #2 connector audit's follow-up) with a read-only token — `read:jira-work` plus Confluence read, no write scope at all. the Jira reader (#12, retired at tag `pre-simplification` until #145) is the reader; when the token itself is missing or expired, the Jira half of the board delta is still a "couldn't check" line, not a blocker.
 
 The two flags the board delta exists to catch stay as spec'd: *a ticket he believes exists but was never made*, and *a ticket closed with nobody saying so*.
 

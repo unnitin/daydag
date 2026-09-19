@@ -21,7 +21,7 @@ CONTRACTS
        meeting titles and names.
 
 WHY IT EXISTS
-    BUILD's M2 gate: run the brief by hand for five working days, log every
+    the M2-5 gate (#13): run the brief by hand for five working days, log every
     edit, pass when the count trends down. It was set, and then seven loops
     were built without it ever running - so the format churn it exists to catch
     for free is now rendered into several templates instead of one.

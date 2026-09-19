@@ -39,7 +39,7 @@ _LINK = re.compile(r"\[[^\]]*\]\((?!https?://|mailto:|#)([^)\s]+)\)")
 
 #: Documentation that must exist. Enumerated so a file deleted by accident is a
 #: failure rather than a silent absence.
-REQUIRED_DOCS = ("README.md", "SPEC.md", "ARCHITECTURE.md", "BUILD.md", "CONTRIBUTING.md")
+REQUIRED_DOCS = ("README.md", "SPEC.md", "ARCHITECTURE.md", "CONTRIBUTING.md")
 
 
 #: Directories the link check does not descend into. ``worktrees`` rather than
