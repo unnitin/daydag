@@ -21,6 +21,7 @@ from datetime import UTC, datetime
 import pytest
 
 from daydag import push, run
+from daydag.eventlog import EventLog
 from daydag.statedoc import StateFolder
 
 MONDAY = datetime(2026, 9, 7, 6, 40, tzinfo=UTC)
@@ -732,8 +733,6 @@ def test_a_shaped_attendee_does_not_break_the_ping_rules(identities):
 def test_a_named_prep_does_not_persist_the_week_it_fetched(identities, tmp_path):
     """A prep is a question, not a day's seeding. Remembering its seven fetched
     days made a meeting cancelled after the snapshot a permanent notes gap."""
-    from daydag.eventlog import EventLog
-
     log = tmp_path / "events.db"
     payloads = _payloads(
         calendar=[_meeting("Finance x Data meeting", "a@x.com", "b@x.com", day="2026-09-10")]
@@ -746,13 +745,12 @@ def test_a_named_prep_does_not_persist_the_week_it_fetched(identities, tmp_path)
 
 
 def test_a_remembered_meeting_keeps_its_kind(identities, tmp_path):
-    """Every Google Calendar record carries a `kind`, the loops read
-    `kind == "ooo"` off it, and the ledger reads it again on replay. Splatting
+    """Every Google Calendar record carries `kind: "calendar#event"`. Splatting
     the record into `EventLog.record(kind, ...)` collided with that parameter
     and raised on the first real morning with a log - the old memory tests
-    hand-rolled records with no `kind` and never met it."""
-    from daydag.eventlog import EventLog
-
+    hand-rolled records with no `kind` and never met it. Stored whole, the
+    value is data the ledger reads on replay (`NON_MEETING_KINDS`; google's
+    own token is not one, so the row stays a meeting)."""
     log = tmp_path / "events.db"
     meeting = {**_meeting("Pod Steering", "a@x.com", "b@x.com"), "kind": "calendar#event"}
     payloads = _payloads(calendar=[meeting])
@@ -761,6 +759,55 @@ def test_a_remembered_meeting_keeps_its_kind(identities, tmp_path):
 
     (remembered,) = EventLog.open(log).recorded("meeting")
     assert remembered["kind"] == "calendar#event", "the record is stored whole"
+    replayed = run._remembered(EventLog.open(log))
+    assert [row.summary for row in replayed.open_rows()] == ["Pod Steering"]
+
+
+def test_only_what_today_could_seed_is_remembered(identities, tmp_path):
+    """`_remember` stored any record with an `id`. A record `seed_day` cannot
+    take today - no `end` - is one it cannot take tomorrow either, and stored
+    it was replayed into every later morning. What is remembered is what
+    `_seedable` seeded."""
+    log = tmp_path / "events.db"
+    torn = {k: v for k, v in _meeting("No End", "a@x.com", "b@x.com").items() if k != "end"}
+    whole = _meeting("Pod Steering", "a@x.com", "b@x.com")
+
+    run.render(
+        "morning",
+        now=MONDAY_PT,
+        identities=identities,
+        payloads=_payloads(calendar=[torn, whole]),
+        log=log,
+    )
+
+    assert [r["summary"] for r in EventLog.open(log).recorded("meeting")] == ["Pod Steering"]
+
+
+def test_a_stored_row_the_ledger_cannot_seed_is_skipped_not_raised(identities, tmp_path):
+    """One stored row with no `end`, or an all-day `{"date": ...}` start with
+    two attendees (#156), killed every later render with that log:
+    `_remembered` runs outside any degrade, and only deleting the sqlite row
+    recovered. The log's torn-row rule, one layer up."""
+    log = tmp_path / "events.db"
+    events = EventLog.open(log)
+    events.record(
+        "meeting", {k: v for k, v in _meeting("No End", "a@x.com", "b@x.com").items() if k != "end"}
+    )
+    events.record(
+        "meeting",
+        {
+            **_meeting("Offsite", "a@x.com", "b@x.com"),
+            "start": {"date": "2026-09-07"},
+            "end": {"date": "2026-09-08"},
+        },
+    )
+    events.record("meeting", _meeting("Pod Steering", "a@x.com", "b@x.com"))
+
+    text = run.render(
+        "morning", now=MONDAY_PT, identities=identities, payloads=_payloads(), log=log
+    )
+
+    assert text.strip(), "the push rendered"
     replayed = run._remembered(EventLog.open(log))
     assert [row.summary for row in replayed.open_rows()] == ["Pod Steering"]
 
