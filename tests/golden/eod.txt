@@ -1,0 +1,11 @@
+wrap: 1 closed, 0 moved
+
+closed today (1)
+- 🔴 land the ingestion backfill *(mine)* (Create Music Group/Weekly Notes/0914-0918.md#L7)
+
+tomorrow
+- 9:00 Nitin / VP-Data 1:1 (https://example.com/cal/2026-09-19/11)
+
+friday - weekly-planning outcome
+- next week's plan landed (Create Music Group/Weekly Notes/0921-0925.md)
+- next week's meeting prep landed (Create Music Group/Meeting Prep/0921-0925.md)

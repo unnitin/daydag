@@ -3,7 +3,7 @@
 > Issue #14, built deliberately **before** the classifier (#15) so precision and
 > recall are measured rather than asserted. 24 real meeting notes were read, 22 of
 > them labelled, giving 155 hand-labelled items. The fixtures are `tests/fixtures/ingestion/notes.jsonl`
-> and `tests/fixtures/ingestion/items.jsonl`; `daydag.evalset` loads and scores them.
+> and `tests/fixtures/ingestion/items.jsonl`; `tests/evalset.py` loads and scores them.
 
 ## Read this first: nothing here is meeting text
 
@@ -175,7 +175,7 @@ under a `*(mine)*` tag, or opens a chase loop that nudges a colleague about
 something nobody agreed to. A false negative loses a line in a digest for an item
 that a human, a thread reply, or the engineering pulse will raise anyway.
 
-`daydag.evalset.score()` makes this arithmetic. Three of its choices exist so a
+`tests/evalset.py`'s `score()` makes this arithmetic. Three of its choices exist so a
 bar cannot be cleared without being met:
 
 - an item the classifier never emitted counts as a **miss**, not an abstention;

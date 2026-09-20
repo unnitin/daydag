@@ -2,15 +2,14 @@
 
 USING IT
     calendar_day(day)                       # ONE day. Never a week - see 1
+    loop_windows("morning", day)            # the days ONE loop reads
     slack_overnight(now, mentioning=principal, identities=ids, since_hour=17)
     gmail_gemini_notes(after=day, before=day)   # from:GEMINI_SENDER + label
     jira_jql(["PROJ"], updated_within_days=14)  # bounded fields and results
-    gh_open_prs(repo)
-    gh_pr_checks(repo, 42)
-    gh_recent_runs(repo, branch="main")
-    vault_path(ids, "Weekly Notes", weekly_note(day))
+    vault_relative(WEEKLY_NOTES, "0817-0821.md")
     week_range(day), week_label(day), next_week_label(day)
     title_from_gemini_subject(subject)
+    records(payload), has(record, "ts"), error_text(payload)   # the read side
 
 CONTRACTS
     1. Calendar is queried DAY BY DAY. One 5-day pull returned 156,681 chars
@@ -18,7 +17,7 @@ CONTRACTS
     2. Jira always names `fields` explicitly and bounds `maxResults`. Never
        `*all`: a 14-day 4-project query with unbounded fields returned 125,231
        chars. `JIRA_MAX_RESULTS_CAP` and `GH_LIMIT_CAP` are the caps, and
-       `smoke` builds its reported bounds FROM them.
+       `observe` builds its reported bounds FROM them.
     3. Slack is addressed by ID, never display name. `from:@someone` does not
        fail, it silently matches nothing.
     4. Gmail matches the SUBJECT: `Notes: "<title>" <date>`, plus the
@@ -27,10 +26,14 @@ CONTRACTS
        body, and it resolves the back-to-back-1:1 ambiguity body matching
        cannot.
     5. Nothing here performs I/O. Pure functions from parameters to a query
-       string or a parameter dict - which is what makes the part that must be
-       right checkable without a connector.
+       string or a parameter dict, and from a returned payload to the records
+       inside it - which is what makes the part that must be right checkable
+       without a connector.
     6. A recipe RAISES (`RecipeError`) rather than returning a best-effort
        query, because every failure it guards is silent at the connector.
+    7. Both halves of the connector edge live here: the query going out, and
+       `records`/`has`/`error_text` reading what comes back. They are one
+       concept - what this codebase believes a source looks like.
 
 WHY IT EXISTS
     Every loop asks the same handful of questions of the same six sources.
@@ -45,54 +48,56 @@ WHY IT EXISTS
 
 from __future__ import annotations
 
-import os
 import re
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
+from typing import Any
 from zoneinfo import ZoneInfo
 
 # One parser for Gemini subjects, re-exported rather than reimplemented. The
 # ledger owns it because the ledger is what a parsed title is *for*; a second
 # copy here would be a second set of bugs that disagree only on hard cases.
-from daydag.config import DEFAULT_TIMEZONE, resolve_reference
+from daydag.config import DEFAULT_TIMEZONE, is_user_id, resolve_reference
 from daydag.ledger import title_from_gemini_subject
 
 __all__ = [
+    "ERROR_KEYS",
     "GEMINI_LABEL",
     "GEMINI_SENDER",
     "GH_LIMIT_CAP",
-    "GH_WRITE_VERBS",
     "JIRA_FIELDS",
     "JIRA_MAX_RESULTS_CAP",
     "PACIFIC",
+    "RECORD_KEYS",
     "VAULT_PREFIX",
     "DayWindow",
     "OvernightWindow",
     "RecipeError",
     "calendar_day",
     "calendar_days",
-    "gh_default_branch",
-    "gh_open_prs",
-    "gh_pr_checks",
-    "gh_recent_runs",
+    "error_text",
+    "first_value",
+    "flatten",
     "gmail_gemini_notes",
-    "is_user_id",
+    "has",
+    "has_all",
     "jira_jql",
     "jira_search",
+    "loop_windows",
+    "measure",
     "meeting_prep",
+    "next_monday",
     "next_week_label",
+    "records",
     "slack_overnight",
     "slack_search",
     "title_from_gemini_subject",
-    "vault_path",
     "vault_relative",
-    "vault_root",
     "week_label",
     "week_range",
     "weekly_note",
-    "workstreams_paths",
 ]
 
 
@@ -176,7 +181,7 @@ class DayWindow:
     """One local day, half-open: ``[midnight, next midnight)``.
 
     Half-open rather than ``23:59:59`` so consecutive windows are contiguous
-    without overlapping - an event starting exactly at midnight belongs to one
+    without overlapping: an event starting exactly at midnight belongs to one
     day, and to exactly one.
     """
 
@@ -193,9 +198,9 @@ class DayWindow:
 def calendar_day(day: date, *, tz: ZoneInfo = PACIFIC) -> DayWindow:
     """The RFC3339 window for a single local day.
 
-    Built from local midnights rather than ``start + 24h``: two days a year a
-    PT day is 23 or 25 hours long, and fixed arithmetic silently clips an hour
-    off one of them.
+    Built from local midnights, never ``start + 24h``: two days a year a PT day
+    is 23 or 25 hours long, and fixed arithmetic silently clips an hour off one
+    of them (test_windows_follow_dst_rather_than_adding_24_hours).
     """
     start = datetime.combine(day, time.min, tzinfo=tz)
     end = datetime.combine(day + timedelta(days=1), time.min, tzinfo=tz)
@@ -205,10 +210,10 @@ def calendar_day(day: date, *, tz: ZoneInfo = PACIFIC) -> DayWindow:
 def calendar_days(start: date, end: date, *, tz: ZoneInfo = PACIFIC) -> list[DayWindow]:
     """One window per day across an inclusive range - never a single wide one.
 
-    A 5-day pull was measured at 156,681 characters and exceeded the connector's
-    output limit (#2 audit), so a week of calendar is seven requests. Returning
-    a list rather than a generator keeps the count assertable by callers and by
-    the guardrail test.
+    A 5-day pull measured 156,681 characters and exceeded the connector's
+    output limit (`reference/connector-audit.md`), so a week of calendar is
+    seven requests. A list rather than a generator, so the count stays
+    assertable by callers and by the guardrail test.
     """
     if end < start:
         raise RecipeError(f"end {end} is before start {start}")
@@ -223,7 +228,8 @@ def calendar_days(start: date, end: date, *, tz: ZoneInfo = PACIFIC) -> list[Day
 #: Slack ids: ``U``/``W`` for people, ``B`` for bots, ``C``/``D``/``G`` for
 #: conversations. Deliberately shape-only - the point is to reject a *name*,
 #: and a stricter length rule would reject real ids as workspaces grow.
-_USER_ID = re.compile(r"^[UWB][A-Z0-9]{6,}$")
+#: Slack's shape for a channel, DM or group-DM id. The user-id shape lives in
+#: `config.is_user_id`, because a destination needs it too.
 _CONVERSATION_ID = re.compile(r"^[CDG][A-Z0-9]{6,}$")
 
 #: Slack's `after:`/`before:` exclude the date named, so an inclusive bound is
@@ -232,20 +238,9 @@ _CONVERSATION_ID = re.compile(r"^[CDG][A-Z0-9]{6,}$")
 _DAY = timedelta(days=1)
 
 
-def is_user_id(value: str) -> bool:
-    """Whether ``value`` is shaped like a Slack user id rather than a name.
-
-    Public because the shape check was only reachable by building a query, and
-    a *destination* needs it too: guardrail 1 permits exactly one, and an id
-    that is not one addresses a DM at nothing. One regex, one concept - a
-    second copy beside the caller would be a second set of bugs.
-    """
-    return bool(_USER_ID.match((value or "").strip()))
-
-
-def _slack_id(value: str, pattern: re.Pattern[str], identities, what: str) -> str:
+def _slack_id(value: str, valid: Callable[[str], object], identities, what: str) -> str:
     resolved = _resolve(value, identities, what=what)
-    if not pattern.match(resolved):
+    if not valid(resolved):
         raise RecipeError(
             f"{what} {value!r} is not a Slack id. Resolve it first - a display name "
             "or #channel-name in a search silently matches nothing."
@@ -266,9 +261,7 @@ def slack_search(
     """A scoped, chronologically ordered Slack search query.
 
     ``from:<@USER_ID>`` and ``in:<#CHANNEL_ID>`` beat keyword search, and both
-    take ids: ``from:@display-name`` returns zero results *and no error*, which
-    is the worst failure available - the brief then reports a silence it never
-    checked. So a non-id raises here instead.
+    take ids (contract 3), so a non-id raises here rather than reaching Slack.
 
     ``sort:timestamp`` is explicit because Slack's default is relevance, and a
     relevance-ordered read of a conversation is not a chronology.
@@ -278,9 +271,9 @@ def slack_search(
     """
     parts: list[str] = []
     if sender is not None:
-        parts.append(f"from:<@{_slack_id(sender, _USER_ID, identities, 'sender')}>")
+        parts.append(f"from:<@{_slack_id(sender, is_user_id, identities, 'sender')}>")
     if channel is not None:
-        parts.append(f"in:<#{_slack_id(channel, _CONVERSATION_ID, identities, 'channel')}>")
+        parts.append(f"in:<#{_slack_id(channel, _CONVERSATION_ID.match, identities, 'channel')}>")
     if after is not None:
         parts.append(f"after:{_as_day(after, what='after') - _DAY}")
     if before is not None:
@@ -329,36 +322,31 @@ def slack_overnight(
     """
     if now.tzinfo is None:
         raise RecipeError("now must be timezone-aware; the cutoff is a local wall-clock time")
-    # Move a real instant rather than pinning `now.tzinfo` onto another date: an
-    # aware datetime's tzinfo is a FIXED offset, so across a DST change
-    # yesterday-at-6pm came out an hour wrong and silently dropped an hour of
-    # overnight Slack - the window nobody would think to check.
-    # PACIFIC, not `astimezone()` with no argument: the bare form converts to
-    # whatever the MACHINE's timezone is, so this passed on a Pacific laptop and
-    # was seven hours wrong on a UTC CI runner. The cutoff is the principal's
-    # local 6pm wherever the loop happens to run, and a real zone (not the fixed
-    # offset `now.tzinfo` carries) is what makes it survive a DST change.
+    # Move a real instant, and into PACIFIC by name. An aware datetime's tzinfo
+    # is a FIXED offset, so pinning `now.tzinfo` onto another date put
+    # yesterday-at-6pm an hour out across a DST change and silently dropped an
+    # hour of overnight Slack - the window nobody would think to check. And a
+    # bare `astimezone()` converts to the MACHINE's zone: right on a Pacific
+    # laptop, seven hours wrong on a UTC CI runner. The cutoff is his local 6pm
+    # wherever the loop runs, and only a real zone survives a DST change.
     local = now.astimezone(PACIFIC)
-    # Keep the cutoff in the PRINCIPAL's zone and take its date from there.
-    # Converting first and then reading .date() was the bug: `cutoff` carries
-    # the caller's tzinfo, so a UTC-aware `now` rolled the date forward (6pm PT
-    # is 01:00 UTC) and, `after:` being exclusive, the window skipped the exact
-    # 6pm-to-midnight hours it exists to capture - while min_ts still claimed
-    # them. Query and cutoff disagreed silently, which reads as a complete brief.
+    # The cutoff stays in the PRINCIPAL's zone and its date is read from there
+    # (test_the_overnight_after_date_does_not_depend_on_the_callers_tzinfo).
+    # Converting first and reading `.date()` off the result rolled a UTC-aware
+    # `now` forward a day - 6pm PT is 01:00 UTC - and `after:` being exclusive,
+    # the window then skipped the exact 6pm-to-midnight hours it exists to
+    # capture while min_ts still claimed them. Query and cutoff disagreed
+    # silently, which reads as a complete brief.
     cutoff_local = datetime.combine(local.date() - _DAY, time(hour=since_hour), tzinfo=PACIFIC)
     after_day = cutoff_local.date() - _DAY
     cutoff = cutoff_local.astimezone(now.tzinfo)
-    user = _slack_id(mentioning, _USER_ID, identities, "mentioning")
+    user = _slack_id(mentioning, is_user_id, identities, "mentioning")
     query = " ".join(
         [
             # A raw id in angle brackets is how a mention appears in message
             # text, so this finds threads he was pulled into as well as his own.
             f"<@{user}>",
-            # local.date(), NOT cutoff.date(): `cutoff` is converted back to the
-            # caller's tzinfo, so on a UTC-aware `now` its .date() rolls forward
-            # a day - 6pm PT is 01:00 UTC. `after:` is exclusive, so the window
-            # then skipped the exact 6pm-to-midnight hours it exists to capture,
-            # while min_ts still claimed them. The two disagreed silently.
+            # Derived from `cutoff_local`, never from `cutoff` - see above.
             f"after:{after_day.isoformat()}",
             # DESCENDING, and this is load-bearing rather than cosmetic.
             # `after:` resolves to a whole day, so the query returns from
@@ -398,10 +386,8 @@ def gmail_gemini_notes(
     filed there, and the sender alone includes notes for meetings that are not
     his. Together they are the exact set.
 
-    ``title`` searches the **subject**, which is the correction the #2 audit
-    made to SPEC section 4. The subject is rigidly ``Notes: "<title>" <date>``,
-    so an exact title lands on one thread - where body matching cannot separate
-    two back-to-back 1:1s, the case that actually breaks ingestion.
+    ``title`` searches the **subject** (contract 4), so it lands on one thread
+    where body matching cannot separate two back-to-back 1:1s.
 
     ``before`` is the last day the caller wants included; Gmail's own operator
     is exclusive, so it goes out as the day after.
@@ -452,9 +438,10 @@ def vault_relative(*parts: str) -> str:
     if not cleaned:
         raise RecipeError("no path given")
     # Strip the prefix whether it arrives as its own segment or joined onto the
-    # front of the first one. weekly_note() and workstreams_paths() return the
+    # front of the first one: `weekly_note()` and `meeting_prep()` return the
     # joined form, so feeding their output back in doubled the prefix and put
-    # the write in a sibling folder that only looks right.
+    # the write in a sibling folder that only looks right
+    # (test_the_prefix_is_not_doubled).
     first = cleaned[0]
     if first == VAULT_PREFIX:
         cleaned = cleaned[1:]
@@ -464,32 +451,6 @@ def vault_relative(*parts: str) -> str:
     if not cleaned:
         raise RecipeError("no path given")
     return "/".join([VAULT_PREFIX, *cleaned])
-
-
-def vault_root(identities: Mapping[str, str]) -> Path:
-    """The local vault directory, prefix included, from ``VAULT_ROOT``.
-
-    Configured rather than hardcoded: an absolute home path leaks a username
-    into a public repo. The prefix is appended only when the configured root
-    does not already end in it, so both conventions - pointing at ``Documents``
-    or at the vault proper - land in the same place rather than one of them
-    landing in the decoy.
-    """
-    if "VAULT_ROOT" not in identities:
-        raise RecipeError("VAULT_ROOT is not set. Add it to .env; see .env.example.")
-    resolved = os.path.expanduser(os.path.expandvars(str(identities["VAULT_ROOT"]).strip()))
-    # Same failure as pulse.mirror_root: an empty value resolves to "." and an
-    # unset ${VAR} passes through as literal text, so both would write into a
-    # directory nobody would think to look in.
-    if not resolved.strip() or "$" in resolved:
-        raise RecipeError("VAULT_ROOT is empty or names an unset variable. Fix it in .env.")
-    root = Path(resolved)
-    return root if root.name == VAULT_PREFIX else root / VAULT_PREFIX
-
-
-def vault_path(identities: Mapping[str, str], *parts: str) -> Path:
-    """A local filesystem path inside the vault."""
-    return vault_root(identities).joinpath(*(_safe_part(part) for part in parts))
 
 
 def week_range(day: date) -> tuple[date, date]:
@@ -502,6 +463,44 @@ def week_range(day: date) -> tuple[date, date]:
     """
     monday = day - timedelta(days=day.weekday())
     return monday, monday + timedelta(days=4)
+
+
+def next_monday(day: date) -> date:
+    """The Monday after ``day``'s Mon-Fri week - what a Sunday run plans for.
+
+    Derived from `week_range` rather than ``day + 1``: the scheduled week-ahead
+    runs on a Sunday, the on-demand one runs whenever he asks.
+    """
+    monday, _ = week_range(day)
+    return monday + timedelta(days=7)
+
+
+#: How far ahead a named prep will look. A week, because that is the span the
+#: evidence a prep is built from actually covers.
+PREP_HORIZON_DAYS = 7
+
+
+def loop_windows(
+    loop: str, day: date, *, tz: ZoneInfo = PACIFIC, selector: str = ""
+) -> list[DayWindow]:
+    """The calendar days one loop reads, one window each - never a range.
+
+    The ONE place this arithmetic lives. `run.plan` asks for these windows and
+    every consumer asks for the same ones, so what was fetched and what is
+    read cannot drift apart (#109): the morning reads today, the wrap reads
+    tomorrow, the week-ahead reads next Mon-Sun, a named prep reads the next
+    seven days, and `ingest`, `chase` and `ship` read no calendar at all.
+    """
+    if loop in {"ingest", "chase", "ship"}:
+        return []
+    if loop == "prep" and selector:
+        return calendar_days(day, day + timedelta(days=PREP_HORIZON_DAYS - 1), tz=tz)
+    if loop == "eod":
+        return [calendar_day(day + timedelta(days=1), tz=tz)]
+    if loop == "week-ahead":
+        first = next_monday(day)
+        return calendar_days(first, first + timedelta(days=6), tz=tz)
+    return [calendar_day(day, tz=tz)]
 
 
 def week_label(day: date) -> str:
@@ -530,32 +529,19 @@ def meeting_prep(day: date) -> str:
     return vault_relative(MEETING_PREP, f"{week_label(day)}.md")
 
 
-def workstreams_paths() -> tuple[str, str]:
-    """Where Workstreams.md may be, in the order to look.
-
-    Custody transfers from `weekly-planning` to DayDAG at the cut (#37) and the
-    file moves with it, so both locations are live states of the same system.
-    DayDAG first: after the cut that is the real one and the old path may linger.
-    """
-    return (
-        vault_relative(DAYDAG, "Workstreams.md"),
-        vault_relative(FACT_BASE, "Workstreams.md"),
-    )
-
-
 # ---------------------------------------------------------------------------
 # Jira - bounded, because the unbounded form has already overflowed
 # ---------------------------------------------------------------------------
 
 #: What the pulse and the chase list actually read off a ticket. Explicit
 #: because `*all` ships every custom field on every issue: that is what turned
-#: a 14-day, 4-project query into 125,231 characters (#2 audit).
+#: a 14-day, 4-project query into 125,231 characters
+#: (`reference/connector-audit.md`).
 #:
-#: ``resolutiondate`` and ``labels`` were added for the board reader (#12):
-#: the first is what lets ``closed_unannounced`` tell a close from a mention
-#: that merely predates it, the second is the "newly blocked" signal. Grown
-#: here rather than requested ad hoc by that module - a second, shorter field
-#: list for the same board is exactly the drift this module exists to prevent.
+#: ``resolutiondate`` is what tells a close from a mention that merely
+#: predates it; ``labels`` is the "newly blocked" signal. Both were grown here
+#: rather than requested ad hoc by a board reader - a second, shorter field
+#: list for the same board is the drift this module prevents.
 JIRA_FIELDS: tuple[str, ...] = (
     "key",
     "summary",
@@ -574,9 +560,9 @@ JIRA_MAX_RESULTS_CAP = 100
 JIRA_DEFAULT_MAX_RESULTS = 50
 JIRA_DEFAULT_WINDOW_DAYS = 7
 
-#: Atlassian project keys: 2-10 uppercase alphanumerics starting with a letter.
-#: A Jira project key. Public because `board` parses the same keys out of
-#: the watchlist and a second copy is how the two drift - which they had.
+#: A Jira project key: 2-10 uppercase alphanumerics starting with a letter.
+#: Public so anything reading keys out of the hand-edited watchlist validates
+#: them against this one pattern rather than a second copy of it.
 PROJECT_KEY = re.compile(r"^[A-Z][A-Z0-9]{1,9}$")
 
 
@@ -667,141 +653,126 @@ def jira_search(
 
 
 # ---------------------------------------------------------------------------
-# GitHub - argv for the `gh` CLI, read-only
+# GitHub - read-only by token (reference/github-access.md)
 # ---------------------------------------------------------------------------
 
-#: Subcommands that change something on GitHub. Asserted against every recipe:
-#: SPEC section 4 lists GitHub as read-only, and guardrail 1 keeps it that way.
-GH_WRITE_VERBS = frozenset(
-    {
-        "merge",
-        "close",
-        "reopen",
-        "comment",
-        "review",
-        "edit",
-        "create",
-        "delete",
-        "ready",
-        "lock",
-        "unlock",
-        "rerun",
-        "cancel",
-    }
-)
-
-#: What the pulse reads off an open PR. `statusCheckRollup` is the CI half.
-GH_PR_FIELDS: tuple[str, ...] = (
-    "number",
-    "title",
-    "author",
-    "createdAt",
-    "updatedAt",
-    "isDraft",
-    "reviewDecision",
-    "headRefName",
-    "url",
-    "statusCheckRollup",
-)
-
-GH_RUN_FIELDS: tuple[str, ...] = (
-    "databaseId",
-    "displayTitle",
-    "headBranch",
-    "conclusion",
-    "status",
-    "createdAt",
-    "url",
-)
-
+#: One page of anything from the GitHub API. History comes from the git
+#: mirrors; the review/CI half by API is retired at tag `pre-simplification`
+#: until M4-7 wires it, and this cap is what `observe` states as its bound.
 GH_LIMIT_CAP = 100
-GH_DEFAULT_PR_LIMIT = 50
-GH_DEFAULT_RUN_LIMIT = 20
-
-_SLUG = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$")
-#: Git ref characters. Leading `-` excluded by the character class, so a branch
-#: cannot arrive at `gh` as a flag.
-_BRANCH = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]*$")
 
 
-def _slug(repo: object) -> str:
-    """``owner/name`` from a :class:`daydag.pulse.WatchedRepo` or a plain string.
+# ---------------------------------------------------------------------------
+# reading what came back - the other half of the connector edge (contract 7)
+# ---------------------------------------------------------------------------
 
-    Duck-typed on ``.slug`` rather than imported: the pulse owns ``WatchedRepo``
-    on its own path, and a shared module reaching into a path-owned one is the
-    coupling CONTRIBUTING's branch table exists to prevent.
+#: Where a connector puts its error when it hands one back instead of raising.
+#: The shape MCP and REST clients actually use, which a string-only reading
+#: missed entirely: a `{"error": {"code": 401}}` fell through to the caller's
+#: plausibility check and reported "no event list came back", never the 401.
+#: "message" is deliberately absent: it is only an error when it sits under one
+#: of these, and `flatten` already reads it there.
+ERROR_KEYS = ("error", "errors", "errorMessages", "error_description")
+
+#: Keys a connector puts its records under. Checked in order, first list wins.
+RECORD_KEYS = (
+    "events",
+    "items",
+    "messages",
+    "threads",
+    "issues",
+    "repositories",
+    "members",
+    "results",
+    "rows",
+    "values",
+    "data",
+)
+
+
+def flatten(value: Any) -> list[str]:
+    """Every leaf in a nested structure, as strings, depth first."""
+    if isinstance(value, Mapping):
+        return [part for item in value.values() for part in flatten(item)]
+    if isinstance(value, list | tuple):
+        return [part for item in value for part in flatten(item)]
+    return [str(value)]
+
+
+def error_text(payload: Any) -> str:
+    """The error a payload is carrying, flattened, or ``""`` if it carries none."""
+    if not isinstance(payload, Mapping):
+        return ""
+    for key in ERROR_KEYS:
+        if payload.get(key):
+            return " ".join(flatten(payload[key]))
+    return ""
+
+
+def measure(payload: Any) -> int:
+    """Roughly how much text this payload would occupy on the way back."""
+    return len(payload if isinstance(payload, str) else repr(payload))
+
+
+def records(payload: Any) -> list[Any] | None:
+    """The record list inside a payload, or ``None`` if there is not one.
+
+    ``None`` and ``[]`` are different answers, and keeping them apart is the
+    whole reason this returns an optional rather than an empty list: no list at
+    all means the call did not return this source's shape, an empty list means
+    it did and matched nothing. Which of those is a failure depends on the
+    source, so that call belongs to the caller and is not made here.
     """
-    slug = getattr(repo, "slug", repo)
-    if not isinstance(slug, str) or not _SLUG.match(slug):
-        raise RecipeError(f"{repo!r} is not an owner/name repo slug")
-    return slug
+    if isinstance(payload, list):
+        return payload
+    if isinstance(payload, Mapping):
+        for key in RECORD_KEYS:
+            value = payload.get(key)
+            if isinstance(value, list):
+                return value
+    return None
 
 
-def _limit(value: int, *, what: str) -> str:
-    if not isinstance(value, int) or isinstance(value, bool) or not 1 <= value <= GH_LIMIT_CAP:
-        raise RecipeError(f"{what} must be 1-{GH_LIMIT_CAP}, got {value!r}")
-    return str(value)
+def day_keyed(payload: Any) -> dict[date, list[Any]] | None:
+    """A calendar payload keyed by the day each list was fetched for, or ``None``.
 
-
-def gh_open_prs(repo: object, *, limit: int = GH_DEFAULT_PR_LIMIT) -> list[str]:
-    """Open PRs for one watched repo, with review state and the CI rollup.
-
-    argv, never a shell string: the slug comes from a hand-edited watchlist, and
-    a string handed to a shell is a command injection. Same reason
-    ``pulse._run_git`` takes a list.
+    ``{"2026-09-18": [...], "2026-09-19": [...]}`` - the shape `run.plan`'s
+    one-day steps invite (#111). Every key must parse as an ISO date and every
+    value must be a list, or this is not that shape and the caller falls back
+    to `records`. An empty mapping is not it either: a fetched day is a key.
     """
-    return [
-        "gh",
-        "pr",
-        "list",
-        "--repo",
-        _slug(repo),
-        "--state",
-        "open",
-        "--limit",
-        _limit(limit, what="limit"),
-        "--json",
-        ",".join(GH_PR_FIELDS),
-    ]
+    if not isinstance(payload, Mapping) or not payload:
+        return None
+    keyed: dict[date, list[Any]] = {}
+    for key, value in payload.items():
+        if not isinstance(value, list):
+            return None
+        try:
+            keyed[date.fromisoformat(str(key))] = value
+        except ValueError:
+            return None
+    return keyed
 
 
-def gh_pr_checks(repo: object, number: int) -> list[str]:
-    """CI check state for one PR."""
-    if not isinstance(number, int) or isinstance(number, bool) or number < 1:
-        raise RecipeError(f"PR number must be a positive integer, got {number!r}")
-    return ["gh", "pr", "checks", str(number), "--repo", _slug(repo)]
+def has(record: Any, *keys: str) -> bool:
+    """Whether the record carries *any* of these, for keys that are alternatives."""
+    return isinstance(record, Mapping) and any(record.get(key) for key in keys)
 
 
-def gh_default_branch(repo: object) -> list[str]:
-    """Resolve the default branch instead of assuming ``main``.
+def has_all(record: Any, *keys: str) -> bool:
+    """Whether the record carries *every* one of these.
 
-    `createos-dsp-ingestion` defaults to ``develop``. A branch-health check
-    hardcoding ``main`` finds nothing there and reports green - guardrail 3
-    inverted, since it asserts health it never checked.
+    Separate from `has` because the difference is where two checks were wrong:
+    `any` on `("id", "subject")` let Gmail's metadata-only search results
+    through on the strength of the id, and the subject is the whole point.
     """
-    return ["gh", "repo", "view", _slug(repo), "--json", "defaultBranchRef"]
+    return isinstance(record, Mapping) and all(record.get(key) for key in keys)
 
 
-def gh_recent_runs(
-    repo: object,
-    *,
-    branch: str | None = None,
-    limit: int = GH_DEFAULT_RUN_LIMIT,
-) -> list[str]:
-    """Recent CI runs. ``branch`` is omitted rather than defaulted - see above."""
-    argv = [
-        "gh",
-        "run",
-        "list",
-        "--repo",
-        _slug(repo),
-        "--limit",
-        _limit(limit, what="limit"),
-        "--json",
-        ",".join(GH_RUN_FIELDS),
-    ]
-    if branch is not None:
-        if not isinstance(branch, str) or not _BRANCH.match(branch):
-            raise RecipeError(f"{branch!r} is not a branch name")
-        argv += ["--branch", branch]
-    return argv
+def first_value(row: Any) -> Any:
+    """The first value in a row, however the driver shaped it."""
+    if isinstance(row, Mapping):
+        return next(iter(row.values()), None)
+    if isinstance(row, list | tuple):
+        return row[0] if row else None
+    return row

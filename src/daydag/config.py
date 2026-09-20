@@ -8,6 +8,8 @@ USING IT
     resolve_reference("C0ALREADY", ids, what="the pod channel", error=ConfigError)
                                                 # -> unchanged, not a reference
     timezone_for(ids)                           # ZoneInfo, TIMEZONE or the default
+    principal_id(ids, what="the brief's DM", error=ConfigError)
+                                                # resolved AND shaped like a user id
 
     `what` and `error` are required, not decoration: the caller names what it
     was resolving and which exception its own layer raises, so a missing id
@@ -33,6 +35,7 @@ WHY IT EXISTS
 
 from __future__ import annotations
 
+import os
 import re
 from collections.abc import Iterator, Mapping
 from pathlib import Path
@@ -54,11 +57,11 @@ DEFAULT_TIMEZONE = "America/Los_Angeles"
 def timezone_for(identities: Mapping[str, str] | None = None) -> ZoneInfo:
     """The principal's timezone, from ``TIMEZONE`` in .env, else the fallback.
 
-    An earlier version of this module claimed the value was "read from TIMEZONE
-    in .env" while nothing read it - `TIMEZONE=Europe/London` silently produced
-    Pacific day boundaries. The comment was the whole feature. This is it made
-    true; an unknown zone name is refused rather than silently falling back,
-    because a typo would otherwise present as correct-looking wrong times.
+    An earlier version claimed the value was "read from TIMEZONE in .env" while
+    nothing read it - the comment was the whole feature, and
+    `TIMEZONE=Europe/London` silently produced Pacific day boundaries. An
+    unknown zone name is refused rather than falling back, because a typo would
+    otherwise present as correct-looking wrong times.
     """
     if identities is None:
         return ZoneInfo(DEFAULT_TIMEZONE)
@@ -100,13 +103,62 @@ def resolve_reference(
     if not isinstance(found, str):
         # `Mapping[str, str]` is an annotation, not a runtime guard, and this is
         # the one function whose job is turning a bad identity into the CALLER's
-        # error. A mapping built from `os.environ.get(...)` - which returns None
-        # when unset, and is the obvious way to build one without
-        # `Identities.from_file` - reached `.strip()` and raised AttributeError:
-        # exactly the bare lookup error three frames up that `error=` exists to
-        # prevent.
+        # error. A mapping built from `os.environ.get(...)` - the obvious way to
+        # build one without `Identities.from_file`, and None when unset - reached
+        # `.strip()` and raised AttributeError: exactly the bare lookup error
+        # three frames up that `error=` exists to prevent.
         raise error(f"{key} is set to {type(found).__name__}, not a string. Check .env.")
     return found.strip()
+
+
+#: Slack's shape for a user id. One regex, one concept: a destination and a
+#: `from:` filter are held to the same check - guardrail 1 for the first,
+#: `recipes.slack_search` for the second.
+_USER_ID = re.compile(r"^[UWB][A-Z0-9]{6,}$")
+
+
+def is_user_id(value: str) -> bool:
+    """Whether ``value`` is shaped like a Slack user id rather than a name."""
+    return bool(_USER_ID.match((value or "").strip()))
+
+
+def principal_id(identities: Mapping[str, str], *, what: str, error: type[Exception]) -> str:
+    """The principal's Slack id - the one destination an autonomous message may
+    address (guardrail 1) - resolved from ``${SLACK_USER_PRINCIPAL}`` or refused.
+
+    Refused, never passed through or defaulted: as literal text the reference
+    is a valid query that matches nothing, and a misconfigured run must reach
+    nobody rather than somebody else. The SHAPE is checked as well as the
+    presence, because `.env` is hand-edited: an empty value, a display name,
+    or an inline comment glued onto the id each addressed a DM at a
+    conversation that does not exist
+    (test_a_principal_id_that_is_not_an_id_is_refused). The error never echoes
+    the value, the same rule `ConfigError` holds.
+
+    ``what`` and ``error`` are the caller's, as for `resolve_reference`: the
+    brief, the runner, a prep ping and a delivery each fail in their own
+    vocabulary. They were four copies of this body before they shared it.
+    """
+    value = resolve_reference("${SLACK_USER_PRINCIPAL}", identities, what=what, error=error)
+    if not is_user_id(value):
+        raise error(
+            "SLACK_USER_PRINCIPAL is not a Slack user id. Fix it in .env - and "
+            "note that everything after the `=` is the value, inline comment included."
+        )
+    return value
+
+
+def path_from(identities: Mapping[str, str], key: str) -> Path:
+    """A directory named in .env, expanded and checked - one reader for every
+    path key. An empty value resolves to "." and an unset ``${VAR}`` passes
+    through as literal text; both would quietly write into the working
+    directory or into a folder named after the variable."""
+    if key not in identities:
+        raise ConfigError(f"{key} is not set. Add it to .env; see .env.example.")
+    resolved = os.path.expanduser(os.path.expandvars(str(identities[key]).strip()))
+    if not resolved or "$" in resolved:
+        raise ConfigError(f"{key} is empty or names an unset variable. Fix it in .env.")
+    return Path(resolved)
 
 
 class ConfigError(RuntimeError):
@@ -146,8 +198,8 @@ class Identities(Mapping[str, str]):
         `Mapping.get` implements this by catching `KeyError`, and
         `__getitem__` raises `ConfigError`, which is not one - so `.get()`
         propagated and every caller treating a key as OPTIONAL got a crash
-        instead. `timezone_for` defaulted to Pacific and raised; `board` read
-        an optional `ATLASSIAN_SITE` the same way.
+        instead: `timezone_for` defaulted to Pacific and raised, and so did
+        `prep` and `run` reading their own optional keys.
 
         Raising loudly is right for a REQUIRED id, which is what `[]` is for.
         `.get` is the caller saying this one is optional, and that has to mean

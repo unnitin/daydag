@@ -21,9 +21,10 @@ WHY IT EXISTS
     a bug, not a matter of taste.
 
     `one_line`/`clipped` live here because three modules had hand-rolled the
-    same `" ".join(text.split())[:cap]` - `brief`, `smoke` and `runlog`. The
-    caps stayed with their callers: a quote, a connector failure and a run row
-    are genuinely different budgets. Only the mechanism was shared.
+    same `" ".join(text.split())[:cap]` - `brief`, and the probe and run-row
+    halves now merged into `observe`. The caps stayed with their callers: a
+    quote, a connector failure and a run row are genuinely different budgets.
+    Only the mechanism was shared.
 """
 
 from __future__ import annotations
@@ -35,10 +36,10 @@ from typing import Any
 #: The only emoji allowed in agent output. Note the plain U+26A0.
 SANCTIONED_EMOJI = frozenset({"🔴", "🟡", "🟢", "✓", "⭐", "⚠"})
 
-#: The sanctioned warning sign, named once. `state` and `brief` each had their
-#: own literal copy, and this is the one glyph in the set with an invisible
-#: wrong twin - the emoji-presentation U+26A0 U+FE0F. Three literals is three
-#: chances to paste the wrong one.
+#: The sanctioned warning sign, written as an escape and imported by `statedoc`
+#: rather than retyped. This is the one glyph in the set with an invisible wrong
+#: twin - the emoji-presentation U+26A0 U+FE0F - so every literal copy is
+#: another chance to paste the wrong one.
 WARN = "\u26a0"
 
 #: Em dash and en dash. Hyphens are house style; these are not.
@@ -51,12 +52,12 @@ _VARIATION_SELECTOR = "\ufe0f"
 
 #: Anything pictographic that is not on the sanctioned list.
 #:
-#: The ranges must not overlap. `1F900-1F9FF` was here and sits entirely inside
-#: `1F300-1FAFF`, which CodeQL flags as `py/overly-large-range`: a redundant
-#: subrange in a character class is how a filter comes to match something other
-#: than its author believes, and this class IS a filter - `voice_violations`
-#: decides from it whether a glyph is sanctioned. Keep them disjoint so the set
-#: a reader computes by eye is the set the engine matches.
+#: The ranges must not overlap (`test_the_emoji_ranges_do_not_overlap`). A
+#: redundant subrange - `1F900-1F9FF` sits entirely inside `1F300-1FAFF`, which
+#: CodeQL flags as `py/overly-large-range` - is how a filter comes to match
+#: something other than its author believes, and this class IS a filter:
+#: `voice_violations` decides from it whether a glyph is sanctioned. Disjoint
+#: keeps the set a reader computes by eye equal to the set the engine matches.
 _EMOJI = re.compile("[\U0001f300-\U0001faff\U00002600-\U000027bf\u2b00-\u2bff]")
 
 #: Minimal data that renders each push into a realistic string, so the voice
@@ -100,14 +101,13 @@ def clipped(text: Any, limit: int, *, ellipsis: str = "") -> str:
     """One line, no longer than ``limit``, ``ellipsis`` inside the budget.
 
     The ellipsis comes out of the budget rather than being appended after the
-    cut: appending is how a 160-char limit quietly returns 163 into a line the
-    caller had already sized. A ``limit`` too small for the ellipsis drops it
-    rather than overshooting, and a ``limit`` of zero or less is the empty
-    string - a caller reserving room for a suffix can reach both.
+    cut - see contract 3. A ``limit`` too small for the ellipsis drops it rather
+    than overshooting, and a ``limit`` of zero or less is the empty string; a
+    caller reserving room for a suffix can reach both.
 
     The budget is the caller's, not this function's. `brief` clips a quote at
-    one width and `smoke` a failure at another; what they shared was the
-    collapse-then-clip, and only that is here.
+    one width and `observe` a connector failure at another; what they shared was
+    the collapse-then-clip, and only that is here.
     """
     line = one_line(text)
     if limit <= 0:

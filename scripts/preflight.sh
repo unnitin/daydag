@@ -59,7 +59,7 @@ fi
 # typed into a test, which is a check that cannot fail. This runs them over
 # .claude/skills/, so a second writer is caught before the push.
 step "skill manifests"
-if manifests=$("$PY" -m daydag.manifests 2>&1); then
+if manifests=$("$PY" -m daydag.registry 2>&1); then
   ok "one writer per artifact; sensitivity declared"
 else
   printf '%s\n' "$manifests" | sed 's/^/   /'

@@ -7,8 +7,9 @@ USING IT
     sources(row, now, identities=ids, channels=chans, terms=words)
     point("what", "why now", quote=q, permalink=link, source="slack")
     build(row, reason, points)              # -> PrepPing
-    may_interrupt(Push.PREP)                # the ONLY kind that may
+    may_interrupt(Push.PREP_PING)           # the ONLY kind that may
     recipient(ids)                          # the one destination, guardrail 1
+    select(rows, "finance x data", now=now, until=until, principal=email)
 
 CONTRACTS
     1. Qualification is the LEDGER's, narrowed - never re-derived. `Ledger`
@@ -42,6 +43,12 @@ WHY IT EXISTS
     `weekly-planning` skill's File 2 recipe, run just in time instead of on
     Friday.
 
+    Naming the meeting lives here too (`select`, `Selection`), not in a module
+    of its own: "prep me for the Finance call" and "prep the next qualifying
+    meeting" are the same question asked two ways, and they have to agree on
+    what a meeting is. `HORIZON_DAYS` is `recipes.PREP_HORIZON_DAYS`, the same
+    span `run.plan` fetches windows for.
+
 KNOWN LIMIT
     `LOOKBACK_DAYS` is 28 and fixed. A meeting that recurs monthly gets one
     prior instance to draw on, which is thin; a weekly gets four.
@@ -52,23 +59,26 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, tzinfo
 from enum import Enum
 from typing import Any
 
-from daydag.config import resolve_reference
-from daydag.ledger import Row
+from daydag.config import principal_id
+from daydag.ledger import Row, name_tokens, tokens
 from daydag.recipes import (
     PACIFIC,
     RecipeError,
     gmail_gemini_notes,
-    is_user_id,
     meeting_prep,
     slack_search,
+)
+from daydag.recipes import (
+    PREP_HORIZON_DAYS as HORIZON_DAYS,
 )
 from daydag.voice import Push, render
 
 __all__ = [
+    "HORIZON_DAYS",
     "LOOKBACK_DAYS",
     "MAX_POINTS",
     "NO_MATERIAL",
@@ -80,6 +90,7 @@ __all__ = [
     "PrepPing",
     "Reason",
     "Schedule",
+    "Selection",
     "SourcePlan",
     "build",
     "due_at",
@@ -87,6 +98,7 @@ __all__ = [
     "point",
     "prep_worthy",
     "recipient",
+    "select",
     "sources",
 ]
 
@@ -152,7 +164,8 @@ class Reason(Enum):
 _STANDUP = re.compile(r"\b(stand\s*-?\s*ups?|scrums?)\b", re.IGNORECASE)
 
 #: Two first names and a slash is how half of his 1:1s are actually titled, so
-#: the count matters as much as the words - hence both paths in `_shape`.
+#: the attendee count matters as much as the words - hence both paths in
+#: `prep_worthy` (test_two_attendees_is_a_one_on_one_even_with_a_bland_title).
 _ONE_ON_ONE = re.compile(r"(?:\b|^)(?:1\s*[:/-]\s*1|one[\s-]?on[\s-]?one|o3)\b", re.IGNORECASE)
 
 #: Deliberately not including "review" or "sync": both appear on meetings that
@@ -175,16 +188,14 @@ class Audience:
     def from_identities(cls, identities: Mapping[str, str]) -> Audience:
         """Read ``PREP_LEADERSHIP`` and ``ORG_EMAIL_DOMAIN``, both optional.
 
-        Unset means *unknown*, and unknown resolves to "no one qualifies on
-        this rule". The alternative default - treating every attendee as an
-        outside party when the org domain is unset - fires the interrupt on
-        every meeting on the calendar, which mutes it inside a day.
+        Unset means *unknown*, which resolves to "no one qualifies on this
+        rule" (contract 5, test_a_missing_org_domain_means_nobody_is_declared_external).
+        Both were in fact unset in the shipped `.env`, so two of the four
+        reasons could never fire at all.
 
-        Both were in fact unset, so `has_leadership` and `has_external` always
-        answered False and two of the four reasons could never fire. Prefer
-        `from_directory`, which takes leadership from the people store, where a
-        person's seniority sits next to the rest of what is known about them
-        and can be corrected without editing a CSV in `.env`.
+        Prefer `from_directory`: it takes leadership from the people store,
+        where a person's seniority sits next to the rest of what is known about
+        them and can be corrected without editing a CSV in `.env`.
         """
         return cls(
             leadership=_csv(identities, LEADERSHIP_KEY),
@@ -201,11 +212,11 @@ class Audience:
         person attached, and is needed before any lookup can be trusted - so it
         stays configuration.
 
-        UNIONED with the `PREP_LEADERSHIP` CSV, not either/or. The first version
-        used the CSV only while the store was empty, so the first name added to
-        the store silently dropped every configured leader - the CEO in .env
-        stopped qualifying the moment the CTO was entered. And `brief` /
-        `week_ahead` still read the CSV (#119), so it has to keep working.
+        UNIONED with the `PREP_LEADERSHIP` CSV, not either/or. Falling back to
+        the CSV only while the store was empty meant the first name added to
+        the store silently dropped every configured leader - the CEO in `.env`
+        stopped qualifying the moment the CTO was entered. And the week-ahead
+        still reads the CSV (#119), so it has to keep working.
 
         Internal domains: `ORG_EMAIL_DOMAIN`, or - when that is unset - the
         domain of `EMAIL_PRINCIPAL`. He works for the org; his address is its
@@ -303,12 +314,11 @@ class Schedule:
         for row in rows:
             if row.start.tzinfo is None:
                 # `ledger.seed_day` passes `event["start"]` through untouched, so
-                # a calendar read that lost its offset arrives here. Compared
-                # against an aware `now` that is a TypeError from inside the
-                # loop, naming neither the meeting nor the cause. Raising rather
-                # than skipping because the start comes from the same read for
-                # every row: if one is naive the batch is not trustworthy, and a
-                # silently skipped prep ping is invisible.
+                # a calendar read that lost its offset arrives here and compares
+                # against an aware `now` as a TypeError naming neither the
+                # meeting nor the cause. Raising rather than skipping because
+                # the starts all come from one read: if one is naive the batch
+                # is not trustworthy, and a skipped prep ping is invisible.
                 raise PrepError(
                     f"{row.summary!r} has a timezone-naive start; the calendar read lost its offset"
                 )
@@ -368,9 +378,9 @@ def sources(
     degraded: list[str] = []
 
     try:
-        # Subject, not body: the #2 audit found Gemini's subject is rigidly
-        # `Notes: "<title>" <date>`, and body matching cannot separate two
-        # back-to-back 1:1s - which for a prep ping means prepping the wrong one.
+        # Subject, not body (`recipes` contract 4): body matching cannot
+        # separate two back-to-back 1:1s, which here means prepping the wrong
+        # meeting.
         gemini = gmail_gemini_notes(title=row.summary, after=start, before=end)
     except RecipeError as exc:
         degraded.append(f"meeting title is not searchable as a subject ({exc}); swept by date")
@@ -397,12 +407,12 @@ def sources(
         window=(start, end),
         gemini=gemini,
         slack=tuple(queries),
-        # The MEETING's week, not `now`'s. They agree for a same-day, 30-min
-        # ping - which is why this shipped looking right - and disagree the
-        # first time `sources()` is built ahead of time, from a different
-        # week: the week-ahead loop (SPEC 3.6) calls this on Sunday night for
-        # Monday's meetings, and `meeting_prep(end)` there named Meeting
-        # Prep/<the closing week>.md - a real file, just the wrong one.
+        # The MEETING's week, not `now`'s
+        # (test_sources_names_the_meetings_week_not_the_caller_week). They agree
+        # for a same-day ping, which is why this shipped looking right, and
+        # disagree when the week-ahead loop builds it on Sunday night for
+        # Monday: `meeting_prep(end)` there named the closing week's file - a
+        # real file, just the wrong one.
         prep_note=meeting_prep(_local_day(row.start)),
         degraded=tuple(degraded),
     )
@@ -411,15 +421,14 @@ def sources(
 def _local_day(start: datetime) -> date:
     """``start``'s calendar day in the principal's zone.
 
-    A naive ``start`` is assumed to already be his local wall-clock time - the
-    same contract `brief._local` and `week_ahead._local` use for an event's
-    start - never reinterpreted via the host's zone: plain `.astimezone()` on a
-    naive value adopts whatever zone the *runner* has, which is exactly the
-    class of bug `slack_overnight` and `_as_of` were both fixed for elsewhere in
-    this codebase. `Schedule.due` already refuses a naive `row.start` outright;
-    this path can be reached without going through `Schedule` at all (the
-    week-ahead loop calls `sources()` directly, well before the 30-minute
-    window), so it degrades to the same wall-clock reading rather than raising.
+    A naive ``start`` is read as already his wall-clock time - `push.local`'s
+    contract for an event start - never via the host's zone, the class of bug
+    `slack_overnight` and `pulse._as_of` were both fixed for.
+
+    `Schedule.due` refuses a naive `row.start` outright, but this path is
+    reachable without it: the week-ahead loop calls `sources()` on Sunday for
+    Monday, well outside the 30-minute window. So it degrades to the same
+    wall-clock reading rather than raising.
     """
     return (start if start.tzinfo else start.replace(tzinfo=PACIFIC)).astimezone(PACIFIC).date()
 
@@ -460,11 +469,7 @@ class Point:
         return f"{head}\n  ({UNSOURCED})"
 
     def authored(self) -> str:
-        """The line minus the borrowed words, for the voice check.
-
-        The quote and its link were written by somebody else and copied
-        verbatim; holding them to his voice would mean editing evidence.
-        """
+        """The line minus the borrowed words, for the voice check (contract 3)."""
         head = f"- {self.what.strip()} - {self.why_now.strip()}"
         return head if self.sourced else f"{head}\n  ({UNSOURCED})"
 
@@ -582,27 +587,110 @@ def may_interrupt(kind: Push) -> bool:
 def recipient(identities: Mapping[str, str]) -> str:
     """The only place a ping may go: the principal's own DM (guardrail 1).
 
-    A function rather than a constant so the id stays in `.env`, and an error
-    rather than a fallback so a misconfigured run pings nobody instead of
-    pinging somebody else.
-
-    The shape is checked as well as the presence. `slack_search` already refuses
-    a non-id because a display name matches nothing *silently*; the one
-    permitted destination deserves the same floor, and `.env` is hand-edited -
-    an empty value, a display name, or a trailing inline comment glued onto the
-    id all produced a DM addressed at a conversation that does not exist.
+    `config.principal_id` in this module's vocabulary: a misconfigured run
+    pings nobody instead of somebody else, and a value that is not an id is
+    refused (test_a_principal_id_that_is_not_an_id_is_refused).
     """
-    value = resolve_reference(
-        "${SLACK_USER_PRINCIPAL}",
-        identities,
-        what="prep ping recipient",
-        error=PrepError,
-    )
-    if not is_user_id(value):
-        # Never echo the value: config.ConfigError holds the same line, because
-        # an error that prints the id defeats keeping it out of the repo.
-        raise PrepError(
-            "SLACK_USER_PRINCIPAL is not a Slack user id. Fix it in .env - and "
-            "note that everything after the `=` is the value, inline comment included."
-        )
-    return value
+    return principal_id(identities, what="prep ping recipient", error=PrepError)
+
+
+# ---------------------------------------------------------------------------
+# naming the meeting to prep for, and refusing to guess between two
+#
+# `run._prep` preps the NEXT qualifying meeting. "Prep me for the Finance
+# call" is a different question: matching is by tokens against the title or
+# an attendee's address and display name, the principal never matches, and
+# two matches surface as two - prep for the wrong meeting is worse than none.
+# ---------------------------------------------------------------------------
+
+
+def _clock(moment: datetime, tz: tzinfo) -> str:
+    """``mon 14 sep 9:00`` - his zone, his register, same as the brief.
+
+    A row's start carries whatever offset the connector emitted; rendered raw,
+    a 13:00 PT meeting delivered as ``20:00Z`` listed as 20:00 in the which-one
+    prompt while the morning brief showed 1:00 for the same meeting. A naive
+    start is read as already his wall-clock, `push.local`'s convention.
+    """
+    local = (moment if moment.tzinfo else moment.replace(tzinfo=tz)).astimezone(tz)
+    return f"{local:%a %d %b}".lower() + f" {local.hour % 12 or 12}:{local.minute:02d}"
+
+
+@dataclass(frozen=True)
+class Selection:
+    """What a selector matched, and what to say when that is not one thing."""
+
+    candidates: tuple[Row, ...]
+    selector: str
+    tz: tzinfo = PACIFIC
+
+    @property
+    def one(self) -> Row | None:
+        """The single match, or None when there are none or several."""
+        return self.candidates[0] if len(self.candidates) == 1 else None
+
+    def render(self) -> str:
+        """The line to show when `one` is None - never a silent empty."""
+        if not self.candidates:
+            return (
+                f"prep: nothing in the next {HORIZON_DAYS} days matches"
+                f' "{self.selector}" - try a title word, or a name as it appears'
+                " on the invite"
+            )
+        lines = [f'prep: "{self.selector}" matches {len(self.candidates)} meetings - which one?']
+        lines.extend(f"  {_clock(row.start, self.tz)}  {row.summary}" for row in self.candidates)
+        return "\n".join(lines)
+
+
+def _matches(row: Row, wanted: set[str], principal: str) -> bool:
+    """Whether one meeting answers to this selector.
+
+    Title first, because "finance x data" is how he refers to the meeting and
+    is not anybody's name. Then attendees, where EVERY token has to land: one
+    token names a person, but a two-token selector matching on either half
+    picks the wrong Bo (test_a_full_name_needs_both_halves_to_match). Tokens
+    only, via `ledger.tokens`/`name_tokens` - a substring path let "fin" find
+    Finance, which is the fuzziness this module refuses.
+    """
+    if wanted <= tokens(row.summary):
+        return True
+    names = list(row.attendee_names) + [""] * (len(row.attendees) - len(row.attendee_names))
+    for address, name in zip(row.attendees, names, strict=False):
+        # Comparing like with like: `Row.attendees` are bare EMAILS (split from
+        # any display name in `Ledger.seed_day`), so the principal has to
+        # arrive as one. A Slack id here matches nothing and silently disables
+        # the skip (test_the_principal_is_skipped_by_address_not_by_luck).
+        if principal and address.casefold() == principal.casefold():
+            continue
+        if wanted <= name_tokens(address, name):
+            return True
+    return False
+
+
+def select(
+    rows: Iterable[Row],
+    selector: str,
+    *,
+    now: datetime,
+    until: datetime,
+    principal: str = "",
+    tz: tzinfo = PACIFIC,
+) -> Selection:
+    """Every meeting in ``[now, until)`` answering to ``selector``, in time order.
+
+    ``until`` is the caller's, not derived here: the plan fetched a specific
+    set of day windows and the match bound has to be the END of the last one,
+    or the two halves of one loop disagree about what "the next 7 days" means
+    (test_the_match_bound_is_the_end_of_the_fetched_window_not_a_rolling_instant).
+
+    Raises `ValueError` when the selector has no word in it. The guard is on
+    the TOKENS: an empty token set is a subset of every title's, so "---" or a
+    stray quote passed a check on the string and matched the whole week.
+    """
+    wanted = tokens(selector)
+    if not wanted:
+        raise ValueError("a prep selector needs a word in it - a title word, or a name")
+    phrase = " ".join(str(selector).split())
+
+    found = [row for row in rows if now <= row.start < until and _matches(row, wanted, principal)]
+    return Selection(tuple(sorted(found, key=lambda r: r.start)), phrase, tz)

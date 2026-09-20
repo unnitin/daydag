@@ -27,10 +27,12 @@ CONTRACTS
 
 WHY IT EXISTS
     On 2026-09-18 three items were reported to him as open that were already
-    closed in Slack: a promise answered three hours after it was made in the
-    same DM, a recording that had been posted in the thread the day before, and
-    a decision he had answered in the thread it was asked in. Every one had
-    been matched on the text of the ASK, and the reply under it was never read.
+    closed in Slack: a promise answered three hours later in the same DM, a
+    recording posted in the thread the day before, and a decision he had
+    answered in the thread it was asked in. Every one had been matched on the
+    text of the ASK, and the reply under it was never read. All three answers
+    were thread REPLIES, which a top-level channel read never sees.
+
     His words: "these are things you should already try before coming back to
     me for directions". This module is that try, made mechanical: the runner
     plans the reads, and an item cannot render as open until they happened.
@@ -40,11 +42,11 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from typing import Any
 
-from daydag import brief
-from daydag.state import StateDoc, read_section
+from daydag import push
+from daydag.statedoc import StateDoc
 
 __all__ = [
     "Ask",
@@ -116,13 +118,7 @@ class ReadStep:
     how: str
 
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "key": self.key,
-            "conversation": self.conversation,
-            "oldest": self.oldest,
-            "thread_ts": self.thread_ts,
-            "how": self.how,
-        }
+        return asdict(self)
 
 
 @dataclass(frozen=True)
@@ -146,10 +142,10 @@ def slack_permalink(text: str) -> tuple[str, str, str, str]:
     """``(conversation, ts, thread_ts, permalink)`` for the first Slack link in
     ``text``, or four empty strings.
 
-    The FIRST one: a chase block's own permalink sits on the head line or its
-    first sub-bullet, and a later sub-bullet may cite the meeting notes or a
-    related thread. Reading the wrong conversation would report "open" against
-    a channel the reply was never going to land in.
+    The FIRST one. A block's own permalink sits on its head line or first
+    sub-bullet; a later sub-bullet may cite meeting notes or a related thread,
+    and reading that conversation instead reports "open" against a channel the
+    reply was never going to land in.
     """
     found = _PERMALINK.search(text)
     if not found:
@@ -160,88 +156,38 @@ def slack_permalink(text: str) -> tuple[str, str, str, str]:
     return found["conversation"], ts, thread["ts"] if thread else "", found.group(0)
 
 
-#: The bullet marker only. `str.lstrip("-* ")` also ate the `**` opening a
-#: bold owner token, so `**gov-lead**` read back as `gov-lead**`.
-_MARKER = re.compile(r"^\s*[-*]\s+")
-
-
-def _struck(head: str) -> bool:
-    return _MARKER.sub("", head).startswith("~~")
-
-
-def _clean(head: str) -> str:
-    body = _MARKER.sub("", head).strip()
-    body = re.sub(r"\[(?P<label>[^\]]*)\]\([^)\s]+\)", r"\g<label>", body)
-    body = re.sub(r"\s{2,}", " ", body)
-    return body.strip(" -·")
-
-
 def asks_in(state_text: str, decisions_text: str = "") -> list[Ask]:
     """Every unstruck ask in ``State.md`` and every open pending decision.
 
-    Walks the blocks rather than `read_section`'s bodies because the permalink
-    usually sits in a SUB-bullet - the head line is his wording, the citation
-    is the line under it - and a top-level read would find no link on any of
-    the live file's rows.
+    `StateDoc.blocks_in` is the reader: it walks nested headings (the promises
+    sit under `### promises you made` inside `## Owed by you`) and `Block.link`
+    finds the permalink in the sub-bullet where his citation lives.
     """
     asks: list[Ask] = []
     doc = StateDoc.parse(state_text)
-    for section in doc.sections:
-        parent = _owning_section(section.name, doc)
-        if parent is None:
-            continue
-        for block in section.blocks:
-            head = block.head
-            if not head.strip() or _struck(head):
+    for section, waiting_on in SECTIONS.items():
+        for block in doc.blocks_in(section):
+            if block.struck or not block.head.strip():
                 continue
-            conversation, ts, thread_ts, link = slack_permalink("\n".join(block.lines))
-            asks.append(
-                Ask(
-                    text=_clean(head),
-                    section=parent,
-                    waiting_on=SECTIONS[parent],
-                    conversation=conversation,
-                    ts=ts,
-                    thread_ts=thread_ts,
-                    permalink=link,
-                )
-            )
-    for body in read_section(decisions_text, "Pending decisions", top_level=True):
-        if body.startswith("~~") or "status: answered" in body.casefold():
+            asks.append(_ask(block.body, section, waiting_on, "\n".join(block.lines)))
+    for block in StateDoc.parse(decisions_text).blocks_in("Pending decisions"):
+        if block.struck or "status: answered" in block.head.casefold():
             continue
-        conversation, ts, thread_ts, link = slack_permalink(body)
-        asks.append(
-            Ask(
-                text=_clean(body),
-                section="Pending decisions",
-                waiting_on="principal",
-                conversation=conversation,
-                ts=ts,
-                thread_ts=thread_ts,
-                permalink=link,
-            )
-        )
+        asks.append(_ask(block.body, "Pending decisions", "principal", "\n".join(block.lines)))
     return asks
 
 
-def _owning_section(name: str, doc: StateDoc) -> str | None:
-    """The `SECTIONS` heading ``name`` sits under, or None.
-
-    `### promises you made` is nested inside `## Owed by you`, and StateDoc
-    parses every heading as its own section - so a nested heading inherits
-    the nearest enclosing top-level heading that this module knows about.
-    """
-    if name in SECTIONS:
-        return name
-    enclosing: str | None = None
-    for section in doc.sections:
-        heading = section.heading or ""
-        level = len(heading) - len(heading.lstrip("#"))
-        if level == 2:
-            enclosing = section.name if section.name in SECTIONS else None
-        if section.name == name and level > 2:
-            return enclosing
-    return None
+def _ask(text: str, section: str, waiting_on: str, source: str) -> Ask:
+    conversation, ts, thread_ts, link = slack_permalink(source)
+    return Ask(
+        text=text,
+        section=section,
+        waiting_on=waiting_on,
+        conversation=conversation,
+        ts=ts,
+        thread_ts=thread_ts,
+        permalink=link,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -252,9 +198,8 @@ def _owning_section(name: str, doc: StateDoc) -> str | None:
 def closure_steps(asks: Iterable[Ask]) -> list[ReadStep]:
     """One read per checkable ask: the conversation after it, and its thread.
 
-    The thread is not optional. A top-level read misses every reply, and a
-    reply is exactly where an answer lands - all three of the 2026-09-18
-    misses were replies.
+    The thread is not optional: a top-level read misses every reply, and a
+    reply is exactly where an answer lands.
     """
     steps: list[ReadStep] = []
     seen: set[str] = set()
@@ -318,14 +263,14 @@ def judge(
 ) -> list[Verdict]:
     """A verdict per ask, from what was read.
 
-    ``fetched`` maps an ask's key to the messages read for it. A key that is
-    absent - or a ``fetched`` that is ``None`` because the agent never ran the
-    closure reads at all - leaves that ask ``unchecked``. Nothing here infers
-    absence from silence (contract 1).
+    ``fetched`` maps an ask's key to the messages read for it. An absent key -
+    or a ``fetched`` of ``None``, the agent never having run the closure reads
+    at all - leaves that ask ``unchecked``; nothing here infers absence from
+    silence (contract 1).
 
-    ``owners`` maps a casefolded owner token to a Slack user id, for chase
-    items whose owner the caller can resolve; without it any non-principal
-    reply counts as the owner's.
+    ``owners`` maps a casefolded owner token to a Slack user id, for chase items
+    whose owner the caller can resolve. Without it, any non-principal reply
+    counts as the owner's.
     """
     owners = {k.casefold(): v for k, v in (owners or {}).items()}
     verdicts: list[Verdict] = []
@@ -366,7 +311,7 @@ def judge(
 # ---------------------------------------------------------------------------
 
 
-def render_closure(verdicts: Iterable[Verdict], *, section: str) -> list[brief.Section]:
+def render_closure(verdicts: Iterable[Verdict], *, section: str) -> list[push.Section]:
     """The three buckets for one State.md section, evidence on every line.
 
     Empty buckets do not render (`render_push` drops them), so a section where
@@ -375,25 +320,25 @@ def render_closure(verdicts: Iterable[Verdict], *, section: str) -> list[brief.S
     """
     chosen = [v for v in verdicts if v.ask.section == section]
     answered = [
-        brief.claim(f"{v.ask.text} - answered, strike?", v.permalink, quote=v.quote or None)
+        push.claim(f"{v.ask.text} - answered, strike?", v.permalink, quote=v.quote or None)
         for v in chosen
         if v.status == "answered"
     ]
     open_ = [
-        brief.claim(f"{v.ask.text} - {v.reason}", v.ask.permalink)
+        push.claim(f"{v.ask.text} - {v.reason}", v.ask.permalink)
         for v in chosen
         if v.status == "open"
     ]
     unchecked = [
-        brief.claim(f"{v.ask.text} - unchecked: {v.reason}", v.ask.permalink or None)
+        push.claim(f"{v.ask.text} - unchecked: {v.reason}", v.ask.permalink or None)
         for v in chosen
         if v.status == "unchecked"
     ]
     label = section.casefold()
     return [
-        brief.Section(f"{label} - open ({len(open_)})", tuple(open_)),
-        brief.Section(f"{label} - answered, not yet struck ({len(answered)})", tuple(answered)),
-        brief.Section(f"{label} - couldn't verify ({len(unchecked)})", tuple(unchecked)),
+        push.Section(f"{label} - open ({len(open_)})", tuple(open_)),
+        push.Section(f"{label} - answered, not yet struck ({len(answered)})", tuple(answered)),
+        push.Section(f"{label} - couldn't verify ({len(unchecked)})", tuple(unchecked)),
     ]
 
 

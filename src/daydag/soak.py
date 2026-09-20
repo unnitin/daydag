@@ -21,16 +21,15 @@ CONTRACTS
        meeting titles and names.
 
 WHY IT EXISTS
-    BUILD's M2 gate: run the brief by hand for five working days, log every
+    the M2-5 gate (#13): run the brief by hand for five working days, log every
     edit, pass when the count trends down. It was set, and then seven loops
     were built without it ever running - so the format churn it exists to catch
     for free is now rendered into several templates instead of one.
 
     SPEC §8 adds the rule that actually changes the product: *anything he asks
-    twice gets folded into the skill*. That makes a repeat more informative
-    than the count. A falling count with an outstanding repeat means a known,
-    named defect is still sitting in the brief, and the arithmetic is flattering
-    it.
+    twice gets folded into the skill*. That makes a repeat more informative than
+    the count, because a falling count with an outstanding repeat means a known,
+    named defect is still in the brief and the arithmetic is flattering it.
 
 KNOWN LIMIT
     `report.trending` over five points is a direction, not a statistic. It
@@ -53,7 +52,7 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Any
 
-from daydag.state import EventLog
+from daydag.eventlog import EventLog
 
 __all__ = ["REQUIRED_DAYS", "Report", "Soak", "main"]
 
@@ -197,9 +196,7 @@ def _repeats(edits: list[tuple[date, str]], folded: set[str]) -> tuple[str, ...]
 def _trending_down(per_day: Mapping[date, int]) -> bool:
     """Whether the edit count is falling.
 
-    First two days against the last two, middle ignored. Over five points that
-    is a direction rather than a statistic - see KNOWN LIMIT - but it survives
-    one noisy morning, which comparing day five to day one does not.
+    First two days against the last two, middle ignored - see KNOWN LIMIT.
 
     Fewer than four days cannot show a trend, and says so rather than
     defaulting to True: the gate's failure mode to avoid is the flattering one.
@@ -237,42 +234,11 @@ def _as_text(row: Any, key: str) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """`shipped` / `note` / `folded` write; `report` reads."""
-    args = list(sys.argv[1:] if argv is None else argv)
-    usage = (
-        "usage: python -m daydag.soak {shipped|note|folded|report} [text]"
-        " --log PATH [--day YYYY-MM-DD]"
-    )
-    if not args or args[0] not in {"shipped", "note", "folded", "report"}:
-        print(usage)
-        return 2
-    if "--log" not in args[:-1]:
-        print(usage + "\n\n--log is required: the journal IS the gate's memory.")
-        return 2
+    """``python -m daydag.soak ...`` - the one CLI (`daydag.cli`), entered here."""
 
-    command = args[0]
-    log = args[args.index("--log") + 1]
-    day = (
-        date.fromisoformat(args[args.index("--day") + 1]) if "--day" in args[:-1] else date.today()
-    )
-    text = " ".join(a for a in args[1:] if not a.startswith("--")).strip()
-    text = text.replace(log, "").replace(day.isoformat(), "").strip()
+    from daydag.cli import main as cli_main
 
-    journal = Soak(EventLog.open(log))
-    if command == "report":
-        print(journal.report().render())
-        return 0
-    if command == "shipped":
-        journal.shipped(day)
-    elif not text:
-        print(f"{command} needs the text of the edit")
-        return 2
-    elif command == "note":
-        journal.note(text, day=day)
-    else:
-        journal.folded(text)
-    print(journal.report().render())
-    return 0
+    return cli_main(["soak", *(sys.argv[1:] if argv is None else argv)])
 
 
 if __name__ == "__main__":  # pragma: no cover
