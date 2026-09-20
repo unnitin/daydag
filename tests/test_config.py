@@ -182,3 +182,26 @@ def test_a_usable_path_value_is_expanded(tmp_path, monkeypatch):
     assert (
         path_from({"MIRROR_DIR": "$DAYDAG_TEST_HOME/mirrors"}, "MIRROR_DIR") == tmp_path / "mirrors"
     )
+
+
+@pytest.mark.parametrize("value", ["", "not-a-slack-id", "UPRINCIPAL1 # inline comment"])
+def test_principal_id_refuses_a_value_not_shaped_like_an_id_without_echoing_it(value):
+    """Four callers - the brief, the runner, a prep ping, a delivery - share this
+    check, so a display name in .env is refused before a plan is built, not only
+    before a send. The error is the caller's own type and never quotes .env."""
+    from daydag.config import principal_id
+
+    class CallerError(Exception):
+        pass
+
+    with pytest.raises(CallerError) as excinfo:
+        principal_id({"SLACK_USER_PRINCIPAL": value}, what="the brief's DM", error=CallerError)
+    assert "not a Slack user id" in str(excinfo.value)
+    assert not value or value not in str(excinfo.value)
+
+
+def test_principal_id_returns_the_resolved_id_stripped():
+    from daydag.config import principal_id
+
+    ids = {"SLACK_USER_PRINCIPAL": " UPRINCIPAL1 "}
+    assert principal_id(ids, what="x", error=RuntimeError) == "UPRINCIPAL1"

@@ -60,10 +60,10 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Protocol, TypeVar
 
-from daydag.config import resolve_reference
+from daydag.config import principal_id
 from daydag.observe import REACHED, Result, Run, RunLog
 from daydag.prep import PrepPing, may_interrupt
-from daydag.recipes import error_text, is_user_id
+from daydag.recipes import error_text
 from daydag.registry import DM_SURFACE, Registry
 from daydag.voice import Push
 
@@ -161,32 +161,6 @@ class Draft:
     reason: str = ""
 
 
-def _principal_channel(identities: Mapping[str, str]) -> str:
-    """The one Slack id every autonomous send may address (guardrail 1).
-
-    Mirrors `prep.recipient` and `brief._principal` - each resolves this same
-    reference with its own error type, and a shared helper would have to pick
-    one caller's wording for every other caller's failure.
-
-    The SHAPE is checked as well as the presence, because `.env` is hand-edited
-    and an empty value or a display name addresses a conversation that does not
-    exist. The error never echoes the value, the same rule `config.ConfigError`
-    holds: printing the id defeats keeping it out of a public repo.
-    """
-    value = resolve_reference(
-        "${SLACK_USER_PRINCIPAL}",
-        identities,
-        what="the delivery recipient",
-        error=DeliveryError,
-    )
-    if not is_user_id(value):
-        raise DeliveryError(
-            "SLACK_USER_PRINCIPAL is not a Slack user id. Fix it in .env - and "
-            "note that everything after the `=` is the value, inline comment included."
-        )
-    return value
-
-
 def _posted_row(name: str) -> Result:
     """One observation: a message went out. The same `observe.Result` a probe
     produces - something was asked of a source and it answered."""
@@ -264,7 +238,7 @@ def deliver_push(
         # a stale skill name raised with no row at all, and "did the brief even
         # try to send" answered with the previous success
         # (`test_a_preflight_failure_also_leaves_a_run_row`).
-        channel = _principal_channel(identities)
+        channel = principal_id(identities, what="the delivery recipient", error=DeliveryError)
         if registry is not None and skill is not None:
             registry.route(skill, to=DM_SURFACE)
         sent = _send(transport, channel=channel, text=text)
@@ -302,7 +276,7 @@ def deliver_prep_ping(
                 "(prep.may_interrupt); a push that cannot arrive off-schedule "
                 "must not arrive off-schedule by being sent here"
             )
-        channel = _principal_channel(identities)
+        channel = principal_id(identities, what="the delivery recipient", error=DeliveryError)
         headline = _send(transport, channel=channel, text=ping.headline())
         if run is not None:
             run.observe([_posted_row("slack dm")])

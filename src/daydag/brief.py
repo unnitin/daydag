@@ -54,7 +54,7 @@ from datetime import datetime
 from typing import Any
 
 from daydag import recipes, voice
-from daydag.config import resolve_reference
+from daydag.config import principal_id
 from daydag.ledger import Ledger, title_from_gemini_subject
 from daydag.pulse import Pulse
 from daydag.push import (
@@ -80,21 +80,6 @@ from daydag.statedoc import StateFolder
 __all__ = ["assemble"]
 
 
-def _principal(identities: Mapping[str, str]) -> str:
-    """The one Slack id the brief needs, resolved or refused.
-
-    Refused rather than passed through: ``${SLACK_USER_PRINCIPAL}`` as literal
-    text is a syntactically valid query that matches nothing, and a brief built
-    on it reports a quiet night it never actually looked at.
-    """
-    return resolve_reference(
-        "${SLACK_USER_PRINCIPAL}",
-        identities,
-        what="the principal's Slack id",
-        error=PushError,
-    )
-
-
 def assemble(
     *,
     now: datetime,
@@ -112,7 +97,7 @@ def assemble(
     case, and it lands in :attr:`Push.unreachable`.
     """
     aware(now, "the 6pm overnight cutoff is a local wall-clock time")
-    principal = _principal(identities)
+    principal = principal_id(identities, what="the principal's Slack id", error=PushError)
     day = now.astimezone(recipes.PACIFIC).date()
     read = Reader()
     sections: list[Section] = []

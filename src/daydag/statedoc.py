@@ -37,12 +37,12 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from daydag import vault
-from daydag.recipes import has
+from daydag.eventlog import ChaseItem, classify_sensitivity
 
 # WARN is the sanctioned glyph (plain U+26A0, not its emoji-presentation twin);
 # `daydag.voice` is the register authority, and a chase item that cannot be
@@ -102,121 +102,6 @@ def split_link(body: str) -> tuple[str, str | None]:
         # typo in a brief, which spends the reader's trust on nothing.
         return re.sub(r"\s{2,}", " ", head + tail).strip(" -·"), bare["url"]
     return body.strip(), None
-
-
-#: Every field a chase item carries beyond `sensitivity` (CLAUDE.md section 8's
-#: schema, plus `key` - not in that schema, but what a nudge or a piece of repo
-#: evidence keys back onto, and present on every payload the log has recorded).
-_CHASE_FIELDS: tuple[str, ...] = (
-    "key",
-    "owner",
-    "ask",
-    "quote",
-    "permalink",
-    "asked_on",
-    "last_activity",
-    "status",
-)
-
-
-@dataclass(frozen=True)
-class ChaseItem(Mapping[str, Any]):
-    """The one chase-item shape `EventLog` and `update_state` are both held to.
-
-    USING IT
-        item = ChaseItem.from_payload(payload, sensitivity=sensitivity)
-        item.owner; item["owner"]; item.get("owner")   # all three work
-        item.has_owner_or_ask                          # False -> both missing
-
-    CONTRACTS
-        1. `key` is the only field every chase item is guaranteed to carry - a
-           payload recorded with nothing else still builds one.
-        2. Neither `owner` nor `ask` being present does not raise. It is read
-           by `update_state` as `has_owner_or_ask is False`, which renders a
-           named warning line instead of a bare bullet or a crash (guardrail
-           6's "degrade visibly" - not the same failure as one of the two
-           being present, which still renders).
-        3. Mapping-shaped (`__getitem__`, `.get`, `dict(item)`) so it is a
-           drop-in wherever a chase item was already a bare dict - every
-           existing caller on either side of the log/vault seam.
-
-    WHY IT EXISTS
-        Issue #63: the log returned whatever a caller recorded and
-        `update_state` assumed `owner` and `ask` were in it, so a key-only
-        payload rendered as a bare `- ?` in `State.md`. One shape, read the
-        same way on both sides of the log/vault seam, is what keeps the two
-        from disagreeing again the next time either module changes.
-    """
-
-    key: str = "?"
-    owner: str = ""
-    ask: str = ""
-    quote: str = ""
-    permalink: str = ""
-    asked_on: str = ""
-    last_activity: str = ""
-    status: str = "open"
-    sensitivity: str = "normal"
-    #: Everything else the caller recorded. Whitelisting the fields above
-    #: dropped `day` - which `loop_opened` records on every call - and made
-    #: contract 3's "drop-in" false: `item["day"]` became a KeyError. Carried
-    #: apart, not merged, so a payload cannot overwrite a guaranteed field.
-    extra: Mapping[str, Any] = field(default_factory=dict)
-
-    @classmethod
-    def from_payload(
-        cls, payload: Mapping[str, Any], *, sensitivity: str | None = None
-    ) -> ChaseItem:
-        """Build one from whatever a caller recorded - a partial payload included.
-
-        Never raises: a chase item is read out of a log a human can also
-        write rows into by hand, and a partial one has to degrade to a named
-        warning (`has_owner_or_ask`), not take the render down. Accepts
-        another `ChaseItem` as ``payload`` too, since it is itself a mapping -
-        re-normalizing one is a no-op.
-        """
-        if isinstance(payload, cls):
-            return payload
-        if not isinstance(payload, Mapping):
-            # "Never raises" holds for a hand-written row too: valid JSON that
-            # is not an object (`null`, a list, a scalar) took `update_state`
-            # down with an AttributeError - undoing, one layer up, the torn-row
-            # tolerance `eventlog.recorded` exists for.
-            return cls(sensitivity=sensitivity)
-        kwargs = {name: payload[name] for name in _CHASE_FIELDS if payload.get(name)}
-        extra = {
-            name: value
-            for name, value in payload.items()
-            if name not in _CHASE_FIELDS and name != "sensitivity"
-        }
-        # An explicit ``sensitivity`` is the LOG'S COLUMN and outranks anything
-        # the payload claims - the column is the trusted fact, the payload is
-        # whatever was written into the row. Omitted means there is no column to
-        # trust (`update_state` is handed a bare dict), so the payload wins.
-        resolved = sensitivity if sensitivity is not None else payload.get("sensitivity", "normal")
-        return cls(sensitivity=str(resolved), extra=extra, **kwargs)
-
-    @property
-    def has_owner_or_ask(self) -> bool:
-        """Whether there is anything real to render.
-
-        `recipes.has` rather than a hand-rolled truthiness check - the same
-        "at least one of these alternatives" rule that keeps a Gmail
-        metadata-only result from passing as a match. An item with neither
-        field is not half-missing data, it is no data.
-        """
-        return has(self, "owner", "ask")
-
-    def __getitem__(self, key: str) -> Any:
-        if key in _CHASE_FIELDS or key == "sensitivity":
-            return getattr(self, key)
-        return self.extra[key]
-
-    def __iter__(self):
-        return iter((*_CHASE_FIELDS, "sensitivity", *self.extra))
-
-    def __len__(self) -> int:
-        return len(_CHASE_FIELDS) + 1 + len(self.extra)
 
 
 def _as_chase_item(raw: ChaseItem | Mapping[str, Any]) -> ChaseItem:
@@ -323,7 +208,7 @@ _DECORATION = re.compile(r"[*_`~]+")
 class PrivateDecision(Exception):
     """A decision line the sensitivity classifier marks private was refused
     at the append (#124). Not a `ValueError`, for the same reason as
-    `SensitivityRequired`."""
+    `eventlog.SensitivityRequired`."""
 
 
 class StateNotWritable(Exception):
@@ -853,81 +738,3 @@ class StateFolder:
             )
         with self.decisions_path.open("a", encoding="utf-8") as handle:
             handle.write(f"- {line.strip()}\n")
-
-
-#: Kinds `chase_items` projects into `State.md`. Recording one without an
-#: explicit, well-formed sensitivity is refused - `eventlog` contract 2.
-#: Meeting rows are not here: their titles reach `State.md` through the
-#: ledger's `notes_gaps`, and `run._project` classifies each on the way out.
-VAULT_BOUND = frozenset({"loop_opened", "carry_forward"})
-
-#: House rule 7's categories, as the words that carry them. A FLOOR, not a
-#: ceiling: matching any of these makes an item private; matching none proves
-#: nothing, which is why a DM origin is decisive on its own - that is where
-#: these conversations actually happen. Extend it, never narrow it.
-_SENSITIVE_TERMS = re.compile(
-    r"\b(?:"
-    r"salar(?:y|ies)|comp(?:ensation)?|pay(?:\s*(?:band|rise|raise|cut|bump))|"
-    r"equity|stock\s*(?:options?|grants?)|rsus?|options?\s*grants?|bonus(?:es)?|"
-    r"pay\s*raise|offer\s*letters?|relocation|severance|"
-    r"performance\s*(?:plan|review|improvement)|exit\s*interview|notice\s*period|"
-    r"terminat(?:e|ed|ing|ion)|fir(?:e|ed|ing)\s+(?:him|her|them|someone)|let\s+go|"
-    r"layoffs?|laid\s+off|resign(?:ation|ed|ing|s)?|headcount|"
-    r"promot(?:e|ed|ing|ion|ions)|demot(?:e|ed|ing|ion|ions)|visa|immigration|"
-    r"medical|leave\s+of\s+absence|acqui(?:re|red|ring|sition|sitions)|mergers?|"
-    r"m(?:&|&amp;)a|due\s+diligence|term\s+sheets?|valuation|investors?|"
-    r"board\s+(?:deck|meeting)"
-    r")\b",
-    re.IGNORECASE,
-)
-#: Case matters for one token: `PIP` is a performance plan, `pip` installs
-#: packages. The floor above is case-insensitive, so this one is checked
-#: separately, as written.
-_SENSITIVE_ACRONYMS = re.compile(r"\bPIP\b")
-#: Tokens deliberately NOT in the floor, with the false positive each caused
-#: on real backfill text: lowercase `pip` (pip install), bare `raise` (Python), bare
-#: `stock` (stock photos, in stock), `\d{2,3}k` (200k rows). A team that
-#: writes code all day trips those on every render; the phrases that carry
-#: the meaning - "pay raise", "stock options", "performance improvement" -
-#: are kept instead.
-
-#: Slack's names for a DM (`im`) and a group DM (`mpim`), plus the plain
-#: words a shaper is likely to write instead. Compared casefolded.
-_DM_ORIGINS = frozenset({"im", "mpim", "dm", "gdm", "group_dm", "group dm"})
-
-
-def classify_sensitivity(*texts: Any, origin: str = "") -> str:
-    """``"private"`` or ``"normal"`` for something about to be recorded.
-
-    Two rules, either sufficient. ``origin`` naming a DM or group DM is
-    private on its own: house rule 7's three categories - personnel, comp,
-    M&A - are exactly the conversations that happen in DMs, and the one time
-    an unmarked item was traced it had come from one. Any text carrying the
-    vocabulary in `_SENSITIVE_TERMS` is private regardless of where it came
-    from.
-
-    Wrong-way-private costs a line missing from a vault file he can still read
-    in his DM. Wrong-way-normal has already synced to every device by the time
-    anyone notices. So when in doubt this says private, and a caller who knows
-    better says ``"normal"`` explicitly.
-    """
-    if str(origin).strip().casefold() in _DM_ORIGINS:
-        return "private"
-    for text in texts:
-        if text and (_SENSITIVE_TERMS.search(str(text)) or _SENSITIVE_ACRONYMS.search(str(text))):
-            return "private"
-    return "normal"
-
-
-class SensitivityRequired(Exception):
-    """A vault-bound record was written without a usable sensitivity.
-
-    Deliberately NOT a `ValueError`: the house pattern wraps decoding in
-    `except ValueError`, and a gate whose refusal can be swallowed by the
-    handler around a `json.loads` is a gate with a hole in it.
-    """
-
-
-#: The only two marks `_is_private` reads. Anything else - "Private",
-#: "privat", True - would pass a None check and then render as visible.
-SENSITIVITIES = frozenset({"private", "normal"})

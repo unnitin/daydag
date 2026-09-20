@@ -9,8 +9,8 @@ from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 
-from daydag.eventlog import EventLog
-from daydag.statedoc import ChaseItem, NotesGap, StateFolder
+from daydag.eventlog import ChaseItem, EventLog
+from daydag.statedoc import NotesGap, StateFolder
 
 #: A fixed offset, so an offset other than UTC is exercised without pulling in
 #: a tz database or depending on the machine's own zone.
@@ -341,8 +341,7 @@ def test_a_vault_bound_record_without_a_sensitivity_is_refused(tmp_path):
     """The gate filters what is MARKED private. Nothing marked automatically, so
     an unmarked comp item reached a plaintext State.md. Now the writer cannot
     forget: the omission raises instead of defaulting to normal."""
-    from daydag.eventlog import EventLog
-    from daydag.statedoc import SensitivityRequired
+    from daydag.eventlog import EventLog, SensitivityRequired
 
     log = EventLog.open(tmp_path / "events.db")
 
@@ -365,7 +364,7 @@ def test_a_kind_that_never_reaches_the_vault_still_defaults(tmp_path):
 
 
 def test_classify_reads_house_rule_7_vocabulary_as_private():
-    from daydag.statedoc import classify_sensitivity
+    from daydag.eventlog import classify_sensitivity
 
     for text in (
         "comp: 145k base plus equity",
@@ -378,14 +377,14 @@ def test_classify_reads_house_rule_7_vocabulary_as_private():
 
 
 def test_classify_reads_a_dm_origin_as_private_whatever_the_words():
-    from daydag.statedoc import classify_sensitivity
+    from daydag.eventlog import classify_sensitivity
 
     assert classify_sensitivity("can you send the deck", origin="dm") == "private"
     assert classify_sensitivity("standup moved to 9:15", origin="mpim") == "private"
 
 
 def test_classify_leaves_ordinary_work_normal():
-    from daydag.statedoc import classify_sensitivity
+    from daydag.eventlog import classify_sensitivity
 
     assert classify_sensitivity("the compute consolidation plan") == "normal"
     assert classify_sensitivity("cutover rehearsal for CDI-596", origin="channel") == "normal"
@@ -393,8 +392,8 @@ def test_classify_leaves_ordinary_work_normal():
 
 def test_an_item_classified_from_a_comp_quote_never_reaches_the_vault(tmp_path):
     """End to end: the probe that opened #105, with the classifier in the loop."""
-    from daydag.eventlog import EventLog
-    from daydag.statedoc import StateFolder, classify_sensitivity
+    from daydag.eventlog import EventLog, classify_sensitivity
+    from daydag.statedoc import StateFolder
 
     log = EventLog.open(tmp_path / "events.db")
     ask = "comp discussion: relocation package"
@@ -412,8 +411,7 @@ def test_a_misspelt_or_non_string_sensitivity_is_refused_too(tmp_path):
     """`_is_private` compares for equality, so "Private", "privat" and True
     would pass a None check and then render as visible - the same road #105's
     unmarked item took, one letter longer."""
-    from daydag.eventlog import EventLog
-    from daydag.statedoc import SensitivityRequired
+    from daydag.eventlog import EventLog, SensitivityRequired
 
     log = EventLog.open(tmp_path / "events.db")
 
@@ -426,7 +424,7 @@ def test_a_misspelt_or_non_string_sensitivity_is_refused_too(tmp_path):
 def test_the_refusal_is_not_a_value_error():
     """The house pattern wraps decoding in `except ValueError`; a refusal that
     handler could swallow is not a refusal."""
-    from daydag.statedoc import SensitivityRequired
+    from daydag.eventlog import SensitivityRequired
 
     assert not issubclass(SensitivityRequired, ValueError)
 
@@ -434,7 +432,7 @@ def test_the_refusal_is_not_a_value_error():
 def test_classify_does_not_trip_on_a_teams_everyday_vocabulary():
     """Tokens dropped from the floor after false positives on real text: a
     team that writes code says `pip`, `raise` and `200k rows` every day."""
-    from daydag.statedoc import classify_sensitivity
+    from daydag.eventlog import classify_sensitivity
 
     for text in (
         "pip install failed on the runner",
@@ -447,7 +445,7 @@ def test_classify_does_not_trip_on_a_teams_everyday_vocabulary():
 
 
 def test_classify_catches_inflections_and_the_escaped_ampersand():
-    from daydag.statedoc import classify_sensitivity
+    from daydag.eventlog import classify_sensitivity
 
     for text in (
         "two promotions to announce",

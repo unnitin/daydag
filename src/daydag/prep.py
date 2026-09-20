@@ -63,13 +63,12 @@ from datetime import date, datetime, timedelta, tzinfo
 from enum import Enum
 from typing import Any
 
-from daydag.config import resolve_reference
+from daydag.config import principal_id
 from daydag.ledger import Row, name_tokens, tokens
 from daydag.recipes import (
     PACIFIC,
     RecipeError,
     gmail_gemini_notes,
-    is_user_id,
     meeting_prep,
     slack_search,
 )
@@ -588,29 +587,11 @@ def may_interrupt(kind: Push) -> bool:
 def recipient(identities: Mapping[str, str]) -> str:
     """The only place a ping may go: the principal's own DM (guardrail 1).
 
-    A function rather than a constant so the id stays in `.env`, and an error
-    rather than a fallback so a misconfigured run pings nobody instead of
-    pinging somebody else.
-
-    The SHAPE is checked as well as the presence, because `.env` is
-    hand-edited: an empty value, a display name, or a trailing inline comment
-    glued onto the id all produced a DM addressed at a conversation that does
-    not exist (test_a_principal_id_that_is_not_an_id_is_refused).
+    `config.principal_id` in this module's vocabulary: a misconfigured run
+    pings nobody instead of somebody else, and a value that is not an id is
+    refused (test_a_principal_id_that_is_not_an_id_is_refused).
     """
-    value = resolve_reference(
-        "${SLACK_USER_PRINCIPAL}",
-        identities,
-        what="prep ping recipient",
-        error=PrepError,
-    )
-    if not is_user_id(value):
-        # Never echo the value: config.ConfigError holds the same line, because
-        # an error that prints the id defeats keeping it out of the repo.
-        raise PrepError(
-            "SLACK_USER_PRINCIPAL is not a Slack user id. Fix it in .env - and "
-            "note that everything after the `=` is the value, inline comment included."
-        )
-    return value
+    return principal_id(identities, what="prep ping recipient", error=PrepError)
 
 
 # ---------------------------------------------------------------------------

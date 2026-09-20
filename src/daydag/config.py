@@ -8,6 +8,8 @@ USING IT
     resolve_reference("C0ALREADY", ids, what="the pod channel", error=ConfigError)
                                                 # -> unchanged, not a reference
     timezone_for(ids)                           # ZoneInfo, TIMEZONE or the default
+    principal_id(ids, what="the brief's DM", error=ConfigError)
+                                                # resolved AND shaped like a user id
 
     `what` and `error` are required, not decoration: the caller names what it
     was resolving and which exception its own layer raises, so a missing id
@@ -107,6 +109,43 @@ def resolve_reference(
         # three frames up that `error=` exists to prevent.
         raise error(f"{key} is set to {type(found).__name__}, not a string. Check .env.")
     return found.strip()
+
+
+#: Slack's shape for a user id. One regex, one concept: a destination and a
+#: `from:` filter are held to the same check - guardrail 1 for the first,
+#: `recipes.slack_search` for the second.
+_USER_ID = re.compile(r"^[UWB][A-Z0-9]{6,}$")
+
+
+def is_user_id(value: str) -> bool:
+    """Whether ``value`` is shaped like a Slack user id rather than a name."""
+    return bool(_USER_ID.match((value or "").strip()))
+
+
+def principal_id(identities: Mapping[str, str], *, what: str, error: type[Exception]) -> str:
+    """The principal's Slack id - the one destination an autonomous message may
+    address (guardrail 1) - resolved from ``${SLACK_USER_PRINCIPAL}`` or refused.
+
+    Refused, never passed through or defaulted: as literal text the reference
+    is a valid query that matches nothing, and a misconfigured run must reach
+    nobody rather than somebody else. The SHAPE is checked as well as the
+    presence, because `.env` is hand-edited: an empty value, a display name,
+    or an inline comment glued onto the id each addressed a DM at a
+    conversation that does not exist
+    (test_a_principal_id_that_is_not_an_id_is_refused). The error never echoes
+    the value, the same rule `ConfigError` holds.
+
+    ``what`` and ``error`` are the caller's, as for `resolve_reference`: the
+    brief, the runner, a prep ping and a delivery each fail in their own
+    vocabulary. They were four copies of this body before they shared it.
+    """
+    value = resolve_reference("${SLACK_USER_PRINCIPAL}", identities, what=what, error=error)
+    if not is_user_id(value):
+        raise error(
+            "SLACK_USER_PRINCIPAL is not a Slack user id. Fix it in .env - and "
+            "note that everything after the `=` is the value, inline comment included."
+        )
+    return value
 
 
 def path_from(identities: Mapping[str, str], key: str) -> Path:
