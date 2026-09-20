@@ -176,7 +176,7 @@ what gives a stacked PR CI (CONTRIBUTING, "Branches").
 | 8 | `chore/simplify-08-sweep` | not in the plan - the four principal reads (brief, runner, prep, delivery) become `config.principal_id`; two hand-listed rows become `dataclasses.asdict`; `eventlog` stops importing from `statedoc` | −40 | low |
 | 9 | `chore/simplify-09-loops` | the `loops.py` fold §3 named and PR 3 stopped short of: `brief`, `eod_wrap`, `week_ahead` and the runner's four bodies behind one `Loop` descriptor; each loop fetches only what it reads; `Sources.weekly_note` gone (#112); the calendar payload keyed by day (#111) | −150 | medium - goldens byte-identical |
 | 10 | `chore/simplify-10-tests` | test files follow the modules: 40 to 30, the seven end-to-end files on one world, shared doubles in `tests/support.py`; not one test removed | 0 (−690 test lines) | low |
-| 11 | `fix/remembered-kind` | a remembered calendar record is stored whole - its own `kind` key collided with `EventLog.record`'s parameter and raised on the first real morning with a log; found consolidating the seam tests in PR 10 | +17 | low |
+| 11 | `fix/remembered-kind` | a remembered calendar record is stored whole - its own `kind` key collided with `EventLog.record`'s parameter and raised on the first real morning with a log; found consolidating the seam tests in PR 10. The log owns its encoding, only `_seedable` rows are remembered, and replay skips a row it cannot seed | +30 | low |
 
 Order matters: 1 is pure deletion and the biggest single win, so it goes
 first and alone; 2 before 3 because the loops read the state through the
@@ -225,14 +225,16 @@ re-read), the per-PR line estimates (they are estimates), and the claim
 that `test_guardrails.py` duplicates ~220 lines of module tests. Each PR
 re-checks what it touches.
 
-## 8. Outcome, 2026-09-18
+## 8. Outcome
 
 Measured against the `pre-simplification` tag, twice: on the stack's last
 branch on 2026-09-18 (after PR 7), and again on 2026-09-20 after the four
 follow-ons below (after PR 11). Modules and lines leave out `__init__` and
 `__main__`. The code/prose split is by `tokenize` and was re-measured for
-every column on 09-20, so those two rows differ a little from the 09-18
-figures they replace; the totals are unchanged.
+every column on 09-20; the totals reproduce the 09-18 figures exactly, but
+the split does not - the tag's code count moves from 4,992 to 5,557 and
+after PR 7 from 4,669 to 5,156, so the 09-18 split was by a different rule
+and the two columns it filled are replaced, not kept.
 
 | | tag | after PR 7 | after PR 11 |
 |---|---|---|---|
@@ -291,7 +293,12 @@ Four more PRs came after the first measurement, each stacked on the last.
   carries a `kind` key, so the first real morning with a log raised on the
   collision; the memory tests had hand-rolled records without it, and the
   end-to-end world deleted the key to get past it. The log takes the record
-  as a mapping now and stores it whole.
+  as a mapping now, owns its JSON encoding, and stores it whole. The review
+  of that fix then probed the memory path it makes reachable: only what
+  today's ledger could seed is remembered now, and a stored row the ledger
+  cannot take is skipped on replay rather than raised on - one such row was
+  killing every later morning with that log. Three defects on the same path
+  that are not this fix's are filed: #155, #156, #157.
 
 Tickets settled by the stack: #145 filed (M4-7); D-3 (#30) and D-5 (#62)
 closed by practice; #109, #110, #111, #112, #115, #117, #124, #126, #138,
