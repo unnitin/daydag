@@ -1052,9 +1052,6 @@ def _meeting(day: datetime, summary: str, event_id: str):
     event = calendar_event(
         event_id, summary, day.replace(hour=9, minute=0), attendees=(PRINCIPAL_EMAIL, VP_DATA)
     )
-    # No `kind`: `run._remember` splats the record into `EventLog.record(kind,
-    # ...)`, so a record carrying one raises. Google's records all do.
-    del event["kind"]
     return {**event, "start": event["start"].isoformat(), "end": event["end"].isoformat()}
 
 

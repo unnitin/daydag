@@ -277,3 +277,18 @@ def test_classify_catches_inflections_and_the_escaped_ampersand():
         "exit interview notes",
     ):
         assert classify_sensitivity(text) == "private", text
+
+
+def test_a_record_stored_whole_may_carry_the_logs_own_parameter_names():
+    """A caller storing a connector's record hands it over as a mapping, so a
+    key named `kind` or `sensitivity` in the RECORD is data, never an argument.
+    Google's calendar records all carry `kind`, and `run._remember` splatted
+    them into this signature and raised (found consolidating the seam tests)."""
+    log = EventLog.open(":memory:")
+    log.record("meeting", {"id": "e1", "kind": "calendar#event", "sensitivity": "n/a"})
+    log.record("meeting", {"id": "e2"}, summary="keywords still work beside it")
+
+    assert log.recorded("meeting") == [
+        {"id": "e1", "kind": "calendar#event", "sensitivity": "n/a"},
+        {"id": "e2", "summary": "keywords still work beside it"},
+    ]

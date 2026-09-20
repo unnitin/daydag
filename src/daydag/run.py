@@ -444,7 +444,9 @@ def _remember(log: EventLog | None, events: Iterable[Mapping[str, Any]]) -> None
         return
     for event in events:
         if isinstance(event, Mapping) and event.get("id"):
-            log.record(MEETING, **{k: _jsonable(v) for k, v in event.items()})
+            # As a mapping, not splatted: a calendar record carries its own
+            # `kind`, and the ledger reads it again on replay.
+            log.record(MEETING, {k: _jsonable(v) for k, v in event.items()})
 
 
 def _jsonable(value: Any) -> Any:

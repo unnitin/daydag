@@ -745,6 +745,26 @@ def test_a_named_prep_does_not_persist_the_week_it_fetched(identities, tmp_path)
     assert EventLog.open(log).recorded("meeting") == [], "a named prep wrote future meetings"
 
 
+def test_a_remembered_meeting_keeps_its_kind(identities, tmp_path):
+    """Every Google Calendar record carries a `kind`, the loops read
+    `kind == "ooo"` off it, and the ledger reads it again on replay. Splatting
+    the record into `EventLog.record(kind, ...)` collided with that parameter
+    and raised on the first real morning with a log - the old memory tests
+    hand-rolled records with no `kind` and never met it."""
+    from daydag.eventlog import EventLog
+
+    log = tmp_path / "events.db"
+    meeting = {**_meeting("Pod Steering", "a@x.com", "b@x.com"), "kind": "calendar#event"}
+    payloads = _payloads(calendar=[meeting])
+
+    run.render("morning", now=MONDAY_PT, identities=identities, payloads=payloads, log=log)
+
+    (remembered,) = EventLog.open(log).recorded("meeting")
+    assert remembered["kind"] == "calendar#event", "the record is stored whole"
+    replayed = run._remembered(EventLog.open(log))
+    assert [row.summary for row in replayed.open_rows()] == ["Pod Steering"]
+
+
 def test_a_trailing_for_is_refused_not_silently_dropped(tmp_path, monkeypatch, capsys):
     """`render prep --for` with the name forgotten used to prep the next
     qualifying meeting and say nothing - the wrong-meeting failure."""

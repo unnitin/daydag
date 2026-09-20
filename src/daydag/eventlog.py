@@ -3,6 +3,7 @@
 USING IT
     log = EventLog.open(path)
     log.record("loop_opened", sensitivity=classify_sensitivity(ask, quote, origin=kind), **payload)
+    log.record("meeting", event)             # a connector's record, whole - `kind` and all
     log.recorded("run")                     # every payload of one kind, oldest first
     log.chase_items()                       # ChaseItem rows, sensitivity from the column
     log.record_fetch("org/repo", at=now); log.last_fetch("org/repo")
@@ -275,8 +276,22 @@ class EventLog:
     def open(cls, path: str | Path) -> EventLog:
         return cls(sqlite3.connect(str(path)))
 
-    def record(self, kind: str, *, sensitivity: str | None = None, **payload: Any) -> None:
+    def record(
+        self,
+        kind: str,
+        payload: Mapping[str, Any] | None = None,
+        *,
+        sensitivity: str | None = None,
+        **fields: Any,
+    ) -> None:
         """Append one event.
+
+        ``payload`` is the record as a mapping, for a caller storing a
+        connector's record whole: a key named `kind` or `sensitivity` INSIDE it
+        is data, not an argument. Google's calendar records all carry `kind`,
+        and splatting one into this signature collided with the parameter and
+        raised on the first morning with a log. ``fields`` say the same thing
+        as keywords, for the callers that build the row themselves.
 
         ``sensitivity`` may be omitted for a kind that never reaches the vault -
         a run-log row, a remembered meeting. For a kind in `VAULT_BOUND` it is
@@ -299,7 +314,7 @@ class EventLog:
             )
         self._db.execute(
             "INSERT INTO events (kind, sensitivity, payload) VALUES (?, ?, ?)",
-            (kind, sensitivity, json.dumps(payload)),
+            (kind, sensitivity, json.dumps({**(payload or {}), **fields})),
         )
         self._db.commit()
 
