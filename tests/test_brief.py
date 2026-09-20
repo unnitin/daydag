@@ -16,9 +16,9 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from daydag import brief as brief_module
-from daydag.brief import assemble
+from daydag import loops as brief_module
 from daydag.ledger import Ledger
+from daydag.loops import morning as assemble
 from daydag.pulse import Item, Mirror, Pulse
 from daydag.push import PushError, red_items, unsourced_claims
 from daydag.statedoc import StateFolder
@@ -76,8 +76,8 @@ class FakeSources:
         self.calendar_windows.append(window)
         return list(self._events)
 
-    def weekly_note(self, path):
-        self._check("weekly_note")
+    def vault_note(self, path):
+        self._check("vault_note")
         self.note_paths.append(path)
         if self._note is None:
             raise FileNotFoundError(path)
@@ -240,7 +240,7 @@ def test_a_missing_weekly_note_leads_the_brief_instead_of_crashing():
 
 def test_a_weekly_note_that_cannot_be_read_is_a_downed_source_not_a_gap():
     """An evicted iCloud placeholder is not the same as a note nobody wrote."""
-    text = _assemble(FakeSources(broken=["weekly_note"])).render()
+    text = _assemble(FakeSources(broken=["vault_note"])).render()
 
     assert "couldn't check the weekly note" in text
     assert "no weekly note" not in text
@@ -520,7 +520,7 @@ def test_one_downed_source_costs_one_line_and_the_brief_still_ships():
 def test_every_source_down_still_ships_a_brief():
     """The worst case is still a message, not a silence he cannot distinguish
     from a machine that never woke up."""
-    sources = FakeSources(broken=["calendar", "weekly_note", "slack", "gmail"])
+    sources = FakeSources(broken=["calendar", "vault_note", "slack", "gmail"])
     text = _assemble(sources).render()
 
     assert text.startswith("morning")
@@ -811,8 +811,8 @@ def test_a_calendar_record_without_attendees_is_refused_not_ignored():
     nothing and the section vanished with no error and no degrade line, while a
     missing `id` raised and was surfaced. The asymmetry was the bug.
     """
-    from daydag.brief import _seed_and_gaps
     from daydag.ledger import Ledger
+    from daydag.loops import _seed_and_gaps
 
     with pytest.raises(KeyError, match="attendees"):
         _seed_and_gaps(

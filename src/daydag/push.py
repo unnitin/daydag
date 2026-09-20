@@ -3,7 +3,7 @@
 USING IT
     read = Reader()                                  # degrade, never stall
     events = read("calendar", lambda: list(sources.calendar(window)), [])
-    note, missing = read_vault_note(read, lambda: sources.weekly_note(path), label="the note")
+    note, missing = read_vault_note(read, lambda: sources.vault_note(path), label="the note")
     lines = meeting_lines(events)          # clock, title, permalink, overlaps flagged
     sections = (Section("meetings", tuple(lines)),)
     Push(day, header, sections, tuple(read.unreachable)).render()
@@ -124,22 +124,20 @@ class Sources(Protocol):
     adapter cannot quietly ask a different question than the one the recipe
     tests cover.
 
-    Declared here in full, including the methods only one loop uses. A read
-    left undeclared is one an adapter need not implement: `vault_note` was
-    missing for its whole life, so the wrap's Friday section raised and
-    rendered nothing, while the suite stayed green because both test doubles
-    implemented it - the fake was more capable than the adapter it stood in for.
+    Declared here in full. A read left undeclared is one an adapter need not
+    implement: `vault_note` was missing for its whole life, so the wrap's
+    Friday section raised and rendered nothing, while the suite stayed green
+    because both test doubles implemented it - the fake was more capable than
+    the adapter it stood in for. One note read, by path (#112): the weekly note
+    is `vault_note(recipes.weekly_note(day))`, not a second method that took a
+    path and ignored it.
     """
 
     def calendar(self, window: recipes.DayWindow) -> Iterable[Mapping[str, Any]]:
         """Events in one local day."""
 
     def vault_note(self, path: str) -> str:
-        """Any vault note by path - the wrap's next-week plan and prep reads."""
-        ...
-
-    def weekly_note(self, path: str) -> str:
-        """The note's text. ``FileNotFoundError`` means nobody wrote it."""
+        """Any vault note by path. ``FileNotFoundError`` means nobody wrote it."""
 
     def slack(self, query: str) -> Iterable[Mapping[str, Any]]:
         """Messages matching an overnight query: ``ts``, ``text``, ``permalink``."""

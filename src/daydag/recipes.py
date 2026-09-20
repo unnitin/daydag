@@ -733,6 +733,27 @@ def records(payload: Any) -> list[Any] | None:
     return None
 
 
+def day_keyed(payload: Any) -> dict[date, list[Any]] | None:
+    """A calendar payload keyed by the day each list was fetched for, or ``None``.
+
+    ``{"2026-09-18": [...], "2026-09-19": [...]}`` - the shape `run.plan`'s
+    one-day steps invite (#111). Every key must parse as an ISO date and every
+    value must be a list, or this is not that shape and the caller falls back
+    to `records`. An empty mapping is not it either: a fetched day is a key.
+    """
+    if not isinstance(payload, Mapping) or not payload:
+        return None
+    keyed: dict[date, list[Any]] = {}
+    for key, value in payload.items():
+        if not isinstance(value, list):
+            return None
+        try:
+            keyed[date.fromisoformat(str(key))] = value
+        except ValueError:
+            return None
+    return keyed
+
+
 def has(record: Any, *keys: str) -> bool:
     """Whether the record carries *any* of these, for keys that are alternatives."""
     return isinstance(record, Mapping) and any(record.get(key) for key in keys)

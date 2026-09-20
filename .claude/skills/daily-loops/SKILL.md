@@ -74,6 +74,17 @@ Then write a payloads file keyed by source:
 {"calendar": [...], "slack": [...], "gmail": [...], "vault": "the note text"}
 ```
 
+Two keys have a shape worth knowing:
+
+- `calendar` may be a flat list, or a map keyed by each calendar step's `day`:
+  `{"calendar": {"2026-09-18": [...], "2026-09-19": [...]}}`. Keyed is better.
+  A window the plan never fetched comes back empty because its key is absent,
+  and an untimed event stays under the day it was fetched for.
+- `vault` is shorthand for this week's note - the path the `vault` step names.
+  Every other note a plan asks for (the wrap's next-week plan and prep on a
+  Friday, the week-ahead's next-week plan) goes under `vault_notes`, keyed by
+  path, with `null` for a file that does not exist.
+
 **Fields that matter, because their absence fails quietly:**
 
 | source | must carry | what breaks without it |

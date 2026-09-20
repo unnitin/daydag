@@ -14,8 +14,8 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from daydag.eod_wrap import assemble
 from daydag.ledger import Ledger
+from daydag.loops import eod as assemble
 from daydag.pulse import Item, Mirror, Pulse
 from daydag.push import PushError
 from daydag.voice import voice_violations
@@ -55,14 +55,12 @@ NOTE_WITH_CLOSED = """# Week of Sep 7-11
 
 
 class FakeSources:
-    """The three reads the wrap performs, recorded rather than performed.
+    """The two reads the wrap performs, recorded rather than performed.
 
-    `weekly_note` and `vault_note` are served from one map here, which is a
-    deliberate limitation: this double CANNOT catch the wrap asking for the
-    weekly note through the wrong one of the two (#131), because it answers
-    both the same way. `tests/test_plan_feeds_render.py` is what catches that,
-    by building the payloads from `run.plan`'s own output instead of from a
-    double that has already agreed with the code.
+    Every note is served from one path-keyed map. This double cannot catch
+    the runner keying a note under the wrong payload key (#131);
+    `tests/test_plan_feeds_render.py` is what catches that, by building the
+    payloads from `run.plan`'s own output.
     """
 
     def __init__(self, *, events=(), notes=None, broken=()):
@@ -81,13 +79,6 @@ class FakeSources:
         self._check("calendar")
         self.calendar_windows.append(window)
         return list(self._events)
-
-    def weekly_note(self, path):
-        self._check("weekly_note")
-        self.note_paths.append(path)
-        if path not in self._notes:
-            raise FileNotFoundError(path)
-        return self._notes[path]
 
     def vault_note(self, path):
         self._check("vault_note")
@@ -166,7 +157,7 @@ def test_a_missing_weekly_note_is_a_fact_not_a_downed_source():
 
 
 def test_a_weekly_note_that_cannot_be_read_is_a_downed_source():
-    text = _assemble(FakeSources(broken=["weekly_note", "vault_note"])).render()
+    text = _assemble(FakeSources(broken=["vault_note"])).render()
 
     assert "couldn't check the weekly note" in text
     assert "no weekly note" not in text
@@ -290,7 +281,7 @@ def test_the_header_counts_closed_and_moved(fake_repo):
 
 
 def test_the_header_does_not_count_a_note_it_could_not_read():
-    text = _assemble(FakeSources(broken=["weekly_note", "vault_note"])).render()
+    text = _assemble(FakeSources(broken=["vault_note"])).render()
 
     assert "0 closed" not in text
     assert "? closed" in text
@@ -310,7 +301,7 @@ def test_the_wrap_refuses_a_naive_clock():
 def test_one_downed_source_costs_one_line_and_the_wrap_still_ships():
     sources = FakeSources(
         events=[_event("a", "pod steering", 9)],
-        broken=["weekly_note", "vault_note"],
+        broken=["vault_note"],
     )
     result = _assemble(sources)
     text = result.render()
@@ -322,7 +313,7 @@ def test_one_downed_source_costs_one_line_and_the_wrap_still_ships():
 
 @pytest.mark.guardrail
 def test_every_source_down_still_ships_a_wrap():
-    sources = FakeSources(broken=["calendar", "weekly_note", "vault_note"])
+    sources = FakeSources(broken=["calendar", "vault_note"])
     text = _assemble(sources).render()
 
     assert text.startswith("wrap:")
@@ -410,7 +401,7 @@ def test_friday_says_a_planning_file_has_not_landed_yet_and_never_offers_to_run_
 def test_a_downed_planning_file_read_does_not_claim_landed_or_not():
     """A dead connector is not evidence either way - it must not be asserted
     as "landed" (a false positive) nor claimed "not landed" (unverified)."""
-    text = _assemble(FakeSources(broken=["weekly_note", "vault_note"]), now=FRIDAY_NOW).render()
+    text = _assemble(FakeSources(broken=["vault_note"]), now=FRIDAY_NOW).render()
 
     assert "landed" not in text
     assert "couldn't check next week's plan" in text

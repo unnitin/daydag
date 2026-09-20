@@ -578,14 +578,14 @@ def test_ship_without_a_pulse_degrades_rather_than_raising(identities):
 
 
 def test_the_payload_adapter_serves_every_source_method(identities):
-    """`eod_wrap` reads next week's plan through `sources.vault_note`, which
-    the `Sources` protocol never declared - so this adapter never implemented
-    it, both reads raised, and the whole "friday - weekly-planning outcome"
-    section was dropped on every real run. BOTH test doubles have the method,
-    which is precisely why the suite stayed green: the fake was more capable
-    than the thing it stood in for.
+    """The wrap reads next week's plan through `sources.vault_note`, which the
+    `Sources` protocol never declared - so this adapter never implemented it,
+    both reads raised, and the whole "friday - weekly-planning outcome" section
+    was dropped on every real run. BOTH test doubles had the method, which is
+    precisely why the suite stayed green: the fake was more capable than the
+    thing it stood in for.
     """
-    for name in ("calendar", "slack", "gmail", "weekly_note", "vault_note"):
+    for name in ("calendar", "slack", "gmail", "vault_note"):
         assert hasattr(push.Sources, name), f"the protocol lost {name}"
         assert callable(getattr(run._Payloads(_payloads()), name, None)), (
             f"_Payloads does not implement {name}, so every read of it degrades"
@@ -946,3 +946,98 @@ def test_a_past_meeting_teaches_the_directory_and_a_future_one_does_not(identiti
     assert directory.resolve("wren@x.com") is not None, "a past meeting taught nothing"
     assert directory.resolve("bo@x.com") is None, "a meeting not yet held was recorded as met"
     assert directory.resolve("principal@x.com") is None, "he was added to his own directory"
+
+
+# --------------------------------------------------------------------------
+# the table: each loop fetches what it reads (#109), and the two payload keys
+# that gained a shape (#111, #112)
+# --------------------------------------------------------------------------
+
+
+def test_each_loop_fetches_only_what_it_reads(identities):
+    """The wrap reads no Slack, the week-ahead reads neither Slack nor mail,
+    ingest reads mail alone, and a prep never opens the weekly note - so the
+    plan stops asking for them. A payload nobody opens is a connector
+    round-trip for nothing, the waste `loop_windows` already refuses for the
+    calendar (`loops.LOOPS` contract 2)."""
+
+    def fetched(loop, **kwargs):
+        built = run.plan(loop, now=MONDAY_PT, identities=identities, **kwargs)
+        return {step.source for step in built.steps}
+
+    assert fetched("morning") == {"calendar", "slack", "gmail", "vault"}
+    assert fetched("eod") == {"calendar", "gmail", "vault", "vault_notes"}
+    assert fetched("week-ahead") == {"calendar", "vault", "vault_notes"}
+    assert fetched("prep") == {"calendar", "slack", "gmail"}
+    assert fetched("prep", selector="wren") == {"calendar", "slack"}
+    assert fetched("ingest") == {"gmail"}
+
+
+def test_the_week_ahead_plan_names_next_weeks_note_and_a_missing_one_leads(identities):
+    """Before #112 the weekly-note read ignored its path and served THIS week's
+    note for next week's too, so the week-ahead could never report the plan
+    missing while this week's note existed. The plan now names next week's
+    note under `vault_notes`, and `null` there leads the push."""
+    sunday_evening = datetime(2026, 9, 21, 0, 30, tzinfo=UTC)  # Sunday 17:30 PT
+    built = run.plan("week-ahead", now=sunday_evening, identities=identities)
+    (step,) = [s for s in built.steps if s.source == "vault_notes"]
+    (next_note,) = step.detail["paths"]
+    assert next_note.endswith("0921-0925.md"), next_note
+
+    payloads = {"calendar": [], "vault": "# 0914-0918\n", "vault_notes": {next_note: None}}
+    text = run.render("week-ahead", now=sunday_evening, identities=identities, payloads=payloads)
+
+    assert "no week-ahead plan" in text, text
+    assert next_note in text, "the missing plan is cited by its own path"
+    assert "couldn't check" not in text, "a note nobody wrote is a fact, not a degrade"
+
+
+def test_the_vault_key_is_the_weekly_note_and_any_other_path_is_not_read():
+    """#112: one read, `vault_note(path)`. `vault` is shorthand for the weekly
+    note's own path; a path the plan never named is a degrade, never this
+    week's note served under another week's name."""
+    from datetime import date
+
+    from daydag.recipes import weekly_note
+
+    this_week, next_week = weekly_note(date(2026, 9, 7)), weekly_note(date(2026, 9, 14))
+    adapter = run._Payloads({"vault": "# note"}, weekly_path=this_week)
+
+    assert adapter.vault_note(this_week) == "# note"
+    with pytest.raises(run.RunError):
+        adapter.vault_note(next_week)
+    with pytest.raises(FileNotFoundError):
+        run._Payloads({"vault": None}, weekly_path=this_week).vault_note(this_week)
+
+
+def test_a_calendar_payload_keyed_by_day_serves_each_window_from_its_own_key(identities):
+    """#111: the plan emits one step per day, so the payload may be keyed the
+    same way. An unfetched window is empty because its key is absent, not
+    because a parser guessed; an untimed record lives under the day it was
+    fetched for instead of being served to every window."""
+    from datetime import date
+
+    from daydag.recipes import calendar_day
+
+    monday, tuesday = "2026-09-07", "2026-09-08"
+    timed = {
+        "id": "standup",
+        "summary": "pod standup",
+        "start": f"{monday}T09:00:00-07:00",
+        "end": f"{monday}T09:15:00-07:00",
+        "permalink": "https://example.com/cal/standup",
+    }
+    untimed = {"id": "hold", "summary": "focus block", "permalink": "https://example.com/cal/hold"}
+    adapter = run._Payloads({"calendar": {monday: [timed, untimed], tuesday: []}})
+
+    served = adapter.calendar(calendar_day(date(2026, 9, 7)))
+    assert [event["id"] for event in served] == ["standup", "hold"]
+    assert isinstance(served[0]["start"], datetime), "instants are still parsed"
+    assert adapter.calendar(calendar_day(date(2026, 9, 8))) == []
+    assert adapter.calendar(calendar_day(date(2026, 9, 9))) == [], "never fetched, so empty"
+    assert [e["id"] for e in run._seedable({"calendar": {monday: [timed, untimed]}})] == ["standup"]
+
+    payloads = {"calendar": {monday: [timed]}, "slack": [], "gmail": [], "vault": ""}
+    text = run.render("morning", now=MONDAY_PT, identities=identities, payloads=payloads)
+    assert "pod standup" in text
+    assert "couldn't check calendar" not in text

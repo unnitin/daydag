@@ -22,7 +22,7 @@ from __future__ import annotations
 import subprocess
 from datetime import datetime, timedelta, timezone
 
-from daydag import eod_wrap
+from daydag import loops
 from daydag.ledger import Ledger, Match
 from daydag.pulse import Mirror, Pulse
 from daydag.push import unsourced_claims
@@ -43,7 +43,7 @@ triage: 🔴 high · 🟡 medium · 🟢 low
 
 
 class Connectors:
-    """The three reads the wrap performs, answered from fixtures."""
+    """The two reads the wrap performs, answered from fixtures."""
 
     def __init__(self, events=(), notes=None):
         self._events = list(events)
@@ -54,9 +54,6 @@ class Connectors:
     def calendar(self, window):
         self.windows.append(window)
         return list(self._events)
-
-    def weekly_note(self, path):
-        return self.vault_note(path)
 
     def vault_note(self, path):
         self.note_paths.append(path)
@@ -135,7 +132,7 @@ def test_a_whole_evening_arrives_as_one_assembled_wrap(tmp_path, git_env):
         events=[_calendar_event("1on1", "VP-Data 1:1", TUESDAY_1ON1)],
         notes={"Create Music Group/Weekly Notes/0907-0911.md": WEEKLY_NOTE},
     )
-    wrap = eod_wrap.assemble(
+    wrap = loops.eod(
         now=MONDAY_WRAP,
         sources=connectors,
         ledger=ledger,
@@ -194,7 +191,7 @@ def test_a_late_note_closes_the_gap_before_the_wrap_ever_sees_it(git_env):
     assert attached is not None
 
     connectors = Connectors(events=[_calendar_event("1on1", "VP-Data 1:1", TUESDAY_1ON1)])
-    text = eod_wrap.assemble(now=MONDAY_WRAP, sources=connectors, ledger=ledger).render()
+    text = loops.eod(now=MONDAY_WRAP, sources=connectors, ledger=ledger).render()
 
     assert "3:00 VP-Data 1:1" in text
     assert "no note found" not in text
@@ -227,7 +224,7 @@ def test_a_dead_connector_and_a_dead_mirror_both_degrade_into_the_same_wrap(tmp_
         def calendar(self, window):
             raise RuntimeError("calendar timed out")
 
-    wrap = eod_wrap.assemble(
+    wrap = loops.eod(
         now=MONDAY_WRAP,
         sources=DeadCalendar(),
         pulse=Pulse(mirrors=[healthy, broken]),

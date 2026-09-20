@@ -670,3 +670,14 @@ def test_a_narrowed_run_still_takes_the_full_probe_map():
     assert [row["name"] for row in report.as_rows()] == ["calendar"]
     with pytest.raises(ValueError, match="calender"):
         observe.run({"calender": lambda: None}, checks=[CHECKS[0]])
+
+
+def test_a_calendar_payload_keyed_by_day_is_an_event_list():
+    """#111: the shape `run.plan`'s one-day steps invite passes the same
+    checks as a flat list - and fails them the same way."""
+    from daydag.observe import _check_calendar
+
+    keyed = {"2026-09-07": [{"id": "e1", "summary": "pod standup", "start": "2026-09-07T09:00"}]}
+    assert _check_calendar(keyed) is None
+    assert _check_calendar({"2026-09-07": [{"id": "e1", "summary": "pod standup"}]}) is not None
+    assert _check_calendar({"not-a-day": [{"id": "e1"}]}) == "no event list came back"

@@ -51,6 +51,7 @@ from daydag.recipes import (
     GH_LIMIT_CAP,
     JIRA_FIELDS,
     JIRA_MAX_RESULTS_CAP,
+    day_keyed,
     error_text,
     first_value,
     has,
@@ -168,6 +169,9 @@ def _check_calendar(payload: Any) -> str | None:
     hide behind that, because the ceiling catches it before this runs.
     """
     events = records(payload)
+    if events is None:
+        keyed = day_keyed(payload)
+        events = None if keyed is None else [e for day in keyed.values() for e in day]
     if events is None:
         return "no event list came back"
     if not all(has(event, "id", "summary") for event in events):
