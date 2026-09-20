@@ -42,7 +42,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from daydag import push
@@ -118,13 +118,7 @@ class ReadStep:
     how: str
 
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "key": self.key,
-            "conversation": self.conversation,
-            "oldest": self.oldest,
-            "thread_ts": self.thread_ts,
-            "how": self.how,
-        }
+        return asdict(self)
 
 
 @dataclass(frozen=True)

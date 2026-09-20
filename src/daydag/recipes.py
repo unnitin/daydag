@@ -49,7 +49,7 @@ WHY IT EXISTS
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
@@ -59,7 +59,7 @@ from zoneinfo import ZoneInfo
 # One parser for Gemini subjects, re-exported rather than reimplemented. The
 # ledger owns it because the ledger is what a parsed title is *for*; a second
 # copy here would be a second set of bugs that disagree only on hard cases.
-from daydag.config import DEFAULT_TIMEZONE, resolve_reference
+from daydag.config import DEFAULT_TIMEZONE, is_user_id, resolve_reference
 from daydag.ledger import title_from_gemini_subject
 
 __all__ = [
@@ -83,7 +83,6 @@ __all__ = [
     "gmail_gemini_notes",
     "has",
     "has_all",
-    "is_user_id",
     "jira_jql",
     "jira_search",
     "loop_windows",
@@ -229,7 +228,8 @@ def calendar_days(start: date, end: date, *, tz: ZoneInfo = PACIFIC) -> list[Day
 #: Slack ids: ``U``/``W`` for people, ``B`` for bots, ``C``/``D``/``G`` for
 #: conversations. Deliberately shape-only - the point is to reject a *name*,
 #: and a stricter length rule would reject real ids as workspaces grow.
-_USER_ID = re.compile(r"^[UWB][A-Z0-9]{6,}$")
+#: Slack's shape for a channel, DM or group-DM id. The user-id shape lives in
+#: `config.is_user_id`, because a destination needs it too.
 _CONVERSATION_ID = re.compile(r"^[CDG][A-Z0-9]{6,}$")
 
 #: Slack's `after:`/`before:` exclude the date named, so an inclusive bound is
@@ -238,19 +238,9 @@ _CONVERSATION_ID = re.compile(r"^[CDG][A-Z0-9]{6,}$")
 _DAY = timedelta(days=1)
 
 
-def is_user_id(value: str) -> bool:
-    """Whether ``value`` is shaped like a Slack user id rather than a name.
-
-    Public because a *destination* needs this check too, not just a query:
-    guardrail 1 permits exactly one, and an id that is not one addresses a DM
-    at nothing. One regex, one concept.
-    """
-    return bool(_USER_ID.match((value or "").strip()))
-
-
-def _slack_id(value: str, pattern: re.Pattern[str], identities, what: str) -> str:
+def _slack_id(value: str, valid: Callable[[str], object], identities, what: str) -> str:
     resolved = _resolve(value, identities, what=what)
-    if not pattern.match(resolved):
+    if not valid(resolved):
         raise RecipeError(
             f"{what} {value!r} is not a Slack id. Resolve it first - a display name "
             "or #channel-name in a search silently matches nothing."
@@ -281,9 +271,9 @@ def slack_search(
     """
     parts: list[str] = []
     if sender is not None:
-        parts.append(f"from:<@{_slack_id(sender, _USER_ID, identities, 'sender')}>")
+        parts.append(f"from:<@{_slack_id(sender, is_user_id, identities, 'sender')}>")
     if channel is not None:
-        parts.append(f"in:<#{_slack_id(channel, _CONVERSATION_ID, identities, 'channel')}>")
+        parts.append(f"in:<#{_slack_id(channel, _CONVERSATION_ID.match, identities, 'channel')}>")
     if after is not None:
         parts.append(f"after:{_as_day(after, what='after') - _DAY}")
     if before is not None:
@@ -350,7 +340,7 @@ def slack_overnight(
     cutoff_local = datetime.combine(local.date() - _DAY, time(hour=since_hour), tzinfo=PACIFIC)
     after_day = cutoff_local.date() - _DAY
     cutoff = cutoff_local.astimezone(now.tzinfo)
-    user = _slack_id(mentioning, _USER_ID, identities, "mentioning")
+    user = _slack_id(mentioning, is_user_id, identities, "mentioning")
     query = " ".join(
         [
             # A raw id in angle brackets is how a mention appears in message

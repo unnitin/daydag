@@ -151,7 +151,7 @@ All four commands share one parser: `python -m daydag <run|people|soak|registry>
 | `config` | Identifiers resolved from a local `.env`. This repo is public; nothing real is committed |
 | `registry` | The ownership table as startup checks, read off every `.claude/skills/*/SKILL.md` - two writers to one artifact is an error, not a convention |
 | `statedoc` | The `DayDAG/` vault folder: State.md as a document, the sensitivity gate, the one State.md reader every push shares |
-| `eventlog` | The SQLite event log outside the vault: every transition, the meeting ledger, the sensitive partition |
+| `eventlog` | The SQLite event log outside the vault: every transition, the meeting ledger, the sensitive partition, and the classifier that marks a row private |
 | `vault` | How bytes reach the vault safely: atomic writes, placeholder refusal, an iCloud-aware compare-and-swap for line edits |
 | `ledger` | Calendar-driven meeting rows, so a meeting that produced **no** notes is visible; one verdict on what counts as a meeting, and the one attendee and name-token parse |
 | `people` | Who someone is - ids, title, DM, groups, how often met - with stated facts outranking inferred ones |

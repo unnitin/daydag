@@ -68,15 +68,15 @@ from pathlib import Path
 from typing import Any
 
 from daydag import brief, closure, eod_wrap, push, recipes, week_ahead
-from daydag.config import resolve_reference, timezone_for
-from daydag.eventlog import EventLog
+from daydag.config import principal_id, resolve_reference, timezone_for
+from daydag.eventlog import EventLog, classify_sensitivity
 from daydag.ingestion import classify_items, unplaced
 from daydag.ledger import Ledger, Match, title_from_gemini_subject
 from daydag.observe import REACHED, Result, RunLog
 from daydag.people import People
 from daydag.prep import HORIZON_DAYS, Audience, Reason, build, point, prep_worthy, select
 from daydag.pulse import MirrorStore, Pulse, SyncReport, github_url, mirror_root, read_watchlist
-from daydag.statedoc import NotesGap, StateFolder, StateNotWritable, classify_sensitivity
+from daydag.statedoc import NotesGap, StateFolder, StateNotWritable
 
 __all__ = ["LOOPS", "Plan", "RunError", "Step", "main", "plan", "render"]
 
@@ -142,17 +142,11 @@ def _aware(now: datetime) -> datetime:
     return now
 
 
-def _principal(identities: Mapping[str, str]) -> str:
-    return resolve_reference(
-        "${SLACK_USER_PRINCIPAL}", identities, what="the principal", error=RunError
-    )
-
-
 def plan(loop: str, *, now: datetime, identities: Mapping[str, str], selector: str = "") -> Plan:
     """What the agent must fetch, with every bound the recipe already applies."""
     _known(loop)
     _aware(now)
-    principal = _principal(identities)
+    principal = principal_id(identities, what="the principal", error=RunError)
     # The PRINCIPAL'S day, not the runner's. `now.date()` is the runner's
     # timezone, and `brief` renders the Pacific day - so between 5pm and
     # midnight Pacific the plan fetched one day while the brief reported

@@ -41,7 +41,7 @@ from __future__ import annotations
 import re
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
@@ -410,13 +410,7 @@ class Result:
         return self.status == REACHED
 
     def as_row(self) -> dict[str, str]:
-        return {
-            "name": self.name,
-            "source": self.source,
-            "status": self.status,
-            "reason": self.reason,
-            "detail": self.detail,
-        }
+        return asdict(self)
 
     def line(self) -> str:
         if self.status == SKIPPED:
@@ -474,17 +468,20 @@ class SmokeReport:
 
     results: tuple[Result, ...]
 
+    def _named(self, status: str) -> tuple[str, ...]:
+        return tuple(result.name for result in self.results if result.status == status)
+
     @property
     def reached(self) -> tuple[str, ...]:
-        return tuple(result.name for result in self.results if result.reached)
+        return self._named(REACHED)
 
     @property
     def skipped(self) -> tuple[str, ...]:
-        return tuple(result.name for result in self.results if result.status == SKIPPED)
+        return self._named(SKIPPED)
 
     @property
     def not_connected(self) -> tuple[str, ...]:
-        return tuple(result.name for result in self.results if result.status == NOT_CONNECTED)
+        return self._named(NOT_CONNECTED)
 
     @property
     def reached_sources(self) -> tuple[str, ...]:
