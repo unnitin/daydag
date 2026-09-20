@@ -1,10 +1,15 @@
-"""The EOD wrap (SPEC 3.5) - the brief's sibling, assembled the same way.
+"""The EOD wrap (SPEC 3.5), `loops.eod` - the brief's sibling, assembled the same way.
 
-Same rationale as `tests/test_brief.py`: every source here is injected and
-fake, because the wrap's job is assembly and assembly is where this project's
-defects have actually lived. These tests drive the seams the wrap owns -
-tomorrow's single calendar day, the weekly note's ticked side, a pulse with
-nothing to say, the Friday-only outcome line - rather than the formatting.
+Same rationale as `tests/test_loops_morning.py`: every source here is injected
+and fake, because the wrap's job is assembly and assembly is where this
+project's defects have actually lived. These tests drive the seams the wrap
+owns - tomorrow's single calendar day, the weekly note's ticked side, a pulse
+with nothing to say, the Friday-only outcome line - rather than the formatting.
+
+The shared double serves every note from one path-keyed map, so it cannot
+catch the runner keying a note under the wrong payload key (#131);
+`tests/test_plan_feeds_render.py` catches that, by building the payloads from
+`run.plan`'s own output.
 """
 
 from __future__ import annotations
@@ -19,6 +24,7 @@ from daydag.loops import eod as assemble
 from daydag.pulse import Item, Mirror, Pulse
 from daydag.push import PushError
 from daydag.voice import voice_violations
+from support import FakeSources, calendar_event
 
 PT = ZoneInfo("America/Los_Angeles")
 
@@ -32,17 +38,15 @@ FRIDAY_NOW = datetime(2026, 9, 11, 16, 30, tzinfo=PT)
 
 
 def _event(event_id, summary, hour, minute=0, *, minutes=60, link=None, attendees=None):
-    start = datetime(2026, 9, 8, hour, minute, tzinfo=PT)
-    return {
-        "id": event_id,
-        "summary": summary,
-        "start": start,
-        "end": start + timedelta(minutes=minutes),
-        "attendees": list(attendees or ["nitin", "vp-data"]),
-        "response_status": "needsAction",
-        "kind": "meeting",
-        "permalink": link or f"https://calendar.example.com/e/{event_id}",
-    }
+    """`calendar_event` on the wrap's tomorrow, placed by wall-clock hour and minute."""
+    return calendar_event(
+        event_id,
+        summary,
+        datetime(2026, 9, 8, hour, minute, tzinfo=PT),
+        minutes=minutes,
+        link=link,
+        attendees=attendees or ("nitin", "vp-data"),
+    )
 
 
 NOTE_WITH_CLOSED = """# Week of Sep 7-11
@@ -52,40 +56,6 @@ NOTE_WITH_CLOSED = """# Week of Sep 7-11
 - [x] 🔴 send the pod update *(mine)*
 - [x] 🟡 R1.5 staging validation *(tracking: VP-Data)*
 """
-
-
-class FakeSources:
-    """The two reads the wrap performs, recorded rather than performed.
-
-    Every note is served from one path-keyed map. This double cannot catch
-    the runner keying a note under the wrong payload key (#131);
-    `tests/test_plan_feeds_render.py` is what catches that, by building the
-    payloads from `run.plan`'s own output.
-    """
-
-    def __init__(self, *, events=(), notes=None, broken=()):
-        self._events = list(events)
-        #: path -> text. A path absent here raises `FileNotFoundError`.
-        self._notes = dict(notes or {})
-        self._broken = set(broken)
-        self.calendar_windows = []
-        self.note_paths = []
-
-    def _check(self, name):
-        if name in self._broken:
-            raise RuntimeError(f"{name} is down")
-
-    def calendar(self, window):
-        self._check("calendar")
-        self.calendar_windows.append(window)
-        return list(self._events)
-
-    def vault_note(self, path):
-        self._check("vault_note")
-        self.note_paths.append(path)
-        if path not in self._notes:
-            raise FileNotFoundError(path)
-        return self._notes[path]
 
 
 def _assemble(sources, **kwargs):

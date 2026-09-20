@@ -30,6 +30,7 @@ from daydag.pulse import (
     read_watchlist,
 )
 from daydag.statedoc import StateFolder
+from support import Clock
 
 
 @pytest.fixture
@@ -577,18 +578,8 @@ def dated_store(tmp_path, origins, clock):
 
 @pytest.fixture
 def clock():
-    """A hand-wound clock. `set` moves it; calling it reads it."""
-
-    class Clock:
-        now = FRIDAY
-
-        def __call__(self):
-            return self.now
-
-        def set(self, when):
-            self.now = when
-
-    return Clock()
+    """A hand-wound clock (`support.Clock`): `set` moves it; calling it reads it."""
+    return Clock(FRIDAY)
 
 
 def test_a_successful_fetch_writes_its_time_to_the_event_log(dated_store, origins, clock):

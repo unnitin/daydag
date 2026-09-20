@@ -1,9 +1,9 @@
-"""The Sunday week-ahead (SPEC 3.6, issue #21).
+"""The Sunday week-ahead (SPEC 3.6, issue #21), `loops.week_ahead`.
 
-`week_ahead` is a sibling of `brief`, not a rewrite of it: the same shape of
-test (fake sources, real assembly) proves the same class of thing brief's
-suite proves - that the seam between "what a source hands back" and "what the
-push says" is honest. Two things are specific to this loop and get their own
+`week_ahead` is a sibling of `morning`, not a rewrite of it: the same shape of
+test (fake sources, real assembly) proves the same class of thing the morning
+brief's suite proves - that the seam between "what a source hands back" and
+"what the push says" is honest. Two things are specific to this loop and get their own
 tests: a missing week-ahead plan has to LEAD (SPEC 3.6 rule 3), and a Monday
 meeting sharing an attendee with an OOO/travel event on the same week has to
 be flagged rather than silently scheduled.
@@ -20,8 +20,8 @@ from daydag import push
 from daydag.loops import week_ahead as assemble
 from daydag.pulse import Mirror, Pulse
 from daydag.push import PushError
-from daydag.statedoc import StateFolder
 from daydag.voice import voice_violations
+from support import FakeSources, calendar_event
 
 PT = ZoneInfo("America/Los_Angeles")
 
@@ -36,59 +36,6 @@ NEXT_WEEK_NOTE = "Create Music Group/Weekly Notes/0907-0911.md"
 CLOSING_WEEK_NOTE = "Create Music Group/Weekly Notes/0831-0904.md"
 
 CLOSING_NOTE_TEXT = "## 🔴 High\n- [ ] note to sponsor on data platform access\n- [x] pod update\n"
-
-
-def _event(event_id, summary, start, *, minutes=60, attendees=None, kind="meeting", link=None):
-    return {
-        "id": event_id,
-        "summary": summary,
-        "start": start,
-        "end": start + timedelta(minutes=minutes),
-        "attendees": list(attendees or ["nitin", "vp-data"]),
-        "response_status": "needsAction",
-        "kind": kind,
-        "permalink": link or f"https://calendar.example.com/e/{event_id}",
-    }
-
-
-class FakeSources:
-    """The same four reads `push.Sources` performs, recorded rather than done."""
-
-    def __init__(self, *, events=(), notes=None, broken=()):
-        self._events = list(events)
-        self._notes = dict(notes or {})
-        self._broken = set(broken)
-        self.calendar_windows = []
-        self.note_paths = []
-
-    def _check(self, name):
-        if name in self._broken:
-            raise RuntimeError(f"{name} is down")
-
-    def calendar(self, window):
-        self._check("calendar")
-        self.calendar_windows.append(window)
-        return [e for e in self._events if e["start"].date() == window.day]
-
-    def vault_note(self, path):
-        self._check("vault_note")
-        self.note_paths.append(path)
-        if path not in self._notes:
-            raise FileNotFoundError(path)
-        return self._notes[path]
-
-    def slack(self, query):
-        self._check("slack")
-        return []
-
-    def gmail(self, query):
-        self._check("gmail")
-        return []
-
-
-@pytest.fixture
-def state(tmp_path):
-    return StateFolder.create(tmp_path / "vault" / "DayDAG")
 
 
 def _assemble(*, sources, state=None, pulse=None, now=SUNDAY):
@@ -157,12 +104,12 @@ def test_a_closing_week_with_no_note_carries_nothing_and_is_not_an_error():
     assert "the closing week's note" not in pushed.unreachable
 
 
-def test_chase_and_watch_are_read_out_of_state_like_brief_reads_them(state):
-    state.update_state(
+def test_chase_and_watch_are_read_out_of_state_like_brief_reads_them(folder):
+    folder.update_state(
         chase=[{"owner": "VP-Data", "ask": "cutover rehearsal"}],
         watch=[{"what": "10k e2e run"}],
     )
-    pushed = _assemble(sources=FakeSources(), state=state)
+    pushed = _assemble(sources=FakeSources(), state=folder)
     carrying = next(s for s in pushed.sections if s.heading.startswith("carrying in"))
     assert "cutover rehearsal" in carrying.render()
     watch = next(s for s in pushed.sections if s.heading == "watch")
@@ -200,7 +147,7 @@ def test_an_on_demand_run_off_a_sunday_still_finds_the_real_next_monday():
 
 def test_monday_meetings_render_with_time_and_permalink():
     sources = FakeSources(
-        events=[_event("steering", "Pod Steering", datetime(2026, 9, 7, 9, 0, tzinfo=PT))]
+        events=[calendar_event("steering", "Pod Steering", datetime(2026, 9, 7, 9, 0, tzinfo=PT))]
     )
     pushed = _assemble(sources=sources)
     monday = next(s for s in pushed.sections if s.heading.startswith("monday"))
@@ -212,7 +159,7 @@ def test_monday_meetings_render_with_time_and_permalink():
 def test_a_day_with_nothing_on_it_is_omitted_not_labelled_open():
     """Contract 6: silence is information - there is no permalink for a gap."""
     sources = FakeSources(
-        events=[_event("demo", "Sprint Demo", datetime(2026, 9, 10, 14, 0, tzinfo=PT))]
+        events=[calendar_event("demo", "Sprint Demo", datetime(2026, 9, 10, 14, 0, tzinfo=PT))]
     )
     pushed = _assemble(sources=sources)
     week = next(s for s in pushed.sections if s.heading == "the week").render()
@@ -225,8 +172,8 @@ def test_a_day_with_nothing_on_it_is_omitted_not_labelled_open():
 def test_the_week_section_counts_meetings_and_names_them():
     sources = FakeSources(
         events=[
-            _event("a", "Ivan/Ruwen Sync", datetime(2026, 9, 8, 10, 0, tzinfo=PT)),
-            _event("b", "1:1", datetime(2026, 9, 8, 15, 0, tzinfo=PT)),
+            calendar_event("a", "Ivan/Ruwen Sync", datetime(2026, 9, 8, 10, 0, tzinfo=PT)),
+            calendar_event("b", "1:1", datetime(2026, 9, 8, 15, 0, tzinfo=PT)),
         ]
     )
     pushed = _assemble(sources=sources)
@@ -243,13 +190,13 @@ def test_the_week_section_counts_meetings_and_names_them():
 def test_a_meeting_with_a_travelling_attendee_is_flagged_with_both_links():
     sources = FakeSources(
         events=[
-            _event(
+            calendar_event(
                 "sync",
                 "Ivan/Ruwen Sync",
                 datetime(2026, 9, 8, 10, 0, tzinfo=PT),
                 attendees=["nitin", "ruwen"],
             ),
-            _event(
+            calendar_event(
                 "ooo",
                 "Ruwen OOO",
                 datetime(2026, 9, 8, 0, 0, tzinfo=PT),
@@ -271,13 +218,13 @@ def test_a_meeting_with_a_travelling_attendee_is_flagged_with_both_links():
 def test_an_ooo_event_is_not_itself_counted_as_a_meeting():
     sources = FakeSources(
         events=[
-            _event(
+            calendar_event(
                 "sync",
                 "Ivan/Ruwen Sync",
                 datetime(2026, 9, 8, 10, 0, tzinfo=PT),
                 attendees=["nitin", "ruwen"],
             ),
-            _event(
+            calendar_event(
                 "ooo",
                 "Ruwen OOO",
                 datetime(2026, 9, 8, 0, 0, tzinfo=PT),
@@ -295,8 +242,8 @@ def test_an_ooo_event_is_not_itself_counted_as_a_meeting():
 def test_a_meeting_with_no_travelling_attendee_is_not_flagged():
     sources = FakeSources(
         events=[
-            _event("sync", "Ivan/Ruwen Sync", datetime(2026, 9, 8, 10, 0, tzinfo=PT)),
-            _event(
+            calendar_event("sync", "Ivan/Ruwen Sync", datetime(2026, 9, 8, 10, 0, tzinfo=PT)),
+            calendar_event(
                 "ooo",
                 "Someone Else OOO",
                 datetime(2026, 9, 9, 0, 0, tzinfo=PT),
@@ -318,7 +265,7 @@ def test_a_meeting_with_no_travelling_attendee_is_not_flagged():
 def test_a_qualifying_monday_meeting_is_queued_for_prep_with_the_right_week():
     sources = FakeSources(
         events=[
-            _event(
+            calendar_event(
                 "steering",
                 "Pod Steering",
                 datetime(2026, 9, 7, 9, 0, tzinfo=PT),
@@ -340,7 +287,7 @@ def test_a_qualifying_monday_meeting_is_queued_for_prep_with_the_right_week():
 
 def test_a_standup_never_gets_queued_for_prep():
     sources = FakeSources(
-        events=[_event("standup", "DE Standup", datetime(2026, 9, 7, 9, 0, tzinfo=PT))]
+        events=[calendar_event("standup", "DE Standup", datetime(2026, 9, 7, 9, 0, tzinfo=PT))]
     )
     pushed = _assemble(sources=sources)
     assert pushed.monday_preps == ()
@@ -441,10 +388,10 @@ def test_a_quiet_pulse_adds_no_shipping_section():
 # --------------------------------------------------------------------------
 
 
-def test_a_dead_calendar_degrades_to_one_line_and_the_push_still_ships(state):
+def test_a_dead_calendar_degrades_to_one_line_and_the_push_still_ships(folder):
     """Seven day-windows can all fail; the degrade line still names it once."""
-    state.update_state(watch=[{"what": "10k e2e run"}])
-    pushed = _assemble(sources=FakeSources(broken=["calendar"]), state=state)
+    folder.update_state(watch=[{"what": "10k e2e run"}])
+    pushed = _assemble(sources=FakeSources(broken=["calendar"]), state=folder)
     assert pushed.unreachable == ("calendar",), "the same failing source was named more than once"
     assert any(s.heading == "watch" for s in pushed.sections), "a dead calendar took the rest down"
 
@@ -459,21 +406,21 @@ def test_render_carries_the_unreachable_footer():
 # --------------------------------------------------------------------------
 
 
-def test_a_fully_loaded_week_is_evidenced_and_clean_in_the_house_voice(state):
-    state.update_state(
+def test_a_fully_loaded_week_is_evidenced_and_clean_in_the_house_voice(folder):
+    folder.update_state(
         chase=[{"owner": "VP-Data", "ask": "cutover rehearsal"}],
         watch=[{"what": "10k e2e run"}],
     )
     sources = FakeSources(
         events=[
-            _event("steering", "Pod Steering", datetime(2026, 9, 7, 9, 0, tzinfo=PT)),
-            _event(
+            calendar_event("steering", "Pod Steering", datetime(2026, 9, 7, 9, 0, tzinfo=PT)),
+            calendar_event(
                 "sync",
                 "Ivan/Ruwen Sync",
                 datetime(2026, 9, 8, 10, 0, tzinfo=PT),
                 attendees=["nitin", "ruwen"],
             ),
-            _event(
+            calendar_event(
                 "ooo",
                 "Ruwen OOO",
                 datetime(2026, 9, 8, 0, 0, tzinfo=PT),
@@ -484,7 +431,7 @@ def test_a_fully_loaded_week_is_evidenced_and_clean_in_the_house_voice(state):
         ],
         notes={CLOSING_WEEK_NOTE: CLOSING_NOTE_TEXT},
     )
-    pushed = _assemble(sources=sources, state=state)
+    pushed = _assemble(sources=sources, state=folder)
     text = pushed.render()
 
     assert push.unsourced_claims(text) == [], f"a claim shipped with no evidence:\n{text}"
@@ -515,8 +462,8 @@ def test_overlapping_meetings_are_surfaced_as_a_clash():
     nine = datetime(2026, 9, 7, 9, 0, tzinfo=PT)
     sources = FakeSources(
         events=[
-            _event("a", "Pod Steering", nine, minutes=60),
-            _event("b", "Finance x Data", nine + timedelta(minutes=30), minutes=60),
+            calendar_event("a", "Pod Steering", nine, minutes=60),
+            calendar_event("b", "Finance x Data", nine + timedelta(minutes=30), minutes=60),
         ]
     )
 
@@ -533,7 +480,7 @@ def test_a_pile_up_is_one_line_not_every_pair():
     nine = datetime(2026, 9, 7, 9, 0, tzinfo=PT)
     sources = FakeSources(
         events=[
-            _event(str(n), f"Meeting {n}", nine + timedelta(minutes=10 * n), minutes=60)
+            calendar_event(str(n), f"Meeting {n}", nine + timedelta(minutes=10 * n), minutes=60)
             for n in range(4)
         ]
     )
@@ -550,8 +497,8 @@ def test_back_to_back_meetings_are_not_a_clash():
     nine = datetime(2026, 9, 7, 9, 0, tzinfo=PT)
     sources = FakeSources(
         events=[
-            _event("a", "First", nine, minutes=60),
-            _event("b", "Second", nine + timedelta(minutes=60), minutes=60),
+            calendar_event("a", "First", nine, minutes=60),
+            calendar_event("b", "Second", nine + timedelta(minutes=60), minutes=60),
         ]
     )
 
@@ -562,7 +509,7 @@ def test_a_meeting_he_declined_is_not_part_of_his_week():
     """`monday_prep_queue` reads events through the ledger and dropped these;
     the rendered sections applied one of the ledger's four rules and kept them.
     Two qualification paths in one module, disagreeing silently."""
-    event = _event("dhc", "Data Health Check", datetime(2026, 9, 7, 9, 0, tzinfo=PT))
+    event = calendar_event("dhc", "Data Health Check", datetime(2026, 9, 7, 9, 0, tzinfo=PT))
     event["response_status"] = "declined"
 
     rendered = _assemble(sources=FakeSources(events=[event])).render()
@@ -573,9 +520,10 @@ def test_a_meeting_he_declined_is_not_part_of_his_week():
 def test_a_solo_block_he_organised_himself_is_not_a_meeting():
     """A personal errand with no one else in it. Real example: "Veda pick up",
     which rendered every weekday as part of his working week."""
-    event = _event("veda", "Veda pick up", datetime(2026, 9, 7, 16, 15, tzinfo=PT))
-    # Set after construction: `_event` does `attendees or [...]`, so passing an
-    # empty list silently gets the two-person default instead.
+    event = calendar_event("veda", "Veda pick up", datetime(2026, 9, 7, 16, 15, tzinfo=PT))
+    # Set after construction, as the file's old `_event` forced (it did
+    # `attendees or [...]`, so an empty list silently got the two-person
+    # default). Kept that way so the record's shape is spelled out here.
     event["attendees"] = []
     event["organizer_is_self"] = True
 
@@ -613,7 +561,7 @@ def test_a_busy_day_is_named_not_enumerated():
     tuesday = datetime(2026, 9, 8, 9, 0, tzinfo=PT)
     sources = FakeSources(
         events=[
-            _event(str(n), f"Meeting number {n}", tuesday + timedelta(hours=n), minutes=30)
+            calendar_event(str(n), f"Meeting number {n}", tuesday + timedelta(hours=n), minutes=30)
             for n in range(9)
         ]
     )

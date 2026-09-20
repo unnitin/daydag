@@ -21,7 +21,6 @@ from datetime import UTC, datetime
 import pytest
 
 from daydag import push, run
-from daydag.config import Identities
 from daydag.statedoc import StateFolder
 
 MONDAY = datetime(2026, 9, 7, 6, 40, tzinfo=UTC)
@@ -34,18 +33,6 @@ MONDAY = datetime(2026, 9, 7, 6, 40, tzinfo=UTC)
 #: what these did, silently, while `_Payloads.calendar` served any window from
 #: one bucket and hid the mismatch.
 MONDAY_PT = datetime(2026, 9, 7, 13, 40, tzinfo=UTC)
-
-
-@pytest.fixture
-def identities(tmp_path):
-    env = tmp_path / ".env"
-    env.write_text(
-        f"SLACK_USER_PRINCIPAL=UPRINCIPAL1\nEMAIL_PRINCIPAL=principal@x.com\n"
-        f"VAULT_ROOT={tmp_path / 'vault'}\n",
-        encoding="utf-8",
-    )
-    (tmp_path / "vault" / "Weekly Notes").mkdir(parents=True)
-    return Identities.from_file(env)
 
 
 # --------------------------------------------------------------------------

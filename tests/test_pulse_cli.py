@@ -11,26 +11,20 @@ from datetime import UTC, datetime
 import pytest
 
 from daydag import recipes, run
-from daydag.config import Identities
 from daydag.eventlog import EventLog
 
 FRIDAY = datetime(2026, 9, 18, 17, 0, tzinfo=UTC)
 
 
 @pytest.fixture
-def identities(tmp_path, fake_repo):
-    env = tmp_path / ".env"
-    env.write_text(
-        "SLACK_USER_PRINCIPAL=UPRINCIPAL1\nEMAIL_PRINCIPAL=principal@x.com\n"
-        f"VAULT_ROOT={tmp_path / 'vault'}\nMIRROR_DIR={tmp_path / 'mirrors'}\n",
-        encoding="utf-8",
-    )
+def identities(make_identities, tmp_path, fake_repo):
+    ids = make_identities(MIRROR_DIR=str(tmp_path / "mirrors"))
     daydag = tmp_path / "vault" / "DayDAG"
     daydag.mkdir(parents=True)
     (daydag / "Watchlist.md").write_text(
         "# Watchlist\n\n## repos\n\n- ExampleOrg/svc\n\n## jira\n", encoding="utf-8"
     )
-    return Identities.from_file(env)
+    return ids
 
 
 def _tip(repo, git_env):

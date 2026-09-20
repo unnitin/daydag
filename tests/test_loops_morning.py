@@ -1,4 +1,4 @@
-"""The morning brief (SPEC 3.1) - the walking skeleton, asserted at its seams.
+"""The morning brief (SPEC 3.1), `loops.morning` - the walking skeleton at its seams.
 
 Every source here is injected and fake. That is not a shortcut around the real
 connectors: the brief's job is assembly, and assembly is exactly the part that
@@ -23,6 +23,7 @@ from daydag.pulse import Item, Mirror, Pulse
 from daydag.push import PushError, red_items, unsourced_claims
 from daydag.statedoc import StateFolder
 from daydag.voice import voice_violations
+from support import FakeSources, calendar_event
 
 PT = ZoneInfo("America/Los_Angeles")
 
@@ -36,67 +37,19 @@ IDENTITIES = {"SLACK_USER_PRINCIPAL": PRINCIPAL}
 
 
 def _event(event_id, summary, hour, minute=0, *, minutes=60, link=None, attendees=None):
-    start = datetime(2026, 9, 7, hour, minute, tzinfo=PT)
-    return {
-        "id": event_id,
-        "summary": summary,
-        "start": start,
-        "end": start + timedelta(minutes=minutes),
-        "attendees": list(attendees or ["nitin", "vp-data"]),
-        "response_status": "needsAction",
-        "kind": "meeting",
-        "permalink": link or f"https://calendar.example.com/e/{event_id}",
-    }
+    """`calendar_event` on the brief's Monday, placed by wall-clock hour and minute."""
+    return calendar_event(
+        event_id,
+        summary,
+        datetime(2026, 9, 7, hour, minute, tzinfo=PT),
+        minutes=minutes,
+        link=link,
+        attendees=attendees or ("nitin", "vp-data"),
+    )
 
 
 def _message(text, when, *, who="VP-Data", link="https://slack.example.com/p/1"):
     return {"ts": f"{when.timestamp():.6f}", "text": text, "who": who, "permalink": link}
-
-
-class FakeSources:
-    """Every source the brief reads, recorded rather than performed."""
-
-    def __init__(self, *, events=(), note=None, messages=(), mail=(), broken=()):
-        self._events = list(events)
-        self._note = note
-        self._messages = list(messages)
-        self._mail = list(mail)
-        self._broken = set(broken)
-        self.calendar_windows = []
-        self.slack_queries = []
-        self.gmail_queries = []
-        self.note_paths = []
-
-    def _check(self, name):
-        if name in self._broken:
-            raise RuntimeError(f"{name} is down")
-
-    def calendar(self, window):
-        self._check("calendar")
-        self.calendar_windows.append(window)
-        return list(self._events)
-
-    def vault_note(self, path):
-        self._check("vault_note")
-        self.note_paths.append(path)
-        if self._note is None:
-            raise FileNotFoundError(path)
-        return self._note
-
-    def slack(self, query):
-        self._check("slack")
-        self.slack_queries.append(query)
-        return list(self._messages)
-
-    def gmail(self, query):
-        self._check("gmail")
-        self.gmail_queries.append(query)
-        return list(self._mail)
-
-
-@pytest.fixture
-def state(tmp_path):
-    return StateFolder.create(tmp_path / "vault" / "DayDAG")
 
 
 def _assemble(sources, **kwargs):
@@ -334,9 +287,9 @@ def test_a_gemini_note_is_reported_by_its_parsed_title():
 # --------------------------------------------------------------------------
 
 
-def test_the_chase_list_and_watch_items_come_from_the_state_file(state):
+def test_the_chase_list_and_watch_items_come_from_the_state_file(folder):
     """A hand edit is an event and wins over anything the agent derived."""
-    state.state_path.write_text(
+    folder.state_path.write_text(
         "# State\n\n"
         "## Chase list\n\n"
         "- VP-Data · bronze tables refreshed? https://slack.example.com/p/7\n\n"
@@ -344,7 +297,7 @@ def test_the_chase_list_and_watch_items_come_from_the_state_file(state):
         "- 10k e2e run - https://slack.example.com/p/8\n",
         encoding="utf-8",
     )
-    text = _assemble(FakeSources(), state=state).render()
+    text = _assemble(FakeSources(), state=folder).render()
 
     assert "owed to you (1)" in text
     assert "bronze tables refreshed?" in text
@@ -353,11 +306,11 @@ def test_the_chase_list_and_watch_items_come_from_the_state_file(state):
     assert "https://slack.example.com/p/8" in text
 
 
-def test_a_chase_line_with_no_link_admits_it(state):
+def test_a_chase_line_with_no_link_admits_it(folder):
     """`update_state` records owner and ask but no permalink, so most lines have
     none. Saying so is guardrail 3; asserting it anyway is what it forbids."""
-    state.update_state(chase=[{"owner": "VP-Data", "ask": "silver trigger"}])
-    text = _assemble(FakeSources(), state=state).render()
+    folder.update_state(chase=[{"owner": "VP-Data", "ask": "silver trigger"}])
+    text = _assemble(FakeSources(), state=folder).render()
 
     assert "silver trigger" in text
     assert unsourced_claims(text) == []
@@ -462,14 +415,14 @@ def _busy_sources():
     )
 
 
-def test_a_full_brief_reads_in_his_voice(state, fake_repo):
-    state.update_state(
+def test_a_full_brief_reads_in_his_voice(folder, fake_repo):
+    folder.update_state(
         chase=[{"owner": "VP-Data", "ask": "silver trigger"}],
         watch=[{"what": "10k e2e run"}],
     )
     text = _assemble(
         _busy_sources(),
-        state=state,
+        state=folder,
         pulse=Pulse(mirrors=[Mirror.attach(fake_repo, cursor="HEAD~2")]),
         ledger=Ledger(),
     ).render()
@@ -479,16 +432,16 @@ def test_a_full_brief_reads_in_his_voice(state, fake_repo):
 
 
 @pytest.mark.guardrail
-def test_every_claim_in_a_full_brief_carries_evidence_or_admits_it(state, fake_repo):
+def test_every_claim_in_a_full_brief_carries_evidence_or_admits_it(folder, fake_repo):
     """Guardrail 3 / invariant 3, asserted on the rendered brief.
 
     On the render rather than the objects: a permalink held on something nobody
     prints is not a citation.
     """
-    state.update_state(chase=[{"owner": "VP-Data", "ask": "silver trigger"}])
+    folder.update_state(chase=[{"owner": "VP-Data", "ask": "silver trigger"}])
     text = _assemble(
         _busy_sources(),
-        state=state,
+        state=folder,
         pulse=Pulse(mirrors=[Mirror.attach(fake_repo, cursor="HEAD~2")]),
     ).render()
 

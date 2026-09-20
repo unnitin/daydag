@@ -89,7 +89,7 @@ Two rules that follow:
   repo - `Skip`'s "never a bare name" and `RunRow.line`'s "all of them the
   agent's own words" were both false when written. Say what the code does.
 - **A guardrail should scan code, not prose.** The clock guardrail in
-  `tests/test_runlog.py` text-scanned the whole file and so fired on the
+  `tests/test_observe.py` text-scanned the whole file and so fired on the
   module docstring's own usage example. It parses the AST now. A contract that
   cannot be written down is worse documented for the sake of a cruder check.
 
