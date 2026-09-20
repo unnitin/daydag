@@ -14,6 +14,7 @@ from datetime import UTC, datetime
 import pytest
 
 from daydag.config import ConfigError, Identities
+from daydag.eventlog import EventLog
 from daydag.pulse import (
     GIT_TIMED_OUT,
     NO_PUSH,
@@ -28,7 +29,8 @@ from daydag.pulse import (
     mirror_root,
     read_watchlist,
 )
-from daydag.state import EventLog, StateFolder
+from daydag.statedoc import StateFolder
+from support import Clock
 
 
 @pytest.fixture
@@ -576,18 +578,8 @@ def dated_store(tmp_path, origins, clock):
 
 @pytest.fixture
 def clock():
-    """A hand-wound clock. `set` moves it; calling it reads it."""
-
-    class Clock:
-        now = FRIDAY
-
-        def __call__(self):
-            return self.now
-
-        def set(self, when):
-            self.now = when
-
-    return Clock()
+    """A hand-wound clock (`support.Clock`): `set` moves it; calling it reads it."""
+    return Clock(FRIDAY)
 
 
 def test_a_successful_fetch_writes_its_time_to_the_event_log(dated_store, origins, clock):
@@ -686,7 +678,7 @@ def test_a_naive_fetch_time_still_renders_with_a_zone():
 
     Naive means UTC here, matching `state._as_utc`, which is the writer for
     this field and assumes UTC when a stamp says nothing. Reading it as the
-    principal's wall clock instead - the convention `brief._local` holds for
+    principal's wall clock instead - the convention `push.local` holds for
     calendar events - would render a naive 06:40 as "06:40 PDT", seven hours
     off, and a confident wrong label is worse than the bare one.
 

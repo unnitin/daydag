@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from daydag import brief, closure
+from daydag import closure, push
 from daydag.closure import Ask, asks_in, closure_steps, judge, render_closure, slack_permalink
 
 FIXTURE = Path(__file__).parent / "fixtures" / "state" / "hand_edited.md"
@@ -268,7 +268,7 @@ def test_every_rendered_line_is_sourced_or_admits_it_is_not():
         if s.lines
     )
 
-    assert brief.unsourced_claims(text) == [], brief.unsourced_claims(text)
+    assert push.unsourced_claims(text) == [], push.unsourced_claims(text)
 
 
 def test_closure_knows_when_the_run_skipped_every_read():
@@ -285,7 +285,7 @@ def test_closure_knows_when_the_run_skipped_every_read():
 
 @pytest.fixture
 def vault(tmp_path):
-    from daydag.state import StateFolder
+    from daydag.statedoc import StateFolder
 
     env = tmp_path / ".env"
     env.write_text(

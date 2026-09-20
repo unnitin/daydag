@@ -1,4 +1,4 @@
-"""The morning brief (SPEC 3.1) - the walking skeleton, asserted at its seams.
+"""The morning brief (SPEC 3.1), `loops.morning` - the walking skeleton at its seams.
 
 Every source here is injected and fake. That is not a shortcut around the real
 connectors: the brief's job is assembly, and assembly is exactly the part that
@@ -16,12 +16,14 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from daydag import brief as brief_module
-from daydag.brief import BriefError, assemble, red_items, unsourced_claims
+from daydag import loops as brief_module
 from daydag.ledger import Ledger
+from daydag.loops import morning as assemble
 from daydag.pulse import Item, Mirror, Pulse
-from daydag.state import StateFolder
+from daydag.push import PushError, red_items, unsourced_claims
+from daydag.statedoc import StateFolder
 from daydag.voice import voice_violations
+from support import FakeSources, calendar_event
 
 PT = ZoneInfo("America/Los_Angeles")
 
@@ -35,67 +37,19 @@ IDENTITIES = {"SLACK_USER_PRINCIPAL": PRINCIPAL}
 
 
 def _event(event_id, summary, hour, minute=0, *, minutes=60, link=None, attendees=None):
-    start = datetime(2026, 9, 7, hour, minute, tzinfo=PT)
-    return {
-        "id": event_id,
-        "summary": summary,
-        "start": start,
-        "end": start + timedelta(minutes=minutes),
-        "attendees": list(attendees or ["nitin", "vp-data"]),
-        "response_status": "needsAction",
-        "kind": "meeting",
-        "permalink": link or f"https://calendar.example.com/e/{event_id}",
-    }
+    """`calendar_event` on the brief's Monday, placed by wall-clock hour and minute."""
+    return calendar_event(
+        event_id,
+        summary,
+        datetime(2026, 9, 7, hour, minute, tzinfo=PT),
+        minutes=minutes,
+        link=link,
+        attendees=attendees or ("nitin", "vp-data"),
+    )
 
 
 def _message(text, when, *, who="VP-Data", link="https://slack.example.com/p/1"):
     return {"ts": f"{when.timestamp():.6f}", "text": text, "who": who, "permalink": link}
-
-
-class FakeSources:
-    """Every source the brief reads, recorded rather than performed."""
-
-    def __init__(self, *, events=(), note=None, messages=(), mail=(), broken=()):
-        self._events = list(events)
-        self._note = note
-        self._messages = list(messages)
-        self._mail = list(mail)
-        self._broken = set(broken)
-        self.calendar_windows = []
-        self.slack_queries = []
-        self.gmail_queries = []
-        self.note_paths = []
-
-    def _check(self, name):
-        if name in self._broken:
-            raise RuntimeError(f"{name} is down")
-
-    def calendar(self, window):
-        self._check("calendar")
-        self.calendar_windows.append(window)
-        return list(self._events)
-
-    def weekly_note(self, path):
-        self._check("weekly_note")
-        self.note_paths.append(path)
-        if self._note is None:
-            raise FileNotFoundError(path)
-        return self._note
-
-    def slack(self, query):
-        self._check("slack")
-        self.slack_queries.append(query)
-        return list(self._messages)
-
-    def gmail(self, query):
-        self._check("gmail")
-        self.gmail_queries.append(query)
-        return list(self._mail)
-
-
-@pytest.fixture
-def state(tmp_path):
-    return StateFolder.create(tmp_path / "vault" / "DayDAG")
 
 
 def _assemble(sources, **kwargs):
@@ -239,7 +193,7 @@ def test_a_missing_weekly_note_leads_the_brief_instead_of_crashing():
 
 def test_a_weekly_note_that_cannot_be_read_is_a_downed_source_not_a_gap():
     """An evicted iCloud placeholder is not the same as a note nobody wrote."""
-    text = _assemble(FakeSources(broken=["weekly_note"])).render()
+    text = _assemble(FakeSources(broken=["vault_note"])).render()
 
     assert "couldn't check the weekly note" in text
     assert "no weekly note" not in text
@@ -333,9 +287,9 @@ def test_a_gemini_note_is_reported_by_its_parsed_title():
 # --------------------------------------------------------------------------
 
 
-def test_the_chase_list_and_watch_items_come_from_the_state_file(state):
+def test_the_chase_list_and_watch_items_come_from_the_state_file(folder):
     """A hand edit is an event and wins over anything the agent derived."""
-    state.state_path.write_text(
+    folder.state_path.write_text(
         "# State\n\n"
         "## Chase list\n\n"
         "- VP-Data · bronze tables refreshed? https://slack.example.com/p/7\n\n"
@@ -343,7 +297,7 @@ def test_the_chase_list_and_watch_items_come_from_the_state_file(state):
         "- 10k e2e run - https://slack.example.com/p/8\n",
         encoding="utf-8",
     )
-    text = _assemble(FakeSources(), state=state).render()
+    text = _assemble(FakeSources(), state=folder).render()
 
     assert "owed to you (1)" in text
     assert "bronze tables refreshed?" in text
@@ -352,11 +306,11 @@ def test_the_chase_list_and_watch_items_come_from_the_state_file(state):
     assert "https://slack.example.com/p/8" in text
 
 
-def test_a_chase_line_with_no_link_admits_it(state):
+def test_a_chase_line_with_no_link_admits_it(folder):
     """`update_state` records owner and ask but no permalink, so most lines have
     none. Saying so is guardrail 3; asserting it anyway is what it forbids."""
-    state.update_state(chase=[{"owner": "VP-Data", "ask": "silver trigger"}])
-    text = _assemble(FakeSources(), state=state).render()
+    folder.update_state(chase=[{"owner": "VP-Data", "ask": "silver trigger"}])
+    text = _assemble(FakeSources(), state=folder).render()
 
     assert "silver trigger" in text
     assert unsourced_claims(text) == []
@@ -461,14 +415,14 @@ def _busy_sources():
     )
 
 
-def test_a_full_brief_reads_in_his_voice(state, fake_repo):
-    state.update_state(
+def test_a_full_brief_reads_in_his_voice(folder, fake_repo):
+    folder.update_state(
         chase=[{"owner": "VP-Data", "ask": "silver trigger"}],
         watch=[{"what": "10k e2e run"}],
     )
     text = _assemble(
         _busy_sources(),
-        state=state,
+        state=folder,
         pulse=Pulse(mirrors=[Mirror.attach(fake_repo, cursor="HEAD~2")]),
         ledger=Ledger(),
     ).render()
@@ -478,16 +432,16 @@ def test_a_full_brief_reads_in_his_voice(state, fake_repo):
 
 
 @pytest.mark.guardrail
-def test_every_claim_in_a_full_brief_carries_evidence_or_admits_it(state, fake_repo):
+def test_every_claim_in_a_full_brief_carries_evidence_or_admits_it(folder, fake_repo):
     """Guardrail 3 / invariant 3, asserted on the rendered brief.
 
     On the render rather than the objects: a permalink held on something nobody
     prints is not a citation.
     """
-    state.update_state(chase=[{"owner": "VP-Data", "ask": "silver trigger"}])
+    folder.update_state(chase=[{"owner": "VP-Data", "ask": "silver trigger"}])
     text = _assemble(
         _busy_sources(),
-        state=state,
+        state=folder,
         pulse=Pulse(mirrors=[Mirror.attach(fake_repo, cursor="HEAD~2")]),
     ).render()
 
@@ -519,7 +473,7 @@ def test_one_downed_source_costs_one_line_and_the_brief_still_ships():
 def test_every_source_down_still_ships_a_brief():
     """The worst case is still a message, not a silence he cannot distinguish
     from a machine that never woke up."""
-    sources = FakeSources(broken=["calendar", "weekly_note", "slack", "gmail"])
+    sources = FakeSources(broken=["calendar", "vault_note", "slack", "gmail"])
     text = _assemble(sources).render()
 
     assert text.startswith("morning")
@@ -539,14 +493,14 @@ def test_a_broken_state_file_degrades_like_any_other_source(tmp_path):
 def test_the_brief_refuses_a_naive_clock():
     """The 6pm cutoff is a local wall-clock time; a naive `now` is seven hours
     wrong on a UTC runner and silently drops an evening of Slack."""
-    with pytest.raises(BriefError, match="timezone"):
+    with pytest.raises(PushError, match="timezone"):
         assemble(now=datetime(2026, 9, 7, 6, 45), sources=FakeSources(), identities=IDENTITIES)
 
 
 def test_an_unresolved_identity_reference_is_refused():
     """`${SLACK_USER_PRINCIPAL}` as literal text is a query matching nothing,
     which is indistinguishable from a quiet night."""
-    with pytest.raises(BriefError):
+    with pytest.raises(PushError):
         assemble(now=NOW, sources=FakeSources(), identities={})
 
 
@@ -741,7 +695,7 @@ def test_a_naive_event_start_is_his_local_time_not_the_hosts():
     """
     from datetime import datetime as _dt
 
-    from daydag.brief import _local
+    from daydag.push import local as _local
 
     naive = _local(_dt(2026, 9, 7, 9, 0))
     assert naive is not None
@@ -749,7 +703,7 @@ def test_a_naive_event_start_is_his_local_time_not_the_hosts():
 
 
 def test_a_parenthesised_bare_url_does_not_capture_its_bracket():
-    from daydag.state import _BARE_URL
+    from daydag.statedoc import _BARE_URL
 
     found = _BARE_URL.search("see (https://example.com/x) for detail")
     assert found is not None
@@ -781,19 +735,20 @@ def test_a_nested_heading_does_not_end_the_red_section():
 
 def test_a_nested_heading_does_not_end_a_state_section():
     """State.md is hand-edited; a `### Snoozed` under `## Chase list` is normal."""
-    from daydag.state import read_section
+    from daydag.statedoc import StateDoc
 
     text = (
         "## Chase list\n- VP-Data · rehearsal\n"
         "### Snoozed\n- CTO · vpc move\n"
         "## Watch items\n- nightly\n"
     )
-    assert read_section(text, "Chase list") == ["VP-Data · rehearsal", "CTO · vpc move"]
+    blocks = StateDoc.parse(text).blocks_in("Chase list")
+    assert [b.body for b in blocks] == ["VP-Data · rehearsal", "CTO · vpc move"]
 
 
 def test_removing_a_bare_url_does_not_strand_its_bracket():
     """Excluding `)` from the URL kept it out of the link but left "(see )"."""
-    from daydag.state import split_link
+    from daydag.statedoc import split_link
 
     text, url = split_link("see (https://example.com/7) for detail")
     assert url == "https://example.com/7"
@@ -809,8 +764,8 @@ def test_a_calendar_record_without_attendees_is_refused_not_ignored():
     nothing and the section vanished with no error and no degrade line, while a
     missing `id` raised and was surfaced. The asymmetry was the bug.
     """
-    from daydag.brief import _seed_and_gaps
     from daydag.ledger import Ledger
+    from daydag.loops import _seed_and_gaps
 
     with pytest.raises(KeyError, match="attendees"):
         _seed_and_gaps(
@@ -829,7 +784,7 @@ def test_a_calendar_record_without_attendees_is_refused_not_ignored():
 def test_closed_red_items_is_the_mirror_of_red_items():
     """Same note, same heading-scoped legend rules - the opposite side of the
     checkbox. The wrap's "what closed today" (SPEC 3.5) reads this."""
-    from daydag.brief import closed_red_items
+    from daydag.push import closed_red_items
 
     assert [text for _, text in closed_red_items(NOTE_PRIORITIES)] == [
         "🔴 send the pod update *(mine)*",
@@ -843,7 +798,7 @@ def test_closed_red_items_is_the_mirror_of_red_items():
 
 def test_closed_red_items_respects_the_same_heading_scoping():
     """The heading-scoped `## 🔴 High` layout, mirrored for the ticked side."""
-    from daydag.brief import closed_red_items
+    from daydag.push import closed_red_items
 
     note = (
         "## 🔴 High — needs my hand this week\n"
@@ -856,19 +811,19 @@ def test_closed_red_items_respects_the_same_heading_scoping():
 
 
 def test_closed_red_items_skips_the_triage_legend_too():
-    from daydag.brief import closed_red_items
+    from daydag.push import closed_red_items
 
     assert closed_red_items("- [x] triage: 🔴 high, 🟡 medium, 🟢 low") == []
 
 
 def test_first_meeting_line_is_none_with_no_events():
-    from daydag.brief import first_meeting_line
+    from daydag.push import first_meeting_line
 
     assert first_meeting_line([]) is None
 
 
 def test_first_meeting_line_picks_the_earliest_by_instant_not_by_order():
-    from daydag.brief import first_meeting_line
+    from daydag.push import first_meeting_line
 
     events = [_event("b", "later thing", 15), _event("a", "pod steering", 9)]
     result = first_meeting_line(events)
@@ -881,7 +836,7 @@ def test_first_meeting_line_picks_the_earliest_by_instant_not_by_order():
 
 
 def test_first_meeting_line_admits_a_missing_link():
-    from daydag.brief import first_meeting_line, unsourced_claims
+    from daydag.push import first_meeting_line, unsourced_claims
 
     event = _event("a", "mystery hold", 9)
     del event["permalink"]
@@ -898,7 +853,7 @@ def _raise(exc):
 
 
 def test_read_vault_note_tells_apart_clean_missing_and_downed():
-    from daydag.brief import Reader, read_vault_note
+    from daydag.push import Reader, read_vault_note
 
     read = Reader()
     text, missing = read_vault_note(read, lambda: "hello", label="x")
@@ -914,7 +869,7 @@ def test_read_vault_note_tells_apart_clean_missing_and_downed():
 
 
 def test_render_push_omits_empty_sections_and_names_dead_sources():
-    from daydag.brief import Section, render_push
+    from daydag.push import Section, render_push
 
     text = render_push(
         "wrap: 1 closed, 0 moved",

@@ -20,9 +20,8 @@ from datetime import UTC, datetime
 
 import pytest
 
-from daydag import brief, run
-from daydag.config import Identities
-from daydag.state import StateFolder
+from daydag import push, run
+from daydag.statedoc import StateFolder
 
 MONDAY = datetime(2026, 9, 7, 6, 40, tzinfo=UTC)
 
@@ -34,18 +33,6 @@ MONDAY = datetime(2026, 9, 7, 6, 40, tzinfo=UTC)
 #: what these did, silently, while `_Payloads.calendar` served any window from
 #: one bucket and hid the mismatch.
 MONDAY_PT = datetime(2026, 9, 7, 13, 40, tzinfo=UTC)
-
-
-@pytest.fixture
-def identities(tmp_path):
-    env = tmp_path / ".env"
-    env.write_text(
-        f"SLACK_USER_PRINCIPAL=UPRINCIPAL1\nEMAIL_PRINCIPAL=principal@x.com\n"
-        f"VAULT_ROOT={tmp_path / 'vault'}\n",
-        encoding="utf-8",
-    )
-    (tmp_path / "vault" / "Weekly Notes").mkdir(parents=True)
-    return Identities.from_file(env)
 
 
 # --------------------------------------------------------------------------
@@ -186,7 +173,7 @@ def test_the_runner_fetches_nothing_itself():
 def test_a_json_timestamp_becomes_a_datetime_before_the_brief_sees_it(identities):
     """The seam this whole module is, and the one place it can go wrong quietly.
 
-    `brief._local` returns None unless the value is a `datetime` OBJECT. The
+    `push.local` returns None unless the value is a `datetime` OBJECT. The
     agent fetches over MCP and hands back JSON, where every instant is a
     string - so passing payloads through untouched made every meeting render
     "all day", with the right title and the wrong time, on every real run.
@@ -456,7 +443,7 @@ def test_an_unplaceable_event_is_still_offered_rather_than_dropped(identities):
 
 
 def test_a_note_that_was_never_written_says_so(identities):
-    """`brief.read_vault_note` splits three ways on exception type, and this
+    """`push.read_vault_note` splits three ways on exception type, and this
     layer could only ever produce two of them. The missing one is the state the
     vault is actually in: the note is hand-written and the series has had a gap
     for weeks, so every real run meets it."""
@@ -578,15 +565,15 @@ def test_ship_without_a_pulse_degrades_rather_than_raising(identities):
 
 
 def test_the_payload_adapter_serves_every_source_method(identities):
-    """`eod_wrap` reads next week's plan through `sources.vault_note`, which
-    the `Sources` protocol never declared - so this adapter never implemented
-    it, both reads raised, and the whole "friday - weekly-planning outcome"
-    section was dropped on every real run. BOTH test doubles have the method,
-    which is precisely why the suite stayed green: the fake was more capable
-    than the thing it stood in for.
+    """The wrap reads next week's plan through `sources.vault_note`, which the
+    `Sources` protocol never declared - so this adapter never implemented it,
+    both reads raised, and the whole "friday - weekly-planning outcome" section
+    was dropped on every real run. BOTH test doubles had the method, which is
+    precisely why the suite stayed green: the fake was more capable than the
+    thing it stood in for.
     """
-    for name in ("calendar", "slack", "gmail", "weekly_note", "vault_note"):
-        assert hasattr(brief.Sources, name), f"the protocol lost {name}"
+    for name in ("calendar", "slack", "gmail", "vault_note"):
+        assert hasattr(push.Sources, name), f"the protocol lost {name}"
         assert callable(getattr(run._Payloads(_payloads()), name, None)), (
             f"_Payloads does not implement {name}, so every read of it degrades"
         )
@@ -745,7 +732,7 @@ def test_a_shaped_attendee_does_not_break_the_ping_rules(identities):
 def test_a_named_prep_does_not_persist_the_week_it_fetched(identities, tmp_path):
     """A prep is a question, not a day's seeding. Remembering its seven fetched
     days made a meeting cancelled after the snapshot a permanent notes gap."""
-    from daydag.state import EventLog
+    from daydag.eventlog import EventLog
 
     log = tmp_path / "events.db"
     payloads = _payloads(
@@ -756,6 +743,26 @@ def test_a_named_prep_does_not_persist_the_week_it_fetched(identities, tmp_path)
     )
 
     assert EventLog.open(log).recorded("meeting") == [], "a named prep wrote future meetings"
+
+
+def test_a_remembered_meeting_keeps_its_kind(identities, tmp_path):
+    """Every Google Calendar record carries a `kind`, the loops read
+    `kind == "ooo"` off it, and the ledger reads it again on replay. Splatting
+    the record into `EventLog.record(kind, ...)` collided with that parameter
+    and raised on the first real morning with a log - the old memory tests
+    hand-rolled records with no `kind` and never met it."""
+    from daydag.eventlog import EventLog
+
+    log = tmp_path / "events.db"
+    meeting = {**_meeting("Pod Steering", "a@x.com", "b@x.com"), "kind": "calendar#event"}
+    payloads = _payloads(calendar=[meeting])
+
+    run.render("morning", now=MONDAY_PT, identities=identities, payloads=payloads, log=log)
+
+    (remembered,) = EventLog.open(log).recorded("meeting")
+    assert remembered["kind"] == "calendar#event", "the record is stored whole"
+    replayed = run._remembered(EventLog.open(log))
+    assert [row.summary for row in replayed.open_rows()] == ["Pod Steering"]
 
 
 def test_a_trailing_for_is_refused_not_silently_dropped(tmp_path, monkeypatch, capsys):
@@ -771,7 +778,7 @@ def test_a_trailing_for_is_refused_not_silently_dropped(tmp_path, monkeypatch, c
     monkeypatch.setattr("sys.stdin", __import__("io").StringIO('{"calendar":[],"slack":[]}'))
 
     assert run.main(["render", "prep", "--for"]) == 2
-    assert "--for needs" in capsys.readouterr().err
+    assert "--for" in capsys.readouterr().err, "the refusal names the flag"
 
 
 def test_a_blank_selector_is_one_line_on_stderr_not_a_traceback(identities):
@@ -794,7 +801,7 @@ def test_two_meetings_at_the_same_time_cluster_instead_of_crashing():
     sits outside `read()`, so the whole Sunday push died."""
     from datetime import UTC, datetime
 
-    from daydag.brief import overlap_clusters
+    from daydag.push import overlap_clusters
 
     at = datetime(2026, 9, 17, 18, 0, tzinfo=UTC)
     a = {"summary": "Finance x Data", "start": at, "end": at.replace(hour=19)}
@@ -810,7 +817,7 @@ def test_a_meeting_with_a_start_but_no_end_can_still_sit_inside_another():
     tentative invite with no end that begins inside a hold is a clash."""
     from datetime import UTC, datetime
 
-    from daydag.brief import overlap_clusters
+    from daydag.push import overlap_clusters
 
     hold = {
         "summary": "Hold",
@@ -868,8 +875,9 @@ def test_ingest_lines_are_bulleted_like_every_other_section(identities):
 
 def test_a_carried_chase_item_keeps_its_quote_and_permalink(identities, tmp_path):
     """House rule 1. Bare `owner: ask` dropped both, and was invisible to
-    `brief.unsourced_claims` for want of a bullet."""
-    from daydag.state import EventLog, StateFolder
+    `push.unsourced_claims` for want of a bullet."""
+    from daydag.eventlog import EventLog
+    from daydag.statedoc import StateFolder
 
     folder = StateFolder.create(tmp_path / "vault" / "DayDAG")
     folder.update_state(chase=[{"owner": "VP-Data", "ask": "the compute plan"}])
@@ -927,8 +935,8 @@ def test_a_room_never_reaches_the_stored_attendees(identities):
 
 
 def test_a_past_meeting_teaches_the_directory_and_a_future_one_does_not(identities, tmp_path):
+    from daydag.eventlog import EventLog
     from daydag.people import People
-    from daydag.state import EventLog
 
     log = tmp_path / "events.db"
     payloads = _payloads(
@@ -945,3 +953,98 @@ def test_a_past_meeting_teaches_the_directory_and_a_future_one_does_not(identiti
     assert directory.resolve("wren@x.com") is not None, "a past meeting taught nothing"
     assert directory.resolve("bo@x.com") is None, "a meeting not yet held was recorded as met"
     assert directory.resolve("principal@x.com") is None, "he was added to his own directory"
+
+
+# --------------------------------------------------------------------------
+# the table: each loop fetches what it reads (#109), and the two payload keys
+# that gained a shape (#111, #112)
+# --------------------------------------------------------------------------
+
+
+def test_each_loop_fetches_only_what_it_reads(identities):
+    """The wrap reads no Slack, the week-ahead reads neither Slack nor mail,
+    ingest reads mail alone, and a prep never opens the weekly note - so the
+    plan stops asking for them. A payload nobody opens is a connector
+    round-trip for nothing, the waste `loop_windows` already refuses for the
+    calendar (`loops.LOOPS` contract 2)."""
+
+    def fetched(loop, **kwargs):
+        built = run.plan(loop, now=MONDAY_PT, identities=identities, **kwargs)
+        return {step.source for step in built.steps}
+
+    assert fetched("morning") == {"calendar", "slack", "gmail", "vault"}
+    assert fetched("eod") == {"calendar", "gmail", "vault", "vault_notes"}
+    assert fetched("week-ahead") == {"calendar", "vault", "vault_notes"}
+    assert fetched("prep") == {"calendar", "slack", "gmail"}
+    assert fetched("prep", selector="wren") == {"calendar", "slack"}
+    assert fetched("ingest") == {"gmail"}
+
+
+def test_the_week_ahead_plan_names_next_weeks_note_and_a_missing_one_leads(identities):
+    """Before #112 the weekly-note read ignored its path and served THIS week's
+    note for next week's too, so the week-ahead could never report the plan
+    missing while this week's note existed. The plan now names next week's
+    note under `vault_notes`, and `null` there leads the push."""
+    sunday_evening = datetime(2026, 9, 21, 0, 30, tzinfo=UTC)  # Sunday 17:30 PT
+    built = run.plan("week-ahead", now=sunday_evening, identities=identities)
+    (step,) = [s for s in built.steps if s.source == "vault_notes"]
+    (next_note,) = step.detail["paths"]
+    assert next_note.endswith("0921-0925.md"), next_note
+
+    payloads = {"calendar": [], "vault": "# 0914-0918\n", "vault_notes": {next_note: None}}
+    text = run.render("week-ahead", now=sunday_evening, identities=identities, payloads=payloads)
+
+    assert "no week-ahead plan" in text, text
+    assert next_note in text, "the missing plan is cited by its own path"
+    assert "couldn't check" not in text, "a note nobody wrote is a fact, not a degrade"
+
+
+def test_the_vault_key_is_the_weekly_note_and_any_other_path_is_not_read():
+    """#112: one read, `vault_note(path)`. `vault` is shorthand for the weekly
+    note's own path; a path the plan never named is a degrade, never this
+    week's note served under another week's name."""
+    from datetime import date
+
+    from daydag.recipes import weekly_note
+
+    this_week, next_week = weekly_note(date(2026, 9, 7)), weekly_note(date(2026, 9, 14))
+    adapter = run._Payloads({"vault": "# note"}, weekly_path=this_week)
+
+    assert adapter.vault_note(this_week) == "# note"
+    with pytest.raises(run.RunError):
+        adapter.vault_note(next_week)
+    with pytest.raises(FileNotFoundError):
+        run._Payloads({"vault": None}, weekly_path=this_week).vault_note(this_week)
+
+
+def test_a_calendar_payload_keyed_by_day_serves_each_window_from_its_own_key(identities):
+    """#111: the plan emits one step per day, so the payload may be keyed the
+    same way. An unfetched window is empty because its key is absent, not
+    because a parser guessed; an untimed record lives under the day it was
+    fetched for instead of being served to every window."""
+    from datetime import date
+
+    from daydag.recipes import calendar_day
+
+    monday, tuesday = "2026-09-07", "2026-09-08"
+    timed = {
+        "id": "standup",
+        "summary": "pod standup",
+        "start": f"{monday}T09:00:00-07:00",
+        "end": f"{monday}T09:15:00-07:00",
+        "permalink": "https://example.com/cal/standup",
+    }
+    untimed = {"id": "hold", "summary": "focus block", "permalink": "https://example.com/cal/hold"}
+    adapter = run._Payloads({"calendar": {monday: [timed, untimed], tuesday: []}})
+
+    served = adapter.calendar(calendar_day(date(2026, 9, 7)))
+    assert [event["id"] for event in served] == ["standup", "hold"]
+    assert isinstance(served[0]["start"], datetime), "instants are still parsed"
+    assert adapter.calendar(calendar_day(date(2026, 9, 8))) == []
+    assert adapter.calendar(calendar_day(date(2026, 9, 9))) == [], "never fetched, so empty"
+    assert [e["id"] for e in run._seedable({"calendar": {monday: [timed, untimed]}})] == ["standup"]
+
+    payloads = {"calendar": {monday: [timed]}, "slack": [], "gmail": [], "vault": ""}
+    text = run.render("morning", now=MONDAY_PT, identities=identities, payloads=payloads)
+    assert "pod standup" in text
+    assert "couldn't check calendar" not in text

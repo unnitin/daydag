@@ -74,6 +74,17 @@ Then write a payloads file keyed by source:
 {"calendar": [...], "slack": [...], "gmail": [...], "vault": "the note text"}
 ```
 
+Two keys have a shape worth knowing:
+
+- `calendar` may be a flat list, or a map keyed by each calendar step's `day`:
+  `{"calendar": {"2026-09-18": [...], "2026-09-19": [...]}}`. Keyed is better.
+  A window the plan never fetched comes back empty because its key is absent,
+  and an untimed event stays under the day it was fetched for.
+- `vault` is shorthand for this week's note - the path the `vault` step names.
+  Every other note a plan asks for (the wrap's next-week plan and prep on a
+  Friday, the week-ahead's next-week plan) goes under `vault_notes`, keyed by
+  path, with `null` for a file that does not exist.
+
 **Fields that matter, because their absence fails quietly:**
 
 | source | must carry | what breaks without it |
@@ -180,7 +191,7 @@ but knowing which is which before you start saves a wasted round-trip.
 | Command | How |
 |---|---|
 | `prep <meeting or person>` | `python -m daydag.run plan prep --for "<name or title words>"`, then fetch, then `render prep --for ...`. Searches the next 7 days in his zone. When the name fits several meetings it ASKS - narrow with words from the title (`"ruwen / nitin"`), never pick one for him. Without `--for`, `prep` takes the next qualifying meeting |
-| `ship <repo>` | `render ship`, with a `Pulse` built from the mirrors. Without one it degrades to a line |
+| `ship <repo>` | `python -m daydag.run render ship --mirrors --log ~/.local/state/daydag/events.db < /dev/null` - `--mirrors` syncs the watchlist's repos and reads each on from its stored cursor; without it the loop degrades to a line. The same flag gives the morning, wrap and week-ahead their shipping section |
 | `sweep` | you, following SPEC §3.8 - a pending-items pass across Slack/Gmail/Notion/Obsidian, triaged, every item with a permalink. **Before any line is reported open, run `chase` first**: it reads the reply under every ask State.md already carries, and a sweep that re-lists those from their ask text repeats the 2026-09-18 miss |
 | `find <question>` | you - person-scoped Slack (`from:<@ID>`, `sort:timestamp asc`), then Gmail, then read the thread. Answer with quote + link, never from memory |
 | `draft <what>` | you, in the voice above. A draft, never a send |

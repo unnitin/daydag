@@ -27,9 +27,8 @@ WHY IT EXISTS
     The system knew almost nothing about people: two config values,
     `PREP_LEADERSHIP` and `ORG_EMAIL_DOMAIN`, both unset, so `has_leadership`
     and `has_external` always answered False and two of prep's four reasons
-    could never fire. Measured on real meetings - Luminate, YouTube, the label
-    summit - every outside-party meeting got no prep at all, which is exactly
-    where walking in cold costs most.
+    could never fire. Every outside-party meeting got no prep at all, which is
+    exactly where walking in cold costs most.
 
     The roster that did exist was PROSE in CLAUDE.md as `${SLACK_USER_*}`
     references. An agent reads that; no code does. It covered about fifteen
@@ -51,22 +50,21 @@ KNOWN LIMIT
     answered from the org domain - `ORG_EMAIL_DOMAIN`, or the principal's own
     address domain when that is unset.
 
-    WIRING. `run._prep` reads leadership from here and the loops that seed a
-    ledger observe the meetings that have already happened. `brief` and
-    `week_ahead` still build their Audience from `PREP_LEADERSHIP` in `.env`
-    until #119 lands, so that key is unioned in, not replaced.
+    WIRING. `loops.prep` reads leadership from here (`Audience.from_directory`)
+    and the loops that seed a ledger observe the meetings that have already
+    happened. `loops.week_ahead` still builds its Audience from `PREP_LEADERSHIP` in
+    `.env` until #119 lands, so that key is unioned in, not replaced.
 """
 
 from __future__ import annotations
 
-import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import date
 from typing import Any
 
-from daydag.ledger import attendee_parts, is_resource
-from daydag.state import EventLog
+from daydag.eventlog import EventLog
+from daydag.ledger import attendee_parts, is_resource, name_tokens, tokens
 
 __all__ = [
     "OBSERVED",
@@ -87,21 +85,6 @@ _TRUST = {OBSERVED: 1, PROFILE: 2, STATED: 3}
 
 #: The event kind every fact is appended under.
 FACT = "person_fact"
-
-_TOKENS = re.compile(r"[^a-z0-9]+")
-
-
-def _tokens(text: str) -> set[str]:
-    return {part for part in _TOKENS.split(str(text).casefold()) if part}
-
-
-def _name_tokens(handle: str) -> set[str]:
-    """Name tokens in an address or display name, domain discarded.
-
-    Same rule as `prep_selector._person_tokens`, and for the same reason: every
-    colleague shares the domain, so matching it matches everybody.
-    """
-    return _tokens(str(handle).split("@", 1)[0])
 
 
 @dataclass(frozen=True)
@@ -161,10 +144,10 @@ class People:
 
         If the address or slack id already belongs to someone under ANOTHER
         key - typically one `observe` minted from the address before he named
-        the role - that entry is folded into ``key`` first. Without this a
-        correction created a second person and `resolve(address)` kept
-        returning the observed stub with no dm, no title and no leadership:
-        the precedence contract bypassed entirely, verified by running it.
+        the role - that entry is folded into ``key`` first. Without the fold a
+        correction mints a second person and `resolve(address)` keeps returning
+        the observed stub, bypassing contract 1 entirely
+        (`test_a_correction_after_an_observation_lands_on_the_same_person`).
         """
         for handle in (email, slack_id):
             existing = self._by_address(handle) if handle else None
@@ -195,14 +178,13 @@ class People:
         job, so nothing here writes a title, and `OBSERVED` keeps whatever it
         does write below anything he states later.
 
-        Identity here is the EXACT address, never name tokens. A first version
-        resolved observations through the name fallback, so `wren@vendorco.com`
-        matched the VP's `{wren, alder}` and the vendor's address was appended to
-        her entry - the store that decides who to message pointed a stranger at
-        her DM.
+        Identity here is the EXACT address, never name tokens: resolving an
+        observation through the name fallback appends `wren@vendorco.com` to the
+        VP's entry, pointing a stranger at her DM in the store that decides who
+        to message (`test_a_strangers_address_never_folds_into_a_known_person`).
 
-        One marker per (person, event, DAY). `Row.event_id` is google's series
-        id, so keying on it alone counted a weekly 1:1 once and never again.
+        One marker per (person, event, DAY), because `Row.event_id` is google's
+        SERIES id - keying on it alone counts a weekly 1:1 once and never again.
         """
         event_id = str(getattr(row, "event_id", "") or "")
         start = getattr(row, "start", None)
@@ -242,11 +224,10 @@ class People:
     def resolve(self, handle: str) -> Person | None:
         """The person this key, address, id or name refers to, or None.
 
-        Key first - `people show vp-data` is the form every doc uses, and the
-        first version matched everything except the key and printed "not in
-        the directory" for it. Name tokens are tried only for a query that looks
-        like a name: an address never falls through to them, because
-        `wren@vendorco.com` must not resolve to Wren Alder.
+        Key first - `people show vp-data` is the form every doc uses. Name
+        tokens are tried only for a query that looks like a name: an address
+        never falls through to them, because `wren@vendorco.com` must not
+        resolve to Wren Alder.
         """
         handle = str(handle).strip()
         if handle in self._by_key:
@@ -278,15 +259,15 @@ class People:
 
     def _by_name(self, handle: str) -> Person | None:
         """Every token of the query present in someone's name - for humans typing."""
-        wanted = _name_tokens(handle)
+        wanted = name_tokens(handle)
         if not wanted:
             return None
         for person in self._by_key.values():
             known = set()
             for address in person.emails:
-                known |= _name_tokens(address)
+                known |= name_tokens(address)
             if person.display_name:
-                known |= _tokens(person.display_name)
+                known |= tokens(person.display_name)
             if wanted <= known:
                 return person
         return None
@@ -372,94 +353,16 @@ def _fold(target: Person, other: Person) -> Person:
 
 def _slug(address: str) -> str:
     """A stable key for someone nobody has named yet."""
-    return "-".join(sorted(_name_tokens(address))) or address.casefold()
+    return "-".join(sorted(name_tokens(address))) or address.casefold()
 
 
 def main(argv: list[str] | None = None) -> int:
-    """`add` / `set` write a stated fact; `show` and `list` read.
-
-    Hand entry is a first-class path, not a convenience. Most of what this
-    store holds will be learned from meetings at `OBSERVED`, and the only way
-    that stays trustworthy is if a correction is easy enough to actually make -
-    it lands at `STATED` and outranks anything a later run infers.
-    """
+    """``python -m daydag.people ...`` - the one CLI (`daydag.cli`), entered here."""
     import sys
 
-    args = list(sys.argv[1:] if argv is None else argv)
-    usage = (
-        "usage: python -m daydag.people {add|set|show|list} [key] --log PATH\n"
-        "       [--email A] [--slack-id U] [--name N] [--title T]\n"
-        "       [--dm D] [--group C] [--leadership]"
-    )
-    if not args or args[0] not in {"add", "set", "show", "list"} or "--log" not in args:
-        print(usage)
-        return 2
+    from daydag.cli import main as cli_main
 
-    def opt(name: str) -> str | None:
-        """The value after ``name``, or None if the flag is absent.
-
-        A flag that is present but has NO value - last on the line, or followed
-        by another flag - is refused loudly. `--log` at the end used to return
-        None, which `str()` turned into a sqlite file literally named "None" in
-        whatever directory was current, holding real addresses and ids.
-        """
-        if name not in args:
-            return None
-        after = args[args.index(name) + 1 :]
-        if not after or after[0].startswith("--"):
-            raise SystemExit(f"{name} needs a value")
-        return after[0]
-
-    directory = People(EventLog.open(str(opt("--log"))))
-    command = args[0]
-
-    if command == "list":
-        for person in sorted(directory.all(), key=lambda p: p.key):
-            met = f"met {person.met}x" if person.met else "not met yet"
-            print(
-                f"  {person.key:22} {person.primary_email or '-':34} {person.title or '-':28} {met}"
-            )
-        return 0
-
-    if command == "show":
-        person = directory.resolve(args[1]) if len(args) > 1 else None
-        if person is None:
-            print(f"not in the directory: {args[1] if len(args) > 1 else ''}")
-            return 1
-        for name in (
-            "key",
-            "emails",
-            "slack_id",
-            "display_name",
-            "title",
-            "dm",
-            "groups",
-            "leadership",
-            "met",
-            "first_met",
-            "last_met",
-        ):
-            print(f"  {name:14} {getattr(person, name)}")
-        print(f"  {'sources':14} {dict(person.sources)}")
-        return 0
-
-    if len(args) < 2 or args[1].startswith("--"):
-        print(usage)
-        return 2
-    groups = [args[i + 1] for i, a in enumerate(args) if a == "--group" and i + 1 < len(args)]
-    directory.remember(
-        args[1],
-        source=STATED,
-        email=opt("--email"),
-        slack_id=opt("--slack-id"),
-        display_name=opt("--name"),
-        title=opt("--title"),
-        dm=opt("--dm"),
-        groups=groups,
-        leadership=True if "--leadership" in args else None,
-    )
-    print(f"  remembered {args[1]}")
-    return 0
+    return cli_main(["people", *(sys.argv[1:] if argv is None else argv)])
 
 
 if __name__ == "__main__":  # pragma: no cover

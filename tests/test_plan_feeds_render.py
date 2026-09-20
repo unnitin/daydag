@@ -21,7 +21,6 @@ from datetime import UTC, datetime
 import pytest
 
 from daydag import run
-from daydag.config import Identities
 
 #: Friday, so `eod` emits its next-week `vault_notes` step as well as `vault` -
 #: the two keys whose disagreement is #131.
@@ -36,18 +35,6 @@ WEEKLY_NOTE = """# 0914-0918
 - [x] 🔴 land the ingestion backfill
 - [ ] 🔴 compute consolidation plan
 """
-
-
-@pytest.fixture
-def identities(tmp_path):
-    env = tmp_path / ".env"
-    env.write_text(
-        f"SLACK_USER_PRINCIPAL=UPRINCIPAL1\nEMAIL_PRINCIPAL=principal@x.com\n"
-        f"VAULT_ROOT={tmp_path / 'vault'}\n",
-        encoding="utf-8",
-    )
-    (tmp_path / "vault" / "Weekly Notes").mkdir(parents=True)
-    return Identities.from_file(env)
 
 
 def payloads_for(plan: run.Plan) -> dict:

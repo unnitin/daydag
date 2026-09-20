@@ -1,6 +1,6 @@
 """SPEC §3.3's classifier, measured against issue #14's eval set (issue #15).
 
-`daydag.evalset.score()` is the only scorer used here - reimplementing it would
+`tests/evalset.py`'s `score()` is the only scorer used here - reimplementing it would
 be exactly the kind of redefined logic this repo's reviews keep rejecting. The
 bar itself lives in `reference/ingestion-eval.md` and is repeated at the top of
 the precision-and-recall section below so a reviewer can compare the two
@@ -24,7 +24,6 @@ from pathlib import Path
 
 import pytest
 
-from daydag.evalset import LABELS, load_items, score
 from daydag.ingestion import (
     CREATION_LANGUAGE,
     Classification,
@@ -33,6 +32,7 @@ from daydag.ingestion import (
     classify_items,
     unplaced,
 )
+from evalset import LABELS, load_items, score
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 INGESTION_MODULE = REPO_ROOT / "src" / "daydag" / "ingestion.py"
@@ -428,7 +428,7 @@ def test_ingestion_writes_nothing_to_the_vault(tmp_path, monkeypatch):
 
 @pytest.mark.guardrail
 def test_ingestion_module_imports_no_vault_or_state_write_surface():
-    """TRIPWIRE. `daydag.vault` and `daydag.state` are where a write to the
+    """TRIPWIRE. `daydag.vault`, `daydag.statedoc` and `daydag.eventlog` are where a write to the
     vault or the event log would come from. Neither is imported here, and this
     fails loudly the day one is - the fix is to move the write into #16, not to
     import it here."""
@@ -439,7 +439,7 @@ def test_ingestion_module_imports_no_vault_or_state_write_surface():
             imported.update(alias.name for alias in node.names)
         elif isinstance(node, ast.ImportFrom) and node.module:
             imported.add(node.module)
-    banned = {"daydag.vault", "daydag.state"}
+    banned = {"daydag.vault", "daydag.statedoc", "daydag.eventlog"}
     hit = imported & banned
     assert not hit, f"ingestion.py imports a write surface: {hit}"
 

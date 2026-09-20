@@ -36,7 +36,7 @@ COVERED (behavioural - real code, real assertions)
       of the report still ships
     - a connector that raises, or answers with an overflow, degrades to a named
       "couldn't check X" line and the pre-flight run still returns a report
-      (in `tests/test_smoke_run.py`, which carries its own guardrail marks)
+      (in `tests/test_observe.py`, which carries its own guardrail marks)
     - a stale mirror contributes no items, is reported as stale, and carries the
       time of the last fetch that actually worked
     - untrusted Slack text is parsed for ticket keys only, never echoed or acted on
@@ -62,11 +62,11 @@ TRIPWIRES (no implementation exists - these fail when one lands unguarded)
       package can reach a connector on its own
 
 GAPS - not covered here, and not pretended to be
-    1. `DecisionQueue.answer_for` reads an answer only as a whole word at one
-       end of the line (tested below). A hand edit may land at either end, so a
-       decision whose text *begins or ends* with a bare "yes"/"no" still
-       self-answers. Removing that last case means fixing where an answer is
-       allowed to be written, which is a decision rather than a patch.
+    1. Decided by D-5 (#62) and no longer a gap: an answer is the `status:`
+       field on the decision's own line, `StateFolder.add_decision` only
+       appends, and nothing parses an answer - so a decision cannot
+       self-answer. The append is tested below; reading the status is
+       `closure`'s and is tested there.
     2. Guardrail 4 (discrepancies surfaced, never auto-resolved) is covered for
        the ledger's ambiguous-note case in `tests/test_ledger.py`; there is no
        general discrepancy surface to test yet.
@@ -78,13 +78,14 @@ GAPS - not covered here, and not pretended to be
 
     #63's `chase`/`update_state` shape disagreement was never a numbered gap
     here at all: it surfaced as a runtime warning rather than an unguarded
-    invariant. `tests/test_state_store.py` carries its coverage.
+    invariant. `tests/test_statedoc.py` carries its coverage.
 """
 
 from __future__ import annotations
 
 import ast
 import inspect
+import os
 import re
 import subprocess
 from datetime import UTC, datetime
@@ -93,9 +94,10 @@ from pathlib import Path
 import pytest
 
 from daydag import delivery
+from daydag.eventlog import EventLog
 from daydag.pulse import Item, Mirror, Pulse
 from daydag.registry import PRIVATE_SURFACES, Registry, RegistryError
-from daydag.state import DecisionQueue, EventLog, NotesGap, StateFolder
+from daydag.statedoc import NotesGap, StateFolder
 from daydag.voice import Push
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -203,11 +205,6 @@ def _self_check_scanner() -> None:
     """The scanner must be able to find something, or every tripwire is vacuous."""
     known_good = _scan({"known-good": r"^merges_since_cursor$"})
     assert known_good, "the AST scanner found nothing - every tripwire below is vacuous"
-
-
-@pytest.fixture
-def folder(tmp_path: Path) -> StateFolder:
-    return StateFolder.create(tmp_path / "vault" / "DayDAG")
 
 
 # --------------------------------------------------------------------------
@@ -393,15 +390,14 @@ def test_decisions_grow_by_append_only(folder: StateFolder):
     Byte-prefix equality, not "the old line is still in there": a regenerated
     file can contain the same text and still have dropped a hand edit.
     """
-    queue = DecisionQueue(folder)
-    queue.add("draft nudge to the VP?")
+    folder.add_decision("draft nudge to the VP? · status: open")
     folder.decisions_path.write_text(
         folder.decisions_path.read_text(encoding="utf-8") + "  <- answered in the margin: no\n",
         encoding="utf-8",
     )
     before = folder.decisions_path.read_bytes()
 
-    queue.add("close the compute loop?")
+    folder.add_decision("close the compute loop? · status: open")
 
     after = folder.decisions_path.read_bytes()
     assert after.startswith(before), "Decisions.md was rewritten rather than appended to"
@@ -416,7 +412,7 @@ def test_a_loop_rewrites_no_vault_file_but_state_md_and_only_with_its_old_text_k
 
     `update_state` re-writes State.md in place because it renders the whole
     parsed document back - but what it renders is the old text plus whatever
-    was appended (#130), which the tests in `test_state_append.py` pin. Two
+    was appended (#130), which the tests in `test_statedoc.py` pin. Two
     things are checked here that those cannot see: that Decisions and Watchlist
     are never touched by the same call, and that the previous text is archived
     first. This watches the filesystem calls rather than the resulting text,
@@ -426,6 +422,7 @@ def test_a_loop_rewrites_no_vault_file_but_state_md_and_only_with_its_old_text_k
     truncated: list[Path] = []
     real_write_text = Path.write_text
     real_open = Path.open
+    real_replace = os.replace
 
     def spy_write_text(self: Path, *args, **kwargs):
         truncated.append(Path(self))
@@ -436,13 +433,18 @@ def test_a_loop_rewrites_no_vault_file_but_state_md_and_only_with_its_old_text_k
             truncated.append(Path(self))
         return real_open(self, mode, *args, **kwargs)
 
+    def spy_replace(src, dst, *args, **kwargs):
+        # The atomic writer never opens the destination: it writes a temp file
+        # and renames it over the target. The rename IS the overwrite.
+        truncated.append(Path(dst))
+        return real_replace(src, dst, *args, **kwargs)
+
     folder = StateFolder.create(tmp_path / "DayDAG")
     monkeypatch.setattr(Path, "write_text", spy_write_text)
     monkeypatch.setattr(Path, "open", spy_open)
+    monkeypatch.setattr(os, "replace", spy_replace)
 
-    queue = DecisionQueue(folder)
-    queue.add("draft nudge to the VP?")
-    queue.render()
+    folder.add_decision("draft nudge to the VP? · status: open")
     folder.update_state(
         chase=[{"owner": "vp-data", "ask": "compute consolidation"}],
         watch=[{"what": "nightly ingest job"}],
@@ -471,7 +473,7 @@ def test_the_vault_write_path_joins_only_literal_names(tmp_path: Path):
     variable is how a caller-supplied name (a meeting title, a repo name, a
     string from a DM) becomes `../../Weekly Notes/...`, which issue #23 forbids.
     """
-    source = PACKAGE / "state.py"
+    source = PACKAGE / "statedoc.py"
     tree = ast.parse(source.read_text(encoding="utf-8"))
     dynamic = [
         node.lineno
@@ -483,7 +485,7 @@ def test_the_vault_write_path_joins_only_literal_names(tmp_path: Path):
         and not (isinstance(node.right, ast.Constant) and isinstance(node.right.value, str))
     ]
     assert not dynamic, (
-        f"state.py:{dynamic} joins a non-literal onto the vault root. A "
+        f"statedoc.py:{dynamic} joins a non-literal onto the vault root. A "
         "caller-supplied name must be validated against a fixed set of file "
         "names before it can address anything under the vault."
     )
@@ -571,48 +573,6 @@ def test_repo_evidence_may_only_add_a_flag_never_close_a_loop(pr_state: str, sta
     assert all(updated[key] == value for key, value in loop.items())
 
 
-@pytest.mark.guardrail
-@pytest.mark.parametrize(
-    "text",
-    [
-        "should we not consolidate compute?",
-        "do it now?",
-        "nothing has moved on the ingest job - chase it?",
-        "draft a note to the parked workstream owners?",
-        "does the yesterday backfill need re-running?",
-    ],
-)
-def test_a_decision_never_answers_itself(folder: StateFolder, text: str):
-    """BEHAVIOURAL. The same rule as loops: nothing closes without real evidence.
-
-    A decision read as answered is dropped from the next push, so the principal
-    never sees it and the agent records an answer nobody wrote. Substring
-    matching made "not", "now" and "nothing" all read as a "no", and "parked"
-    mid-sentence read as an answer - the words most likely to appear in a
-    question about whether to do something.
-    """
-    queue = DecisionQueue(folder)
-    item = queue.add(text)
-
-    assert queue.answer_for(item) is None, f"{text!r} answered itself"
-    assert queue.status(item) == "open"
-    assert text in queue.render(), "an unanswered decision was dropped from the push"
-
-
-@pytest.mark.guardrail
-@pytest.mark.parametrize("answer", ["yes", "no", "parked", "snooze"])
-def test_a_real_answer_is_still_read(folder: StateFolder, answer: str):
-    """BEHAVIOURAL. The guard above must not deafen the queue to a hand edit."""
-    queue = DecisionQueue(folder)
-    item = queue.add("draft nudge to the VP?")
-    folder.decisions_path.write_text(
-        folder.decisions_path.read_text(encoding="utf-8").rstrip("\n") + f" {answer}\n",
-        encoding="utf-8",
-    )
-    assert queue.answer_for(item) == answer
-    assert queue.status(item) == "answered"
-
-
 # Write-SHAPED constructs only. The bare nouns `^assignee$` and `^comment$` were
 # here first and fired on `JIRA_FIELDS = (..., "assignee", ...)` - a field list
 # for a READ query - and on "comment" in a set of GitHub PR activity verbs.
@@ -640,14 +600,10 @@ def test_no_jira_write_path_exists_unguarded():
     """TRIPWIRE, still - now alongside a behavioural check rather than instead
     of one. Nobody else's ticket is transitioned or commented on.
 
-    This was vacuous when it was written: there was no Jira client in the
-    package at all. `board.py` (#12) is now the package's first Jira reader,
-    so "there is nothing to drive" stopped being true - but "nothing here
-    drives it" still is, and that is what stays asserted here across the
-    *whole* package rather than just the one module most likely to grow a
-    write. `tests/test_board.py` carries the same check scoped to that module
-    (`test_the_module_exposes_no_way_to_drive_the_board`), parsing its source
-    directly rather than trusting this one to have caught everything.
+    Asserted across the whole package rather than one module. The Jira
+    reader (`board.py`, #12) is retired at tag `pre-simplification` until
+    M4-7 wires it; `recipes.jira_search` keeps the bounded read, and this
+    tripwire keeps firing the day a write-shaped name appears anywhere.
 
     The token is the strongest layer: `read:jira-work` plus Confluence read
     and no write scope at all, so a transition is refused one level below any

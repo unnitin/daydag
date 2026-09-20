@@ -34,7 +34,7 @@ Three specifics worth not re-deriving:
 1. **`observe_pr` takes exactly three fields** - `title`, `number`, `state`
    (`pulse.py`). That is the entire API surface DayDAG consumes. Everything
    richer in the docstring is aspiration, not a call site.
-2. **Projects v2 is deliberately flagged, not read** (`board.py`: *"GitHub
+2. **Projects v2 is deliberately flagged, not read** (the retired `board.py`, at tag `pre-simplification`: *"GitHub
    Projects v2 is flagged, not read - the v2 API returns an empty page rather
    than an error, which is why a watched org project renders as one [note]"*).
    So the `project` / `read:project` scope buys nothing.

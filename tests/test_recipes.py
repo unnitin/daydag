@@ -1,4 +1,5 @@
-"""Source recipes: SPEC section 4's prose as literal, testable queries (issue #7).
+"""Source recipes: SPEC section 4's prose as literal, testable queries (issue #7),
+and the payload readers that read what those queries return.
 
 Every loop needs the same handful of queries, and re-deriving them per loop is
 how two loops end up asking slightly different questions of the same source.
@@ -8,24 +9,36 @@ whole point: the thing that must be right is checkable offline.
 
 Three of the shapes here contradict what SPEC section 4 originally said, and the
 issue #2 connector audit is why. Each such test names the measurement.
+
+The payload readers at the end were private helpers inside `smoke` until review
+asked why they lived there. Tested here on their own, away from any one source,
+because that is the actual argument for moving them: a boundary reader that
+only ever runs through one caller's checks is only ever tested through that
+caller's vocabulary, and the next edge to need one writes its own copy rather
+than trusting an untested private.
 """
 
 import itertools
 from datetime import UTC, date, datetime
-from zoneinfo import ZoneInfo
 
 import pytest
 
 from daydag import recipes
 from daydag.config import DEFAULT_TIMEZONE, ConfigError, Identities, timezone_for
 from daydag.ledger import title_from_gemini_subject
-from daydag.pulse import WatchedRepo
-from daydag.recipes import RecipeError
-
-PT = ZoneInfo("America/Los_Angeles")
+from daydag.recipes import (
+    RecipeError,
+    error_text,
+    first_value,
+    flatten,
+    has,
+    has_all,
+    measure,
+    records,
+)
+from support import PRINCIPAL, PT
 
 # Synthetic ids. Real ones live in .env - this repo is public (CONTRIBUTING).
-PRINCIPAL = "UPRINCIPAL1"
 PEER = "UPEER00001"
 CHANNEL = "CPODCHANNEL"
 
@@ -290,37 +303,6 @@ def test_meeting_prep_uses_the_same_plain_date_name():
     assert recipes.meeting_prep(date(2026, 9, 8)) == "Create Music Group/Meeting Prep/0907-0911.md"
 
 
-def test_workstreams_looks_in_daydag_before_fact_base():
-    """Custody transfers to DayDAG at the cut (#37); both paths are live states."""
-    assert recipes.workstreams_paths() == (
-        "Create Music Group/DayDAG/Workstreams.md",
-        "Create Music Group/Fact Base/Workstreams.md",
-    )
-
-
-def test_local_path_adds_the_prefix_when_the_configured_root_stops_short():
-    path = recipes.vault_path({"VAULT_ROOT": "/vault/Documents"}, "Fact Base", "Workstreams.md")
-    assert str(path) == "/vault/Documents/Create Music Group/Fact Base/Workstreams.md"
-
-
-def test_local_path_does_not_double_a_root_that_already_ends_in_the_prefix():
-    root = "/vault/Documents/Create Music Group"
-    path = recipes.vault_path({"VAULT_ROOT": root}, "Fact Base", "Workstreams.md")
-    assert str(path) == f"{root}/Fact Base/Workstreams.md"
-
-
-@pytest.mark.guardrail
-@pytest.mark.parametrize("root", ["", "   ", "$VAULT_HOME/notes", "${NOPE}/notes"])
-def test_an_unusable_vault_root_raises_rather_than_writing_somewhere_odd(root):
-    with pytest.raises(RecipeError):
-        recipes.vault_path({"VAULT_ROOT": root}, "DayDAG", "State.md")
-
-
-def test_a_missing_vault_root_names_the_key():
-    with pytest.raises(RecipeError, match="VAULT_ROOT"):
-        recipes.vault_path({}, "DayDAG", "State.md")
-
-
 # ---------------------------------------------------------------------------
 # jira - bounded, because an unbounded one has already blown the limit
 # ---------------------------------------------------------------------------
@@ -399,48 +381,12 @@ def test_a_status_cannot_carry_a_quote_out_of_its_operator():
         recipes.jira_jql(["CING"], statuses=['done" OR key != "'])
 
 
-# ---------------------------------------------------------------------------
-# github - argv, read-only, and never assuming the default branch
-# ---------------------------------------------------------------------------
-
-
-def _gh_recipes():
-    repo = WatchedRepo("CreateMusicGroup", "createos-discovery-services")
-    return [
-        recipes.gh_open_prs(repo),
-        recipes.gh_pr_checks(repo, 412),
-        recipes.gh_default_branch(repo),
-        recipes.gh_recent_runs(repo, branch="develop"),
-        recipes.gh_recent_runs(repo),
-    ]
-
-
-@pytest.mark.guardrail
-def test_every_github_recipe_is_argv_never_a_shell_string():
-    """A shell string built from a hand-edited watchlist is a command injection.
-
-    argv with shell=False cannot be broken out of, which is the same reason
-    `pulse._run_git` takes a list.
-    """
-    for argv in _gh_recipes():
-        assert isinstance(argv, list)
-        assert all(isinstance(token, str) for token in argv)
-        assert argv[0] == "gh"
-
-
-@pytest.mark.guardrail
-def test_no_github_recipe_carries_a_write_verb():
-    """Guardrail 1: read all, write nothing. GitHub is a read source (SPEC 4)."""
-    for argv in _gh_recipes():
-        assert not (set(argv) & recipes.GH_WRITE_VERBS), argv
-
-
 @pytest.mark.guardrail
 def test_the_module_exposes_no_send_or_write_surface():
     """A tripwire, not coverage: there is no send path here and must not be.
 
-    Guardrail 1 - autonomous sends reach Nitin's DM only, and nothing in a
-    query-building module has any business constructing one.
+    Guardrail 1 - autonomous sends reach the principal's DM only, and nothing
+    in a query-building module has any business constructing one.
     """
     exported = [
         name
@@ -449,49 +395,6 @@ def test_the_module_exposes_no_send_or_write_surface():
     ]
     forbidden = ("send", "post", "reply", "draft", "transition", "assign", "delete")
     assert [n for n in exported if any(word in n.lower() for word in forbidden)] == []
-
-
-def test_open_prs_asks_for_explicit_fields_and_a_bounded_limit():
-    argv = recipes.gh_open_prs(WatchedRepo("org", "repo"))
-    assert "--json" in argv
-    fields = argv[argv.index("--json") + 1].split(",")
-    assert {"number", "title", "url", "reviewDecision", "statusCheckRollup"} <= set(fields)
-    assert int(argv[argv.index("--limit") + 1]) <= recipes.GH_LIMIT_CAP
-
-
-@pytest.mark.guardrail
-def test_the_default_branch_is_resolved_never_assumed():
-    """`createos-dsp-ingestion` defaults to `develop`, not `main`.
-
-    A branch-health check hardcoding `main` reports nothing for it and looks
-    green - guardrail 3's "if it cannot source it, it says so" inverted.
-    """
-    assert "main" not in recipes.gh_recent_runs(WatchedRepo("org", "repo"))
-    assert "--branch" not in recipes.gh_recent_runs(WatchedRepo("org", "repo"))
-    assert "defaultBranchRef" in recipes.gh_default_branch(WatchedRepo("org", "repo"))
-
-
-def test_a_slug_string_works_as_well_as_a_watched_repo():
-    assert recipes.gh_open_prs(WatchedRepo("org", "repo")) == recipes.gh_open_prs("org/repo")
-
-
-@pytest.mark.parametrize("bad", ["not a slug", "org/repo/extra", "org", "", "-org/repo"])
-def test_a_bad_slug_is_refused(bad):
-    with pytest.raises(RecipeError):
-        recipes.gh_open_prs(bad)
-
-
-@pytest.mark.guardrail
-@pytest.mark.parametrize("bad", ["--json", "-x", "a b", "a;rm -rf /"])
-def test_a_branch_name_cannot_smuggle_a_flag_or_a_second_argument(bad):
-    with pytest.raises(RecipeError):
-        recipes.gh_recent_runs("org/repo", branch=bad)
-
-
-@pytest.mark.parametrize("bad", [0, -1, "412; rm -rf /"])
-def test_a_pr_number_must_be_a_positive_integer(bad):
-    with pytest.raises(RecipeError):
-        recipes.gh_pr_checks("org/repo", bad)
 
 
 # --- regressions found by the prep-pings agent reviewing this module ---------
@@ -529,3 +432,106 @@ def test_an_unknown_timezone_is_refused_rather_than_silently_ignored():
     """A typo must not present as correct-looking wrong times."""
     with pytest.raises(ConfigError, match="not a known IANA zone"):
         timezone_for({"TIMEZONE": "Not/AZone"})
+
+
+# --------------------------------------------------------------------------
+# records: None and [] are different answers
+# --------------------------------------------------------------------------
+
+
+def test_a_bare_list_is_already_the_records():
+    assert records([{"id": 1}]) == [{"id": 1}]
+
+
+def test_the_first_known_key_holding_a_list_wins():
+    assert records({"events": [1, 2], "data": [3]}) == [1, 2]
+
+
+def test_a_payload_with_no_record_list_is_none_not_empty():
+    """The distinction the caller branches on, so it has to survive here."""
+    assert records({"status": "ok"}) is None
+    assert records("a string") is None
+    assert records(None) is None
+
+
+def test_an_empty_list_stays_an_empty_list():
+    assert records({"items": []}) == []
+
+
+def test_a_known_key_holding_something_that_is_not_a_list_is_skipped():
+    """`{"data": {...}}` is not a page of records, and reading it as one is how
+    a single object gets counted as a result set."""
+    assert records({"data": {"id": 1}}) is None
+
+
+# --------------------------------------------------------------------------
+# error_text: the shape clients actually use
+# --------------------------------------------------------------------------
+
+
+def test_a_nested_error_object_is_flattened_not_missed():
+    assert "401" in error_text({"error": {"code": 401, "message": "denied"}})
+
+
+def test_a_list_of_error_messages_is_joined():
+    assert error_text({"errorMessages": ["bad jql", "no project"]}) == "bad jql no project"
+
+
+def test_a_payload_carrying_no_error_says_so_with_an_empty_string():
+    assert error_text({"items": []}) == ""
+    assert error_text("not a mapping") == ""
+
+
+def test_a_falsy_error_field_is_not_an_error():
+    """`{"errors": []}` is a successful call that reported no errors."""
+    assert error_text({"errors": []}) == ""
+    assert error_text({"error": None}) == ""
+
+
+def test_message_alone_is_not_an_error():
+    """Deliberate: a `message` key is ordinary in a successful payload."""
+    assert error_text({"message": "created"}) == ""
+
+
+# --------------------------------------------------------------------------
+# has / has_all: the distinction that let metadata-only results through
+# --------------------------------------------------------------------------
+
+
+def test_has_is_any_and_has_all_is_every():
+    record = {"id": "1", "subject": ""}
+    assert has(record, "id", "subject")
+    assert not has_all(record, "id", "subject")
+
+
+def test_neither_accepts_something_that_is_not_a_record():
+    assert not has("string", "id")
+    assert not has_all(None, "id")
+
+
+def test_an_empty_value_does_not_count_as_carried():
+    assert not has({"id": ""}, "id")
+
+
+# --------------------------------------------------------------------------
+# flatten, measure, first_value
+# --------------------------------------------------------------------------
+
+
+def test_flatten_reaches_every_leaf():
+    assert flatten({"a": [1, {"b": 2}], "c": "x"}) == ["1", "2", "x"]
+
+
+def test_measure_reads_a_string_as_itself_not_as_its_repr():
+    """`repr` on a string adds quotes and escapes, which is not the size that
+    came back over the wire."""
+    assert measure("x" * 10) == 10
+    assert measure({"a": 1}) == len(repr({"a": 1}))
+
+
+def test_first_value_handles_every_row_shape_a_driver_returns():
+    assert first_value({"1": 1}) == 1
+    assert first_value([7, 8]) == 7
+    assert first_value(5) == 5
+    assert first_value({}) is None
+    assert first_value([]) is None
