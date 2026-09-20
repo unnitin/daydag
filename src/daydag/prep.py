@@ -215,8 +215,8 @@ class Audience:
         UNIONED with the `PREP_LEADERSHIP` CSV, not either/or. Falling back to
         the CSV only while the store was empty meant the first name added to
         the store silently dropped every configured leader - the CEO in `.env`
-        stopped qualifying the moment the CTO was entered. And `brief` /
-        `week_ahead` still read the CSV (#119), so it has to keep working.
+        stopped qualifying the moment the CTO was entered. And the week-ahead
+        still reads the CSV (#119), so it has to keep working.
 
         Internal domains: `ORG_EMAIL_DOMAIN`, or - when that is unset - the
         domain of `EMAIL_PRINCIPAL`. He works for the org; his address is its

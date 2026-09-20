@@ -50,9 +50,9 @@ KNOWN LIMIT
     answered from the org domain - `ORG_EMAIL_DOMAIN`, or the principal's own
     address domain when that is unset.
 
-    WIRING. `run._prep` reads leadership from here (`Audience.from_directory`)
+    WIRING. `loops.prep` reads leadership from here (`Audience.from_directory`)
     and the loops that seed a ledger observe the meetings that have already
-    happened. `week_ahead` still builds its Audience from `PREP_LEADERSHIP` in
+    happened. `loops.week_ahead` still builds its Audience from `PREP_LEADERSHIP` in
     `.env` until #119 lands, so that key is unioned in, not replaced.
 """
 

@@ -35,8 +35,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from daydag import brief as brief_module
-from daydag import push
+from daydag import loops, push
 from daydag.eventlog import EventLog
 from daydag.ledger import Ledger, Match
 from daydag.pulse import Mirror, Pulse
@@ -78,7 +77,7 @@ class Connectors:
         self.windows.append(window)
         return list(self._events)
 
-    def weekly_note(self, path):
+    def vault_note(self, path):
         if self._note is None:
             raise FileNotFoundError(path)
         return self._note
@@ -238,7 +237,7 @@ def test_a_whole_morning_arrives_as_one_assembled_brief(tmp_path, landings, git_
     connectors = Connectors(
         events=[_calendar_event("1on1", "VP-Data 1:1", TUESDAY_BRIEF + timedelta(hours=3))]
     )
-    assembled = brief_module.assemble(
+    assembled = loops.morning(
         now=TUESDAY_BRIEF,
         sources=connectors,
         identities=IDENTITIES,
@@ -286,7 +285,7 @@ def test_a_quiet_morning_assembles_a_brief_with_no_shipping_block(landings, git_
     assert pulse.items() == []
     assert pulse.render().strip() == "", "a quiet day must render nothing at all"
 
-    text = brief_module.assemble(
+    text = loops.morning(
         now=TUESDAY_BRIEF,
         sources=Connectors(
             events=[_calendar_event("1on1", "VP-Data 1:1", TUESDAY_BRIEF + timedelta(hours=3))]
@@ -319,7 +318,7 @@ def test_a_dead_connector_and_a_dead_mirror_both_degrade_into_the_same_brief(
         def slack(self, query):
             raise RuntimeError("slack timed out")
 
-    assembled = brief_module.assemble(
+    assembled = loops.morning(
         now=TUESDAY_BRIEF,
         sources=DeadSlack(
             events=[_calendar_event("1on1", "VP-Data 1:1", TUESDAY_BRIEF + timedelta(hours=3))]

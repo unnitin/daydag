@@ -33,7 +33,7 @@ CONTRACTS - break one and the guarantee is gone
        carries it as `error.headline` - a retry replies into that thread
        rather than resending the interrupt.
     4. No Slack client is imported here. `Transport` is a callable the caller
-       injects, exactly like `observe.py`'s probes and `brief.py`'s sources -
+       injects, exactly like `observe.py`'s probes and `loops.py`'s sources -
        what makes this module testable without a network, and what keeps the
        guardrail-suite tripwire in `tests/test_guardrails.py` meaningful.
     5. ``runlog`` is optional, and when given, a raised failure is recorded

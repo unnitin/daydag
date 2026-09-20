@@ -17,11 +17,11 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from daydag import push
+from daydag.loops import week_ahead as assemble
 from daydag.pulse import Mirror, Pulse
 from daydag.push import PushError
 from daydag.statedoc import StateFolder
 from daydag.voice import voice_violations
-from daydag.week_ahead import assemble
 
 PT = ZoneInfo("America/Los_Angeles")
 
@@ -70,8 +70,8 @@ class FakeSources:
         self.calendar_windows.append(window)
         return [e for e in self._events if e["start"].date() == window.day]
 
-    def weekly_note(self, path):
-        self._check("weekly_note")
+    def vault_note(self, path):
+        self._check("vault_note")
         self.note_paths.append(path)
         if path not in self._notes:
             raise FileNotFoundError(path)
@@ -129,7 +129,7 @@ def test_a_present_plan_does_not_lead_with_a_warning():
 
 def test_a_read_error_on_the_plan_degrades_rather_than_pretending_its_missing():
     """A broken connector and an absent file must not read the same way."""
-    pushed = _assemble(sources=FakeSources(broken=["weekly_note"]))
+    pushed = _assemble(sources=FakeSources(broken=["vault_note"]))
     assert "the week-ahead plan" in pushed.unreachable
     assert not any("no week-ahead plan" in s.heading for s in pushed.sections), (
         "a dead connector was reported as a genuinely missing plan"

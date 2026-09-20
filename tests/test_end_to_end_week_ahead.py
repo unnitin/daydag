@@ -24,7 +24,7 @@ from __future__ import annotations
 import subprocess
 from datetime import datetime, timedelta, timezone
 
-from daydag import push, week_ahead
+from daydag import loops, push
 from daydag.eventlog import EventLog
 from daydag.pulse import Mirror, Pulse
 from daydag.statedoc import StateFolder
@@ -55,7 +55,7 @@ def _event(event_id, summary, start, *, minutes=60, attendees=("nitin", "vp-data
 
 
 class Connectors:
-    """The four reads `week_ahead.assemble` performs, answered from fixtures."""
+    """The four reads `loops.week_ahead` performs, answered from fixtures."""
 
     def __init__(self, events=(), notes=None):
         self._events = list(events)
@@ -66,7 +66,7 @@ class Connectors:
         self.windows.append(window)
         return [e for e in self._events if e["start"].date() == window.day]
 
-    def weekly_note(self, path):
+    def vault_note(self, path):
         if path not in self._notes:
             raise FileNotFoundError(path)
         return self._notes[path]
@@ -160,7 +160,7 @@ def test_a_sunday_evening_arrives_as_one_assembled_week_ahead(tmp_path, git_env)
         # covered in its own end-to-end variant below.
     )
 
-    pushed = week_ahead.assemble(
+    pushed = loops.week_ahead(
         now=SUNDAY,
         sources=connectors,
         identities=IDENTITIES,
@@ -235,16 +235,16 @@ def test_a_dead_connector_and_a_stale_mirror_both_degrade_into_the_same_push(tmp
     broken.mark_fetch_failed()
 
     class DeadClosingNote(Connectors):
-        def weekly_note(self, path):
+        def vault_note(self, path):
             if path == CLOSING_WEEK_NOTE:
                 raise RuntimeError("vault read timed out")
-            return super().weekly_note(path)
+            return super().vault_note(path)
 
     connectors = DeadClosingNote(
         events=[_event("steering", "Pod Steering", datetime(2026, 9, 7, 9, 0, tzinfo=PT))]
     )
 
-    pushed = week_ahead.assemble(
+    pushed = loops.week_ahead(
         now=SUNDAY,
         sources=connectors,
         identities=IDENTITIES,

@@ -160,9 +160,7 @@ All four commands share one parser: `python -m daydag <run|people|soak|registry>
 | `recipes` | The connector edge: SPEC §4's prose as literal, bounded queries, and the readers for what comes back |
 | `voice` | The house voice as assertions, and the templates for every push |
 | `push` | The push kernel every loop renders with: one `Push`, one `Reader`, one citation rule, one weekly-note scanner, one overlap rule |
-| `brief` | SPEC §3.1's morning brief, assembled from the kernel |
-| `eod_wrap` | SPEC §3.5's EOD wrap: what closed, what moved, tomorrow's first meeting |
-| `week_ahead` | SPEC §3.6's Sunday week-ahead: a read of Friday's plan, plus Monday's prep queue |
+| `loops` | The seven loops in one table - what each fetches, whether it carries the ledger, what renders it: the morning brief (§3.1), the EOD wrap (§3.5), the Sunday week-ahead (§3.6), prep, ingest, chase and ship |
 | `prep` | Meeting prep pings: the one interrupt, 30 min out, qualified by the ledger - and naming the meeting to prep for without guessing between two |
 | `ingestion` | SPEC §3.3's classifier: five labels, biased to precision, no write path |
 | `observe` | What ran and what it reached: the pre-flight over injected probes, and one row per run in the event log |
