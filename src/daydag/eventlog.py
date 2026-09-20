@@ -3,6 +3,7 @@
 USING IT
     log = EventLog.open(path)
     log.record("loop_opened", sensitivity=classify_sensitivity(ask, quote, origin=kind), **payload)
+    log.record("meeting", event)             # a connector's record, whole - `kind` and all
     log.recorded("run")                     # every payload of one kind, oldest first
     log.chase_items()                       # ChaseItem rows, sensitivity from the column
     log.record_fetch("org/repo", at=now); log.last_fetch("org/repo")
@@ -33,7 +34,7 @@ import re
 import sqlite3
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -253,6 +254,12 @@ def _as_utc(when: datetime) -> datetime:
     return when.replace(tzinfo=UTC) if when.tzinfo is None else when.astimezone(UTC)
 
 
+def _encode(value: Any) -> str:
+    """json's fallback for a value it cannot take: an instant as its isoformat,
+    anything else as its `str`."""
+    return value.isoformat() if isinstance(value, (date, datetime)) else str(value)
+
+
 class EventLog:
     """Append-mostly SQLite, outside the vault.
 
@@ -275,8 +282,32 @@ class EventLog:
     def open(cls, path: str | Path) -> EventLog:
         return cls(sqlite3.connect(str(path)))
 
-    def record(self, kind: str, *, sensitivity: str | None = None, **payload: Any) -> None:
+    def record(
+        self,
+        kind: str,
+        payload: Mapping[str, Any] | None = None,
+        *,
+        sensitivity: str | None = None,
+        **fields: Any,
+    ) -> None:
         """Append one event.
+
+        ``payload`` is the record as a mapping, for a caller storing a
+        connector's record whole: a key named `kind` or `sensitivity` INSIDE it
+        is data, not an argument. Google's calendar records all carry `kind`,
+        and splatting one into this signature collided with the parameter and
+        raised on the first morning with a log. ``fields`` say the same thing
+        as keywords, for the callers that build the row themselves. A key
+        given both ways is refused (`TypeError`), as Python refuses
+        `f(a=1, **{"a": 2})`: letting one win silently is how a record's own
+        value goes missing without a trace.
+
+        The log owns the encoding. A `datetime` or `date` at any depth is
+        stored as its isoformat and anything else json cannot take as its
+        `str`, so a caller storing a record whole pre-walks nothing - the
+        runner's one-level walk missed an instant nested in google's
+        `{"dateTime": ...}` and raised out of `record` after the push text
+        was built, a dead push.
 
         ``sensitivity`` may be omitted for a kind that never reaches the vault -
         a run-log row, a remembered meeting. For a kind in `VAULT_BOUND` it is
@@ -297,9 +328,12 @@ class EventLog:
                 f"sensitivity={sensitivity!r} is not one of {sorted(SENSITIVITIES)}; "
                 "the vault gate compares for equality, so a near miss renders as visible"
             )
+        twice = sorted(set(payload or ()) & set(fields))
+        if twice:
+            raise TypeError(f"record() got {twice} both in the payload and as keywords")
         self._db.execute(
             "INSERT INTO events (kind, sensitivity, payload) VALUES (?, ?, ?)",
-            (kind, sensitivity, json.dumps(payload)),
+            (kind, sensitivity, json.dumps({**(payload or {}), **fields}, default=_encode)),
         )
         self._db.commit()
 

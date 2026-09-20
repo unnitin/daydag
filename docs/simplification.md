@@ -173,12 +173,19 @@ what gives a stacked PR CI (CONTRIBUTING, "Branches").
 | 5 | `chore/simplify-05-observe` | `observe.py` (smoke + runlog, one `Result` from probe to projection); the run-log line written into State.md (SPEC 7); `registry` absorbs `manifests`; `delivery` and the runner build rows from `Result`; `cli.py` argparse behind the four entries (#117, #126); seven unmarked duplicates of guardrail tests deleted | −350 | medium - the run-log tests derive their rows from the pre-flight, which is why it stays |
 | 6 | `chore/simplify-06-prose` | docstring pass: a contract a test pins becomes one line and the test's name; calibration facts to `reference/meeting-ledger.md`, `reference/sensitivity.md`, `reference/state-incidents.md`; connector numbers already in `reference/connector-audit.md` become pointers; `USING IT` blocks kept | −1,600 prose | low - `test_docstring_examples` catches a broken example |
 | 7 | `chore/simplify-07-docs` | README absorbs USAGE and BUILD's status; `build_docs.REQUIRED_DOCS` updated; the last stale module names in ARCHITECTURE and `reference/` fixed | −180 doc lines | low |
+| 8 | `chore/simplify-08-sweep` | not in the plan - the four principal reads (brief, runner, prep, delivery) become `config.principal_id`; two hand-listed rows become `dataclasses.asdict`; `eventlog` stops importing from `statedoc` | −40 | low |
+| 9 | `chore/simplify-09-loops` | the `loops.py` fold §3 named and PR 3 stopped short of: `brief`, `eod_wrap`, `week_ahead` and the runner's four bodies behind one `Loop` descriptor; each loop fetches only what it reads; `Sources.weekly_note` gone (#112); the calendar payload keyed by day (#111) | −150 | medium - goldens byte-identical |
+| 10 | `chore/simplify-10-tests` | test files follow the modules: 40 to 30, the seven end-to-end files on one world, shared doubles in `tests/support.py`; not one test removed | 0 (−690 test lines) | low |
+| 11 | `fix/remembered-kind` | a remembered calendar record is stored whole - its own `kind` key collided with `EventLog.record`'s parameter and raised on the first real morning with a log; found consolidating the seam tests in PR 10. The log owns its encoding, only `_seedable` rows are remembered, and replay skips a row it cannot seed | +30 | low |
 
 Order matters: 1 is pure deletion and the biggest single win, so it goes
 first and alone; 2 before 3 because the loops read the state through the
 new parser; 4 and 5 are independent of each other but both sit on 3's
 `push`/`loops` seam; 6 and 7 are prose and come last so they describe the
 shape that exists.
+
+Rows 8-11 were not in the plan. They came after §8's first measurement,
+each stacked on the last, and §8 says what each one found.
 
 ## 6. Decisions needed before PR 1
 
@@ -218,18 +225,25 @@ re-read), the per-PR line estimates (they are estimates), and the claim
 that `test_guardrails.py` duplicates ~220 lines of module tests. Each PR
 re-checks what it touches.
 
-## 8. Outcome, 2026-09-18
+## 8. Outcome
 
-Measured on the stack's last branch against the `pre-simplification` tag.
+Measured against the `pre-simplification` tag, twice: on the stack's last
+branch on 2026-09-18 (after PR 7), and again on 2026-09-20 after the four
+follow-ons below (after PR 11). Modules and lines leave out `__init__` and
+`__main__`. The code/prose split is by `tokenize` and was re-measured for
+every column on 09-20; the totals reproduce the 09-18 figures exactly, but
+the split does not - the tag's code count moves from 4,992 to 5,557 and
+after PR 7 from 4,669 to 5,156, so the 09-18 split was by a different rule
+and the two columns it filled are replaced, not kept.
 
-| | tag | after PR 7 |
-|---|---|---|
-| modules | 24 | 22 |
-| source lines | 12,199 | 10,793 |
-| of which code | 4,992 | 4,669 |
-| of which docstrings + comments | 5,225 | 4,351 |
-| test lines | 15,900 | 15,834 |
-| docs (README + USAGE + BUILD) | 427 | 211 |
+| | tag | after PR 7 | after PR 11 |
+|---|---|---|---|
+| modules | 24 | 22 | 20 |
+| source lines | 12,199 | 10,793 | 10,620 |
+| of which code | 5,557 | 5,156 | 5,173 |
+| of which docstrings + comments | 5,199 | 4,321 | 4,116 |
+| test lines | 15,900 | 15,834 | 15,494 |
+| docs (README + USAGE + BUILD) | 427 | 211 | 209 |
 
 The source did not halve; §3's estimate assumed the prose pass would cut
 most of the 42%, and it did not, on purpose: CONTRIBUTING says keep the
@@ -244,7 +258,49 @@ Kept against the plan, each for its ticket: `vault.py` as the one write path
 reingest queue (#17), the pre-flight pass in `observe` (#25, and the run-log
 tests derive their rows from it), and `soak.py`, which is live.
 
+Also kept, and not recorded on 09-18: `voice.py`. §3 folded it into `push`,
+but `statedoc` reads its `WARN` glyph and `push` reads `statedoc`, so the voice
+inside the kernel is an import cycle. The house voice stays its own 184-line
+module, read by `push`, `loops`, `prep`, `delivery`, `observe` and `statedoc`.
+
+### The follow-ons, 2026-09-19 to 2026-09-20
+
+Four more PRs came after the first measurement, each stacked on the last.
+
+- **PR 8, #152** - the principal's Slack id was resolved in four places, two
+  of which checked its shape and two of which did not. `config.principal_id`
+  is the one read, and `is_user_id` moved with it so the `from:` filter and
+  the destination check share one regex. `eventlog` stops importing the
+  sensitivity classifier and the vault-bound kinds from `statedoc`, so the
+  log half no longer depends on the document half.
+- **PR 9, #153** - the `loops.py` fold §3 named and PR 3 stopped short of.
+  `brief.py`, `eod_wrap.py`, `week_ahead.py` and the four bodies the runner
+  carried are `loops.py`, behind one `Loop` descriptor that says what each
+  fetches and what renders it; `run.py` went from 1,001 lines to 699. Each
+  loop fetches only what it reads (#109's other half). It found that the
+  week-ahead's "no plan" check read this week's note under next week's path
+  and could never fire while this week's note existed (#112), and keyed the
+  calendar payload by day so an unfetched window is empty because its key is
+  absent, not because a helper guessed (#111). Goldens byte-identical.
+- **PR 10, #154** - test files follow the modules: 40 to 30, the seven
+  end-to-end files on one world, and the doubles five files had each
+  rewritten in `tests/support.py`. Not one test removed, 244 guardrails
+  before and after. The merge surfaced a latent order dependency (a test
+  reloaded `observe` in place, leaving `RunRow` a stale class for later
+  tests) and the source defect PR 11 fixes.
+- **PR 11, `fix/remembered-kind`** - `run._remember` splatted each calendar
+  record into `EventLog.record(kind, ...)`. Every Google Calendar record
+  carries a `kind` key, so the first real morning with a log raised on the
+  collision; the memory tests had hand-rolled records without it, and the
+  end-to-end world deleted the key to get past it. The log takes the record
+  as a mapping now, owns its JSON encoding, and stores it whole. The review
+  of that fix then probed the memory path it makes reachable: only what
+  today's ledger could seed is remembered now, and a stored row the ledger
+  cannot take is skipped on replay rather than raised on - one such row was
+  killing every later morning with that log. Three defects on the same path
+  that are not this fix's are filed: #155, #156, #157.
+
 Tickets settled by the stack: #145 filed (M4-7); D-3 (#30) and D-5 (#62)
-closed by practice; #109, #110, #115, #117, #124, #126, #138, #139 closed
-by PRs; #16, #17, #22, #25, #27, #88, #112 carry a pointer to where their
-code now lives.
+closed by practice; #109, #110, #111, #112, #115, #117, #124, #126, #138,
+#139 closed by the stack's commits when they reach `main`; #16, #17, #22,
+#25, #27, #88 carry a pointer to where their code now lives.

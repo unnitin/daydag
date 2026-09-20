@@ -277,3 +277,48 @@ def test_classify_catches_inflections_and_the_escaped_ampersand():
         "exit interview notes",
     ):
         assert classify_sensitivity(text) == "private", text
+
+
+def test_a_record_stored_whole_may_carry_the_logs_own_parameter_names():
+    """A caller storing a connector's record hands it over as a mapping, so a
+    key named `kind` or `sensitivity` in the RECORD is data, never an argument.
+    Google's calendar records all carry `kind`, and `run._remember` splatted
+    them into this signature and raised (found consolidating the seam tests)."""
+    log = EventLog.open(":memory:")
+    log.record("meeting", {"id": "e1", "kind": "calendar#event", "sensitivity": "n/a"})
+    log.record("meeting", {"id": "e2"}, summary="keywords still work beside it")
+
+    assert log.recorded("meeting") == [
+        {"id": "e1", "kind": "calendar#event", "sensitivity": "n/a"},
+        {"id": "e2", "summary": "keywords still work beside it"},
+    ]
+
+
+def test_a_key_given_both_in_the_payload_and_as_a_keyword_is_refused():
+    """`{**payload, **fields}` let a keyword silently overwrite the record's own
+    value, with no documented precedence. Refused instead, the way Python
+    refuses `f(a=1, **{"a": 2})`; nothing is written."""
+    log = EventLog.open(":memory:")
+
+    with pytest.raises(TypeError, match="summary"):
+        log.record("meeting", {"id": "e1", "summary": "from google"}, summary="from the caller")
+
+    assert log.recorded("meeting") == []
+
+
+def test_an_instant_at_any_depth_is_stored_as_its_isoformat():
+    """`run._remember` pre-walked one level; google nests the instant as
+    `{"dateTime": ...}`, and a datetime one level down raised TypeError out of
+    `record` AFTER the push text was built - a dead push. The log owns its
+    encoding: an instant at any depth is its isoformat, and a value json
+    cannot take at all is its `str` rather than a raise."""
+    log = EventLog.open(":memory:")
+    when = datetime(2026, 9, 7, 15, 0, tzinfo=UTC)
+
+    log.record("meeting", {"id": "e1", "start": {"dateTime": when}, "day": when.date()})
+    log.record("meeting", {"id": "e2", "odd": {1, 2}})
+
+    assert log.recorded("meeting") == [
+        {"id": "e1", "start": {"dateTime": "2026-09-07T15:00:00+00:00"}, "day": "2026-09-07"},
+        {"id": "e2", "odd": "{1, 2}"},
+    ]

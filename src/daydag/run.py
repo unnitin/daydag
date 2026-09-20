@@ -433,22 +433,35 @@ def _remembered(log: EventLog | None) -> Ledger:
     if log is None:
         return ledger
     for payload in log.recorded(MEETING):
-        if isinstance(payload, Mapping):
+        if not isinstance(payload, Mapping):
+            continue
+        try:
             ledger.seed_day([_Payloads.timed(dict(payload))])
+        except (KeyError, TypeError, ValueError):
+            # A stored row the ledger cannot take - an all-day entry whose start
+            # is still google's `{"date": ...}` (#156), a row from before
+            # `_remember` kept to `_seedable` - is skipped, not raised on: the
+            # log's own torn-row rule (`EventLog` contract 3), one layer up.
+            # This runs outside any degrade, and one such row was killing every
+            # later morning with that log until someone deleted it from sqlite.
+            continue
     return ledger
 
 
 def _remember(log: EventLog | None, events: Iterable[Mapping[str, Any]]) -> None:
-    """Record today's meetings so the next run can ask what produced nothing."""
+    """Record what today's ledger seeded, so the next run can ask what produced nothing.
+
+    Whole, as a mapping: a google record carries its own `kind`
+    (`calendar#event`), and splatting it into `EventLog.record(kind, ...)`
+    raised on the first real morning with a log. Given `_seedable` rows, not
+    every fetched record: one `seed_day` cannot take today is one it cannot
+    take tomorrow either, and stored it was replayed into every later morning.
+    """
     if log is None:
         return
     for event in events:
         if isinstance(event, Mapping) and event.get("id"):
-            log.record(MEETING, **{k: _jsonable(v) for k, v in event.items()})
-
-
-def _jsonable(value: Any) -> Any:
-    return value.isoformat() if isinstance(value, datetime) else value
+            log.record(MEETING, event)
 
 
 def build_pulse(
@@ -556,7 +569,7 @@ def render(
             active.observe([Result(loop, "daydag", REACHED)])
 
     if spec.remembers:
-        _remember(events, _seeded(payloads))
+        _remember(events, _seedable(payloads))
     # Only the ledger-carrying loops project. Since `update_state` became an
     # append (#130) an empty ledger adds nothing and harms nothing; what the
     # gate still does is keep `chase`, `ingest`, `ship` and `week-ahead` from
@@ -630,6 +643,8 @@ def _attach_notes(ledger: Ledger, payloads: Mapping[str, Any], now: datetime) ->
 
 def _seedable(payloads: Mapping[str, Any]) -> list[dict[str, Any]]:
     """Today's events, parsed, and only the ones `seed_day` can actually take.
+
+    Also what `_remember` stores, for the same reason.
 
     Tolerant on purpose. This pre-seed exists so a note offered in the same run
     has a row to attach to; it is not the place that judges a malformed event.
