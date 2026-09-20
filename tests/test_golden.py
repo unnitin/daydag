@@ -20,7 +20,6 @@ from pathlib import Path
 import pytest
 
 from daydag import run
-from daydag.config import Identities
 
 GOLDEN = Path(__file__).parent / "golden"
 
@@ -86,22 +85,16 @@ DECISIONS = (
 
 
 @pytest.fixture
-def identities(tmp_path):
-    env = tmp_path / ".env"
-    env.write_text(
-        f"SLACK_USER_PRINCIPAL={PRINCIPAL}\nEMAIL_PRINCIPAL=principal@x.com\n"
-        f"VAULT_ROOT={tmp_path / 'vault'}\n"
-        "ORG_EMAIL_DOMAIN=x.com\nPREP_LEADERSHIP=vp-ai@x.com\n",
-        encoding="utf-8",
-    )
-    vault = tmp_path / "vault"
-    (vault / "Weekly Notes").mkdir(parents=True)
-    daydag = vault / "DayDAG"
+def identities(make_identities, tmp_path):
+    """The default `.env` plus the org domain and a leadership address, over a
+    `DayDAG/` folder carrying the hand-edited State.md and a Decisions.md."""
+    ids = make_identities(ORG_EMAIL_DOMAIN="x.com", PREP_LEADERSHIP="vp-ai@x.com")
+    daydag = tmp_path / "vault" / "DayDAG"
     daydag.mkdir()
     (daydag / "State.md").write_text(STATE, encoding="utf-8")
     (daydag / "Decisions.md").write_text(DECISIONS, encoding="utf-8")
     (daydag / "Watchlist.md").write_text("# Watchlist\n", encoding="utf-8")
-    return Identities.from_file(env)
+    return ids
 
 
 def _meetings(day: str) -> list[dict]:

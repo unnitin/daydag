@@ -203,7 +203,7 @@ it does not catch a name, which is the author's judgement.
 its own unit tests and was wrong about the world or about a neighbour: the
 ledger silently dropped 61% of meetings, the state writer filtered one list and
 not its twin, a parser the docs described was never called. That is why the
-`tests/test_end_to_end_*.py` suites and `tests/golden/` exist - one walk per
+`tests/test_end_to_end.py` suite and `tests/golden/` exist - one walk per
 path across the modules, and every push held byte-for-byte - and why guardrails
 are marked and gated separately. Treat output as a draft to check, not a report
 to trust, until a loop has run against live data on days you can verify.

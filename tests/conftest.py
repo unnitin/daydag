@@ -115,3 +115,51 @@ def repo_landing_on_dev(tmp_path, git_env):
         run("git", "commit", "-qm", f"Merge PR #{n}")
     run("git", "checkout", "-q", "main")
     return repo
+
+
+# --------------------------------------------------------------------------
+# identities and the vault folder - five files wrote the same `.env`
+# --------------------------------------------------------------------------
+
+
+@pytest.fixture
+def make_identities(tmp_path):
+    """Write a `.env` and read it back the way the CLI does.
+
+    The defaults are the principal, his address and a vault under ``tmp_path``
+    with its `Weekly Notes` folder made. Keyword arguments add or replace
+    keys; ``None`` removes one.
+    """
+    from pathlib import Path
+
+    from daydag.config import Identities
+
+    def _make(**overrides):
+        env = {
+            "SLACK_USER_PRINCIPAL": "UPRINCIPAL1",
+            "EMAIL_PRINCIPAL": "principal@x.com",
+            "VAULT_ROOT": str(tmp_path / "vault"),
+        }
+        env.update(overrides)
+        lines = [f"{key}={value}" for key, value in env.items() if value is not None]
+        (tmp_path / ".env").write_text("\n".join(lines) + "\n", encoding="utf-8")
+        if env.get("VAULT_ROOT"):
+            (Path(env["VAULT_ROOT"]) / "Weekly Notes").mkdir(parents=True, exist_ok=True)
+        return Identities.from_file(tmp_path / ".env")
+
+    return _make
+
+
+@pytest.fixture
+def identities(make_identities):
+    """The default `.env`: the principal, his address, a vault under tmp_path."""
+    return make_identities()
+
+
+@pytest.fixture
+def folder(tmp_path):
+    """A fresh `DayDAG/` folder under a vault, as `StateFolder.create` lays it out.
+    The same path `identities` names as `VAULT_ROOT`, so the two compose."""
+    from daydag.statedoc import StateFolder
+
+    return StateFolder.create(tmp_path / "vault" / "DayDAG")

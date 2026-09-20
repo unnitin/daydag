@@ -36,7 +36,7 @@ COVERED (behavioural - real code, real assertions)
       of the report still ships
     - a connector that raises, or answers with an overflow, degrades to a named
       "couldn't check X" line and the pre-flight run still returns a report
-      (in `tests/test_smoke_run.py`, which carries its own guardrail marks)
+      (in `tests/test_observe.py`, which carries its own guardrail marks)
     - a stale mirror contributes no items, is reported as stale, and carries the
       time of the last fetch that actually worked
     - untrusted Slack text is parsed for ticket keys only, never echoed or acted on
@@ -78,7 +78,7 @@ GAPS - not covered here, and not pretended to be
 
     #63's `chase`/`update_state` shape disagreement was never a numbered gap
     here at all: it surfaced as a runtime warning rather than an unguarded
-    invariant. `tests/test_state_store.py` carries its coverage.
+    invariant. `tests/test_statedoc.py` carries its coverage.
 """
 
 from __future__ import annotations
@@ -205,11 +205,6 @@ def _self_check_scanner() -> None:
     """The scanner must be able to find something, or every tripwire is vacuous."""
     known_good = _scan({"known-good": r"^merges_since_cursor$"})
     assert known_good, "the AST scanner found nothing - every tripwire below is vacuous"
-
-
-@pytest.fixture
-def folder(tmp_path: Path) -> StateFolder:
-    return StateFolder.create(tmp_path / "vault" / "DayDAG")
 
 
 # --------------------------------------------------------------------------
@@ -417,7 +412,7 @@ def test_a_loop_rewrites_no_vault_file_but_state_md_and_only_with_its_old_text_k
 
     `update_state` re-writes State.md in place because it renders the whole
     parsed document back - but what it renders is the old text plus whatever
-    was appended (#130), which the tests in `test_state_append.py` pin. Two
+    was appended (#130), which the tests in `test_statedoc.py` pin. Two
     things are checked here that those cannot see: that Decisions and Watchlist
     are never touched by the same call, and that the previous text is archived
     first. This watches the filesystem calls rather than the resulting text,
