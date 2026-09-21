@@ -1,6 +1,6 @@
 ---
 name: team-practices
-description: "Track the Data Engineering \"How we work\" commitments for Nitin. Today: ticket coverage (monthly) - the share of merged PRs carrying a work item, both definitions, with the uncovered ones listed. Use for \"ticket coverage\", \"how we work metrics\", \"are we writing tickets\", \"coverage for the transform repo\". Observes and drafts; never writes to Jira or GitHub. Do NOT use for Nitin's own day (that's daily-loops) or the Friday progress report (weekly-progress-reporting)."
+description: "Track the Data Engineering \"How we work\" commitments for Nitin. Today: ticket coverage (monthly) and review distribution (weekly) - who is reviewing, PRs stuck without a human review, drafts past a week, and human-required changes merged on bot review alone. Use for \"ticket coverage\", \"who is reviewing\", \"how we work metrics\", \"are we writing tickets\", \"stale PRs in the transform repo\". Observes and drafts; never writes to Jira or GitHub. Do NOT use for Nitin's own day (that's daily-loops) or the Friday progress report (weekly-progress-reporting)."
 daydag:
   writes:
     # Distinct ids, not a claim on daily-loops' `local:event-log` or its
@@ -11,15 +11,15 @@ daydag:
     - local:event-log/team-practices
   reads: [github, jira]
   emits: [evidence.team-practices]
-  schedule: "first weekday of the month 08:00"
+  schedule: "mon 08:00 reviews; first weekday of the month 08:00 coverage"
   sensitivity: shared
 ---
 
 # team-practices - the team's own commitments, measured
 
 The Data Engineering "How we work" doc asks for three tracked metrics. This skill
-computes them and reports to Nitin. **`coverage` is the one that exists today**;
-`reviews`, `owners` and `pack` are planned, and the plan is the file below.
+computes them and reports to Nitin. **`coverage` and `reviews` exist today**;
+`owners` and `pack` are planned, and the plan is the file below.
 
 **Read `docs/how-we-work-skills.md` before changing anything here.** It holds the
 measured baselines, the skill map, the execution plan for each command and the
@@ -70,6 +70,39 @@ the history the trend line is drawn from, and it lives outside the vault.
 Nitin's DM, like every other push. A channel version for
 #team\_data\_engineering is a **draft** - it goes nowhere until he says go, per
 house rule 2, and it carries the two shares and the uncovered numbers only.
+
+## reviews
+
+```sh
+gh pr list -R CreateMusicGroup/cmg-sdp-transform --state merged \
+  --search "merged:>=<monday>" --limit 100 \
+  --json number,title,body,headRefName,mergedAt,url,author,reviews,files,isDraft,createdAt,updatedAt
+gh pr list -R CreateMusicGroup/cmg-sdp-transform --state open --limit 100 --json <the same>
+```
+
+```python
+from daydag.team_practices import PullRequest, reviews
+
+report = reviews(merged, open_prs, repo=REPO, week_of=monday, roles=ROLES, now=now)
+```
+
+`roles` maps `github login -> people-directory role token`. **Build it by hand
+until #162 lands** - the directory has no login field yet, so a login missing
+from the map is counted and deliberately not named. The report says how many
+that was; it never guesses, and it never prints a login.
+
+Four checks, all from §2 of the doc:
+
+- **who reviewed**, by role token, bot in its own count, self-reviews excluded,
+  with the top reviewer's share called out - the concentration the weekly
+  summary exists to notice.
+- **human-required merged on bot review alone.** Risk tier comes from
+  `reference/team-practices-risk-paths.yml`, never from prose here. The doc's
+  tie-break holds: unsure goes in the first bucket, so an unlisted path is
+  human-required.
+- **stuck ≥ 2 business days** without a human review. A bot approval does not
+  reset that clock.
+- **drafts past a week**, with their age.
 
 ## Not this skill
 
