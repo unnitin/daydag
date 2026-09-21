@@ -237,9 +237,26 @@ def test_the_scheduling_table_is_a_projection_of_the_manifests(shipped):
     """ARCHITECTURE's Scheduling table, derived rather than hand-kept."""
     assert set(shipped.schedule()) == {
         "daily-loops",
+        "team-practices",
         "weekly-feedback-scan",
         "weekly-planning-and-progress",
     }
+
+
+def test_a_sub_id_is_its_own_artifact_with_its_own_writer(shipped):
+    """`team-practices` stores rows in `daily-loops`' SQLite file and owns none of it.
+
+    The same exact-match rule as the folder test above, read the other way:
+    `local:event-log/team-practices` is a distinct id, so declaring it is not a
+    second claim on `local:event-log`. That is the pattern the plan
+    (`docs/how-we-work-skills.md` §4) leans on, pinned here so it cannot become
+    prefix matching by accident - if ids ever match by prefix, this fails and
+    the ownership question gets asked again rather than silently answered.
+    """
+    assert shipped.writer_of("local:event-log") == "daily-loops"
+    assert shipped.writer_of("local:event-log/team-practices") == "team-practices"
+    with pytest.raises(RegistryError, match="undeclared"):
+        shipped.check_write("team-practices", "local:event-log")
 
 
 def test_the_pulse_feeds_the_weekly_routines(shipped):
