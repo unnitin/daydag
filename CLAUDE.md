@@ -12,7 +12,7 @@ A persistent agent for Nitin Srivastava (SVP Data & AI, Create Music Group) that
 
 ## 2. People and org map
 
-Ownership map (from the weekly notes, stable): **VP-AI** → A&R Discovery + AI Platform · **Enablement-Lead** → Agentic Enablement (Kiwi / CreateOS Labs) · **VP-Data** → Data Platform, Ingestion, DevOps, Security. Everything else sits with Nitin directly. **Sponsor** is the executive sponsor/audience (Former-Sponsor departed). **CTO** is newly named (relocating to Vancouver as of early Sep). Cross-teaming partners: **Analytics-Partner** (analytics/data product), **CTO**, **Gov-Lead** (governance/roadmap).
+Ownership map (from the weekly notes, stable): **VP-AI** → A&R Discovery + AI Platform · **Enablement-Lead** → Agentic Enablement (Kiwi / CreateOS Labs) · **VP-Data** → Data Platform, Ingestion, DevOps, Security. Everything else sits with Nitin directly. **Sponsor** is the executive sponsor/audience (Former-Sponsor departed). **CTO** is newly named and is **now in Vancouver** (relocation done; confirmed 9/21/26). **The principal is based in Seattle** - the CMG office is LA, so "in office" and any LA visit means travel (Seattle to LA), and so does the week of Oct 5 when CTO and Sponsor-adjacent leads are in LA. Cross-teaming partners: **Analytics-Partner** (analytics/data product), **CTO**, **Gov-Lead** (governance/roadmap).
 
 **Who people are lives in the people directory, not in this file.** Slack ids,
 addresses, titles, the DM with Nitin, the group DMs they sit in, and how often
@@ -41,7 +41,7 @@ Other frequent names: ML-Lead (lead ML, first-party models), Stakeholder-1, Eng-
 
 ## 3. Canonical identifiers
 
-**Slack workspace:** `create-music.slack.com`. Channels (re-verify in `Fact Base/Internal Links.md` — IDs drift as channels get renamed; `${SLACK_CH_POD_DISCOVERY}` was #ar-tooling-dev-team, now #pod-discovery):
+**Slack workspace:** `create-music.slack.com`. Channels (re-verify in `Fact Base/Internal Links.md` — IDs drift as channels get renamed; `${SLACK_CH_POD_DISCOVERY}` was #ar-tooling-dev-team, now #pod-discovery, and `${SLACK_CH_MIGRATION_POD}` was #migration-pod, now #createos-migration since 9/10/26. The key names what the channel is FOR, so it does not move when the name does; the id is the canonical thing):
 
 | Channel | ID |
 |---|---|
@@ -55,6 +55,7 @@ Other frequent names: ML-Lead (lead ML, first-party models), Stakeholder-1, Eng-
 | #dt-leadership | `${SLACK_CH_DT_LEADERSHIP}` |
 | #dnt-leadership | `${SLACK_CH_DNT_LEADERSHIP}` |
 | #project-dream | `${SLACK_CH_PROJECT_DREAM}` |
+| #createos-migration | `${SLACK_CH_MIGRATION_POD}` |
 | DMs and group DMs | per person, in the directory: `python -m daydag.people show <role>` - `dm` is the 1:1 with Nitin, `groups` the group DMs and channels they are tracked in |
 
 **Obsidian vault (direct filesystem access in Claude Code — no MCP needed):**

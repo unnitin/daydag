@@ -150,3 +150,22 @@ def test_timezone_for_falls_back_when_timezone_is_unset(tmp_path):
     env.write_text("SLACK_USER_PRINCIPAL=UPRINCIPAL1\n", encoding="utf-8")
 
     assert timezone_for(Identities.from_file(env)) is not None
+
+
+def test_a_quoted_value_reads_without_its_quotes(tmp_path):
+    # A path with spaces has to be quoted for `set -a; . ./.env` to source the
+    # file, and every dotenv reader strips a matching pair. Keeping the quotes
+    # made VAULT_ROOT point at a directory named `"...` that does not exist.
+    env = tmp_path / ".env"
+    env.write_text(
+        'VAULT_ROOT="/vaults/Mobile Documents/vault"\n'
+        "SINGLE='single quoted'\n"
+        'UNBALANCED="left only\n'
+        "PLAIN=bare\n",
+        encoding="utf-8",
+    )
+    ids = Identities.from_file(env)
+    assert ids["VAULT_ROOT"] == "/vaults/Mobile Documents/vault"
+    assert ids["SINGLE"] == "single quoted"
+    assert ids["UNBALANCED"] == '"left only'
+    assert ids["PLAIN"] == "bare"
