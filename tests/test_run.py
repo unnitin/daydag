@@ -348,6 +348,10 @@ def test_the_eod_plan_fetches_today_and_tomorrow_for_its_two_consumers(identitie
     consumer. #134 added a second: a room that was asked for and has now
     happened is evidence a loop moved, and that room is TODAY's. The wrap
     still sees only tomorrow, because `_Payloads.calendar` filters by window.
+
+    Today is fetched too since #168 - the calls section labels attendance
+    from today's RSVPs - and `_Payloads.calendar` serves each window only its
+    own day, so the fix above still holds (`test_call_notes_run` pins that).
     """
     days = [
         s.detail["day"]
@@ -355,7 +359,9 @@ def test_the_eod_plan_fetches_today_and_tomorrow_for_its_two_consumers(identitie
         if s.source == "calendar"
     ]
 
-    assert days == ["2026-09-07", "2026-09-08"], "the wrap previews tomorrow; movement reads today"
+    assert days == ["2026-09-07", "2026-09-08"], (
+        "the wrap previews tomorrow; movement and the calls section read today"
+    )
 
 
 def test_the_friday_eod_plan_fetches_monday_and_the_render_shows_it(identities):
@@ -573,7 +579,8 @@ def test_ship_asks_for_no_connector_fetch(identities):
 
 
 def test_the_loops_that_ignore_the_calendar_do_not_fetch_it(identities):
-    for loop in ("ingest", "chase", "ship"):
+    # `ingest` reads the calendar since #168 - attendance comes off the RSVP.
+    for loop in ("chase", "ship"):
         sources = {s.source for s in run.plan(loop, now=MONDAY_PT, identities=identities).steps}
         assert "calendar" not in sources, f"{loop} fetches a calendar it never reads"
 

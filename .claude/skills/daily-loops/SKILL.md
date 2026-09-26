@@ -21,7 +21,8 @@ daydag:
   reads: [slack, gmail, calendar, obsidian, notion, github, jira, drive, databricks]
   consumes: [plan.week-ahead, progress.weekly]
   emits: [evidence.pulse, evidence.slack, evidence.meetings]
-  schedule: "weekdays 06:45, 12:00, 12:15, 16:30; sun 17:30"
+  # ingest: every 30 min 07:00-19:00 PT, idempotent on the gmail message id (#168)
+  schedule: "weekdays 06:45, 12:15, 16:30, ingest every 30m 07:00-19:00; sun 17:30"
   sensitivity: shared
 ---
 
@@ -79,7 +80,7 @@ Then write a payloads file keyed by source:
 | source | must carry | what breaks without it |
 |---|---|---|
 | calendar | `id`, `summary`, `start`, `end`, `attendees`, `response_status`, `organizer`, `organizer_is_self`, `notes_attached`, `permalink` (`htmlLink`) | no `end` and the ledger refuses the event - no notes-gap, today or tomorrow. No `permalink` and EVERY line renders "couldn't source this one", because a claim without evidence is tagged rather than trusted |
-| gmail | `subject`, and the mail's own `date` | without a date a note can never attach to its meeting, and ingestion loses it |
+| gmail | `id` (the message id), `subject`, the mail's own `date`, `body` (PLAIN_TEXT `plaintextBody`), `permalink` (`viewUrl`) - one `get_message` per hit, search results alone are metadata | without a date a note can never attach to its meeting. Without the body there are no next steps and no attendance evidence, and the sweep names the note "unplaced" rather than marking it seen. Without the id the sweep cannot dedupe it |
 | slack | `permalink` | a claim with no link is withheld - evidence or silence |
 | slack_sent *(eod)* | `text`, `ts`, `permalink`, `channel`, `channel_name` (e.g. "DM with <name>, <him>"), `thread_ts` for a reply | HIS messages today, fetched as his by the query - that is what licenses `answered` (his reply in the thread an ask came from) and `sent` (a link he dropped where the person he owes it would see it). No `channel_name` and `sent` can never fire; no `thread_ts` and a thread reply cannot be matched to its ask |
 | gmail_sent *(eod)* | `threadId`, `id`, `snippet`, `subject`, `to`, `date`, `permalink` (`viewUrl`) - **one record per SENT message dated today**, not per thread | no `threadId` and his reply on the ask's own thread is invisible: the thread id is the match, not the words |
@@ -171,11 +172,38 @@ which is the one thing this system does that nothing else does.
 |---|---|---|
 | "run my morning" | morning brief, SPEC §3.1 | since 6pm yesterday |
 | "prep me for <meeting>" | meeting prep, §3.2 | that meeting's last ~4 weeks |
-| "ingest" / a note landed | meeting-note ingestion, §3.3 | since the last sweep |
+| "ingest" / a note landed | meeting-note ingestion, §3.3 - a repeatable sweep, see below | since the last sweep |
 | "chase" / "what's owed to me" / "what's on my plate" | open-loop chaser, §3.4 - `plan chase` names one read per ask; do every one before `render` | the whole chase list, Owed by you, Decisions.md |
 | "wrap up" | EOD wrap, §3.5 | today |
 | "week ahead" | Sunday week-ahead, §3.6 | next 7 days |
 | "what shipped" / `ship` | engineering pulse, §3.7 | since the stored cursor |
+
+### The ingest sweep, and attendance (#168)
+
+`ingest` is safe to run every ~30 minutes, 7am-7pm PT weekdays. It dedupes
+on the Gmail message id against the event log (`note_ingested` rows, outside
+the vault), so a second sweep over the same notes says "nothing new since the
+last sweep". Always pass `--log` - without it nothing is remembered and every
+sweep re-reports everything. A note fetched without its body is listed as
+unplaced and NOT marked seen, so the next sweep that fetches it still reads it.
+
+Nothing fires it on a schedule yet (#25 - a bare cron cannot call an MCP
+connector). Until then, run it from a session: `/loop 30m` over
+`plan ingest` -> fetch -> `render ingest --log ~/.local/state/daydag/events.db`,
+or a scheduled cloud routine doing the same. Overlapping or repeated runs are
+harmless by construction.
+
+Every note carries his attendance, read off the calendar row's RSVP
+(`response_status` from the attendee marked `self`):
+accepted -> attended · declined -> not attended · needsAction / tentative ->
+unconfirmed, upgraded to attended when the note's prose quotes him speaking
+("<name> noted that ..."), with the sentence as the reason. Lines from calls he
+was not in say so: `(from DE Demo Prep - you weren't in it)`; an item assigned
+to him from such a call adds `⚠ you may not have heard this one`. The EOD wrap
+carries "priorities from today's calls", ranked: assigned to him > touches an
+open decision in `Decisions.md` > asks to his reports > everything else, every
+line with the note's permalink. Personnel/comp text is never quoted, even in
+the DM - see `src/daydag/call_notes.py`.
 
 Match the message format in the SPEC section exactly - the formats were tuned against
 real briefs, and a redesign costs a correction round-trip. Three rules cut across all

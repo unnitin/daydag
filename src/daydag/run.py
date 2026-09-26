@@ -63,17 +63,15 @@ from __future__ import annotations
 
 import json
 import sys
-from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any
 
-from daydag import brief, closure, eod_wrap, movement, recipes, week_ahead
+from daydag import brief, call_notes, closure, eod_wrap, movement, recipes, week_ahead
 from daydag.board import read_board_watchlist
 from daydag.config import ConfigError, resolve_reference, timezone_for
-from daydag.ingestion import classify_items, unplaced
 from daydag.ledger import (
     CANCELLED,
     REPLAY_HORIZON,
@@ -107,8 +105,20 @@ __all__ = ["LOOPS", "Plan", "RunError", "Step", "main", "plan", "render"]
 #: plan has no fetch steps at all. See `_calendar_windows` for the rest.
 LOOPS = ("morning", "eod", "week-ahead", "prep", "ingest", "chase", "ship")
 
-#: Loops whose plan asks for no calendar at all.
-_NO_CALENDAR = frozenset({"ingest", "chase", "ship"})
+#: Loops whose plan asks for no calendar at all. `ingest` left this set in
+#: #168: attendance is read off the calendar row's RSVP, so the sweep needs
+#: the days its notes can belong to.
+_NO_CALENDAR = frozenset({"chase", "ship"})
+
+#: Loops that do NOT remember the calendar they fetched. `prep` fetches the
+#: week ahead (see `render`); `ingest` runs every ~30 minutes and would write
+#: its two days into the meeting table ~24 times a day, for rows the morning
+#: and EOD runs already seed.
+_NO_REMEMBER = frozenset({"prep", "ingest"})
+
+#: What the gmail step must hand back per note (#168). Search results are
+#: metadata only; the body is where attendance evidence and next steps live.
+GMAIL_FIELDS = ("id", "subject", "date", "body", "permalink")
 
 #: Loops that READ the rehydrated ledger - and therefore the only loops whose
 #: `--write-state` may project notes gaps. `week-ahead` builds its own ledger;
@@ -219,7 +229,11 @@ def plan(loop: str, *, now: datetime, identities: Mapping[str, str], selector: s
         ),
         Step(
             "gmail",
-            "search, then fetch each thread in PLAIN_TEXT - results alone are metadata",
+            "search, then get_message EVERY hit in PLAIN_TEXT - results alone are"
+            " metadata, and a note without its body has no next steps and no"
+            " attendance evidence. One record per note: id (the message id - the"
+            " ingest sweep dedupes on it), subject, date (the mail's own), body"
+            " (plaintextBody), permalink (viewUrl)",
             # The window the BRIEF will ask for, not today's. At 6:40am the
             # brief reports on yesterday's meetings and asks gmail for
             # `after:<the evening the overnight window opened>`. A closed
@@ -232,7 +246,11 @@ def plan(loop: str, *, now: datetime, identities: Mapping[str, str], selector: s
             # meeting was then reported as having no notes - while the note
             # sat in the mailbox. Notes also genuinely arrive the next day: a
             # Sep 10 meeting's note landed 00:56 PDT on Sep 11.
-            {"query": recipes.gmail_gemini_notes(after=_overnight_opened(overnight))},
+            {
+                "query": recipes.gmail_gemini_notes(after=_overnight_opened(overnight)),
+                "format": "PLAIN_TEXT",
+                "fields": list(GMAIL_FIELDS),
+            },
         ),
         Step(
             "vault",
@@ -492,10 +510,15 @@ def _calendar_windows(
     the Monday-of-next-week rule) lives in one place rather than two.
     """
     if loop in _NO_CALENDAR:
-        # `ingest` reads mail, `chase` reads the chase list he maintains by
-        # hand. Neither looks at the calendar, and fetching a day they ignore
+        # `chase` reads the chase list he maintains by hand and `ship` reads
+        # git. Neither looks at the calendar, and fetching a day they ignore
         # is a connector round-trip for nothing.
         return []
+    if loop == "ingest":
+        # Attendance comes off the calendar row (#168). A Gemini note lands up
+        # to 18h after its meeting (`ledger.ARRIVAL_WINDOW`), so a morning
+        # sweep meets yesterday's calls: two days, one window each.
+        return [recipes.calendar_day(day - timedelta(days=1)), recipes.calendar_day(day)]
     if loop == "prep" and selector:
         # A NAMED prep searches the week, not today - the meeting he wants
         # prepped is usually not today's, that is why he named it. Seven
@@ -513,8 +536,9 @@ def _calendar_windows(
         # and has now HAPPENED is the cheapest evidence there is that a loop
         # moved - his own example for #134 was "drokit meeting w/ chris has
         # been scheduled, you can confirm that yourself through calendar".
-        # `_Payloads.calendar` filters by window, so the wrap still sees only
-        # the day it previews.
+        # Today's window also carries the RSVPs the calls section labels
+        # attendance from (#168). `_Payloads.calendar` filters by window, so the
+        # wrap's preview still sees only the day it previews.
         return [recipes.calendar_day(day), recipes.calendar_day(recipes.next_working_day(day))]
     if loop == "week-ahead":
         this_monday, _ = recipes.week_range(day)
@@ -1015,47 +1039,70 @@ def _chase(
     )
 
 
-def _ingest(sources: _Payloads) -> str:
-    """Classify what landed, and say plainly what could not be placed.
+def _ingest(
+    payloads: Mapping[str, Any],
+    identities: Mapping[str, str],
+    log: EventLog | None,
+) -> str:
+    """The sweep: new notes only, each with attendance, marked seen (#168).
 
-    `classify_items` returns `label=None` for an item it cannot place, and the
-    whole point of surfacing those is that a guess here becomes a vault write
-    later. Invariant 4: surface, do not resolve.
+    Safe on a ~30-minute cadence - `call_notes.sweep` dedupes on the Gmail
+    message id against the event log. A note that is not Gemini-shaped or
+    came back without its body is named under "unplaced", never guessed at
+    and never marked seen.
     """
-    try:
-        mail = list(sources.gmail(""))
-    except RunError:
+    mail = payloads.get("gmail")
+    if not isinstance(mail, list):
         return "ingest: couldn't check gmail"
     if not mail:
         return "ingest: nothing new landed"
+    return call_notes.sweep(
+        mail,
+        _timed_calendar(payloads),
+        call_notes.Principal.from_identities(identities),
+        log=log,
+        tz=timezone_for(identities),
+    )
 
-    # `item_id`, not `id`: `classify_items` reads that key and returns an item
-    # with no id as UNPLACED rather than under a made-up one - so the wrong key
-    # here made every item unplaceable, with a blank name to show for it.
-    items = [
-        {
-            "item_id": str(m.get("id") or m.get("subject") or n),
-            "text": str(m.get("subject", "")),
-        }
-        for n, m in enumerate(mail)
-        if isinstance(m, Mapping)
-    ]
-    placed = classify_items(items)
-    counts = Counter(record.label for record in placed if record.label)
-    sections = [
-        brief.Section("placed", tuple(f"- {label}: {n}" for label, n in sorted(counts.items())))
-    ]
-    # `ingestion.unplaced` is the one definition of "could not be placed"; a
-    # second predicate here stopped following it the moment the first changed.
-    if missing := unplaced(placed):
-        sections.append(
-            brief.Section(
-                f"unplaced ({len(missing)}) - these need you, not a guess",
-                tuple(f"- {item_id}" for item_id in missing),
-            )
-        )
-    return brief.render_push(
-        f"ingest: {len(items)} item{'' if len(items) == 1 else 's'}", sections, ()
+
+def _timed_calendar(payloads: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    """Every fetched calendar record, instants parsed. Declined ones included:
+    attendance needs them, which is why this is not `_seedable`."""
+    return [_Payloads.timed(dict(record)) for record in _seeded(payloads)]
+
+
+def _calls(
+    payloads: Mapping[str, Any],
+    identities: Mapping[str, str],
+    folder: StateFolder | None,
+    now: datetime,
+) -> list[brief.Section]:
+    """The EOD calls section: today's attendance roll and ranked priorities.
+
+    Open decisions come from `Decisions.md` through `closure.asks_in` - the
+    same reading the chaser uses, so "open" means one thing. A vault that
+    cannot be read costs the decision ranking, not the section.
+    """
+    mail = payloads.get("gmail")
+    if not isinstance(mail, list):
+        return [brief.Section("today's calls", ("- couldn't check today's call notes",))]
+    decisions: list[str] = []
+    if folder is not None:
+        try:
+            text = folder.decisions_path.read_text(encoding="utf-8")
+        except OSError:
+            text = ""
+        decisions = [
+            ask.text for ask in closure.asks_in("", text) if ask.section == "Pending decisions"
+        ]
+    tz = timezone_for(identities)
+    return call_notes.priorities(
+        mail,
+        _timed_calendar(payloads),
+        call_notes.Principal.from_identities(identities),
+        decisions=decisions,
+        day=now.astimezone(tz).date(),
+        tz=tz,
     )
 
 
@@ -1241,7 +1288,7 @@ def render(
                 principal=identities.get("SLACK_USER_PRINCIPAL", ""),
             )
         if loop == "ingest":
-            return _ingest(sources)
+            return _ingest(payloads, identities, events)
         if loop == "prep":
             return _prep(now, identities, payloads, ledger, selector, directory)
         if loop == "morning":
@@ -1265,6 +1312,7 @@ def render(
                     rows, jira=_evening(payloads, "jira"), github=_evening(payloads, "github")
                 ),
                 unchecked=_unchecked(payloads),
+                calls=_calls(payloads, identities, folder, now),
             ).render()
         return week_ahead.assemble(
             now=now, sources=sources, identities=identities, state=folder, pulse=pulse
@@ -1285,7 +1333,7 @@ def render(
         if events is not None:
             for row in gave_up:
                 events.record(GAVE_UP, id=row.event_id, start=row.start.isoformat())
-    if loop != "prep":
+    if loop not in _NO_REMEMBER:
         # A prep is a QUESTION about the week ahead, not a day's seeding.
         # Remembering its seven fetched days persisted every future meeting;
         # one cancelled after the snapshot was re-seeded on every later run and
