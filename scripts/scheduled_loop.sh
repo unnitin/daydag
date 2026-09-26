@@ -18,7 +18,7 @@ log="$logdir/$loop-$(date +%Y-%m-%d).log"
 
 case "$loop" in
   prep-ahead)
-    ask="prep tomorrow's calls: run the prep-ahead loop (plan prep-ahead, fetch the calendar day it names keeping attachments and description, plan prep-ahead --calendar <json> --log ~/.local/state/daydag/events.db, run every read, render prep-ahead). Post the rendered prep to the principal's Slack DM (SLACK_USER_PRINCIPAL in .env) and nowhere else. If no call matches, post nothing." ;;
+    ask="prep tomorrow's calls: run the prep-ahead loop. (1) .venv/bin/python -m daydag.run plan prep-ahead. (2) Fetch the calendar day it names and write the connector's events array to /tmp/daydag-calendar.json exactly as returned - do not reshape, rename or drop fields (the code reads google's own attendee flags, optional and self included). (3) .venv/bin/python -m daydag.run plan prep-ahead --calendar /tmp/daydag-calendar.json --log ~/.local/state/daydag/events.db. (4) Run every read it names and write the payloads to /tmp/daydag-payloads.json. (5) .venv/bin/python -m daydag.run render prep-ahead --payloads /tmp/daydag-payloads.json --log ~/.local/state/daydag/events.db. Post render's output verbatim to the principal's Slack DM (SLACK_USER_PRINCIPAL in .env) and nowhere else. Never compose the prep yourself: if any step fails, post one line naming the step that failed. If render says no call matched, post nothing." ;;
   *) echo "unknown loop: $loop" >&2; exit 2 ;;
 esac
 
@@ -26,7 +26,7 @@ allowed=(
   "Read" "Glob" "Grep"
   "Bash(.venv/bin/python -m daydag.run:*)"
   "Bash(.venv/bin/python -m daydag.people:*)"
-  "Write(/tmp/daydag-*)"
+  "Edit(//tmp/daydag-*)"
   "mcp__claude_ai_Google_Calendar__list_events" "mcp__claude_ai_Google_Calendar__get_event"
   "mcp__claude_ai_Gmail__search_threads" "mcp__claude_ai_Gmail__get_thread" "mcp__claude_ai_Gmail__get_message"
   "mcp__claude_ai_Google_Drive__search_files" "mcp__claude_ai_Google_Drive__read_file_content"
@@ -40,6 +40,6 @@ allowed=(
 cd "$repo" || exit 1
 {
   echo "=== $(date '+%F %T %Z') $loop"
-  claude -p "/daily-loops $ask" --allowedTools "${allowed[@]}" --output-format text
+  claude -p "/daily-loops $ask" --allowedTools "${allowed[@]}" --output-format text </dev/null
   echo "=== exit $?"
 } >>"$log" 2>&1

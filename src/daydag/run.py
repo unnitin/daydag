@@ -1671,13 +1671,15 @@ def _project(folder: StateFolder, log: EventLog, ledger: Ledger, now: datetime) 
 
 
 def main(argv: list[str] | None = None) -> int:
-    """`plan` writes JSON to stdout; `render` reads payloads from stdin."""
+    """`plan` writes JSON to stdout; `render` reads payloads from stdin, or
+    from the file `--payloads <path>` names."""
     args = list(sys.argv[1:] if argv is None else argv)
     if len(args) < 2 or args[0] not in {"plan", "render"}:
         print(
             "usage: python -m daydag.run {plan|render} {"
             + "|".join(LOOPS)
             + '} [--log PATH] [--write-state] [--for "<meeting or person>"]'
+            + " [--calendar PATH] [--payloads PATH]"
         )
         return 2
 
@@ -1710,6 +1712,16 @@ def main(argv: list[str] | None = None) -> int:
             print("--calendar needs the path of the fetched calendar json", file=sys.stderr)
             return 2
         calendar = json.loads(Path(after[0]).read_text(encoding="utf-8"))
+    # `--payloads <json>` hands `render` its payload as a file. A scheduled run
+    # is headless Claude, which may not pipe or redirect into a command, so
+    # stdin alone left it able to fetch everything and render nothing.
+    payloads_path = None
+    if "--payloads" in args:
+        after = args[args.index("--payloads") + 1 :]
+        if not after or after[0].startswith("--"):
+            print("--payloads needs the path of the fetched payloads json", file=sys.stderr)
+            return 2
+        payloads_path = Path(after[0])
     try:
         identities = Identities.from_file(Path(".env"))
         now = datetime.now().astimezone()
@@ -1719,7 +1731,11 @@ def main(argv: list[str] | None = None) -> int:
             )
             print(json.dumps(built.to_dict(), indent=2))
         else:
-            payloads = json.load(sys.stdin)
+            payloads = (
+                json.loads(payloads_path.read_text(encoding="utf-8"))
+                if payloads_path is not None
+                else json.load(sys.stdin)
+            )
             print(
                 render(
                     loop,
