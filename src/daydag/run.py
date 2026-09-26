@@ -340,10 +340,11 @@ def _calendar_windows(
         # this same arithmetic, so fetch and match are one set.
         return recipes.calendar_days(day, day + timedelta(days=HORIZON_DAYS - 1), tz=tz)
     if loop == "eod":
-        # `eod_wrap` reads exactly one window, and it is tomorrow's: the wrap
-        # reports the day that just ended and previews the first meeting of
-        # the next one.
-        return [recipes.calendar_day(day + timedelta(days=1))]
+        # `eod_wrap` reads exactly one window, and it is the next WORKING
+        # day's: the wrap reports the day that just ended and previews the
+        # first meeting of the next one he works - Monday from a Friday, not
+        # an empty Saturday (#170).
+        return [recipes.calendar_day(recipes.next_working_day(day))]
     if loop == "week-ahead":
         this_monday, _ = recipes.week_range(day)
         next_monday = this_monday + timedelta(days=7)
