@@ -172,6 +172,7 @@ which is the one thing this system does that nothing else does.
 |---|---|---|
 | "run my morning" | morning brief, SPEC §3.1 | since 6pm yesterday |
 | "prep me for <meeting>" | meeting prep, §3.2 | that meeting's last ~4 weeks |
+| evening, with the wrap / "prep tomorrow's calls" | day-before prep, §3.2 (#171) - `plan prep-ahead`, then `plan prep-ahead --calendar <json> --log <db>` for the reads | the next WORKING day (fri -> mon); notes 8 weeks back |
 | "ingest" / a note landed | meeting-note ingestion, §3.3 - a repeatable sweep, see below | since the last sweep |
 | "chase" / "what's owed to me" / "what's on my plate" | open-loop chaser, §3.4 - `plan chase` names one read per ask; do every one before `render` | the whole chase list, Owed by you, Decisions.md |
 | "wrap up" | EOD wrap, §3.5 | today |
@@ -234,14 +235,15 @@ of them:
 
 ## On-demand commands, and which of them the runner can run
 
-The description advertises ten. **Two of them are loops the runner executes; the
-other eight are things you do, following SPEC §3.8.** Asking `daydag.run` for one
+The description advertises ten. **Two of them are loops the runner executes (plus
+`prep-ahead`, which runs on the evening schedule); the other eight are things you do, following SPEC §3.8.** Asking `daydag.run` for one
 of the eight gets a refusal naming the loops, which is correct and not a bug -
 but knowing which is which before you start saves a wasted round-trip.
 
 | Command | How |
 |---|---|
 | `prep <meeting or person>` | `python -m daydag.run plan prep --for "<name or title words>"`, then fetch, then `render prep --for ...`. Searches the next 7 days in his zone. When the name fits several meetings it ASKS - narrow with words from the title (`"ruwen / nitin"`), never pick one for him. Without `--for`, `prep` takes the next qualifying meeting |
+| `prep-ahead` | the day-before prep for the calls his `## Prep rules` (in `DayDAG/Watchlist.md`) name. Two plan stages: `plan prep-ahead` gives the next working day's calendar step; fetch it (keep `attachments` and `description`) and run `plan prep-ahead --calendar cal.json --log <db>` for one read per ingredient per matched call. Put each result under `prep_ahead.<event_id>.<put_under>`, then write up to 5 `points` (`what`, `why_now`, verbatim `quote`, `permalink`) and, only where the recipe says `ideas`, 1-3 `ideas`. A deck you cannot open goes in as `{"url", "error"}` - never summarise what you could not read. Drop notes whose quoted title is a different meeting - gmail's `subject:` matches words. Posts to his DM only. Rows, not code: to prep a new call, he adds a row |
 | `ship <repo>` | `render ship`, with a `Pulse` built from the mirrors. Without one it degrades to a line |
 | `sweep` | you, following SPEC §3.8 - a pending-items pass across Slack/Gmail/Notion/Obsidian, triaged, every item with a permalink. **Before any line is reported open, run `chase` first**: it reads the reply under every ask State.md already carries, and a sweep that re-lists those from their ask text repeats the 2026-09-18 miss |
 | `find <question>` | you - person-scoped Slack (`from:<@ID>`, `sort:timestamp asc`), then Gmail, then read the thread. Answer with quote + link, never from memory |
