@@ -47,8 +47,10 @@ WHY IT EXISTS
     goes exactly where the capability boundary already is.
 
 KNOWN LIMIT
-    All seven loops in `LOOPS` render. Without `--for`, `prep` renders the
-    NEXT meeting worth prepping; with it, the one he named (`prep_selector`).
+    All eight loops in `LOOPS` render. `prep-ahead` plans in two stages (the day,
+    then the reads for each call a prep rule matched) - see `prep_ahead`.
+    Without `--for`, `prep` renders the NEXT meeting worth prepping; with it,
+    the one he named (`prep_selector`).
     Either way its points come from the overnight Slack payload rather than
     the row-specific searches `prep.sources` would build, because the two-phase
     plan cannot know the row before the fetch. FIRING a prep ping at a
@@ -69,7 +71,7 @@ from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any
 
-from daydag import brief, call_notes, closure, eod_wrap, movement, recipes, week_ahead
+from daydag import brief, call_notes, closure, eod_wrap, movement, prep_ahead, recipes, week_ahead
 from daydag.board import read_board_watchlist
 from daydag.config import ConfigError, resolve_reference, timezone_for
 from daydag.ledger import (
@@ -103,7 +105,12 @@ __all__ = ["LOOPS", "Plan", "RunError", "Step", "main", "plan", "render"]
 #:
 #: `ship` is the odd one - it reads local git mirrors, not a connector, so its
 #: plan has no fetch steps at all. See `_calendar_windows` for the rest.
-LOOPS = ("morning", "eod", "week-ahead", "prep", "ingest", "chase", "ship")
+LOOPS = ("morning", "eod", "week-ahead", "prep", "ingest", "chase", "ship", "prep-ahead")
+
+#: Loops that ask about FUTURE meetings. Remembering what they fetched seeds
+#: meetings that have not happened; one cancelled after the snapshot becomes a
+#: permanent "meeting w/ no notes" (see the note at `_remember`'s call).
+_LOOKS_AHEAD = frozenset({"prep", "prep-ahead"})
 
 #: Loops whose plan asks for no calendar at all. `ingest` left this set in
 #: #168: attendance is read off the calendar row's RSVP, so the sweep needs
@@ -179,8 +186,21 @@ def _principal(identities: Mapping[str, str]) -> str:
     )
 
 
-def plan(loop: str, *, now: datetime, identities: Mapping[str, str], selector: str = "") -> Plan:
-    """What the agent must fetch, with every bound the recipe already applies."""
+def plan(
+    loop: str,
+    *,
+    now: datetime,
+    identities: Mapping[str, str],
+    selector: str = "",
+    calendar: Sequence[Mapping[str, Any]] | None = None,
+    log: Path | str | None = None,
+) -> Plan:
+    """What the agent must fetch, with every bound the recipe already applies.
+
+    ``calendar`` and ``log`` are read by `prep-ahead` only, whose plan has two
+    stages: without a calendar it asks for the next working day; with one it
+    names the reads for each meeting a prep rule matched (`prep_ahead`).
+    """
     _known(loop)
     _aware(now)
     principal = _principal(identities)
@@ -191,6 +211,9 @@ def plan(loop: str, *, now: datetime, identities: Mapping[str, str], selector: s
     # convention as `brief._local` and `recipes.timezone_for`.
     tz = timezone_for(identities)
     day = now.astimezone(tz).date()
+
+    if loop == "prep-ahead":
+        return _plan_prep_ahead(now, day, identities, calendar, log)
 
     if loop == "ship":
         # No connector steps at all. `pulse` reads the git mirrors on disk, so
@@ -278,6 +301,90 @@ def plan(loop: str, *, now: datetime, identities: Mapping[str, str], selector: s
         # for nothing, the same waste `_NO_CALENDAR` exists to prevent.
         steps = [step for step in steps if step.source in {"calendar", "slack"}]
     return Plan(loop=loop, at=now.isoformat(), steps=tuple(steps))
+
+
+def _prep_ahead_rules(identities: Mapping[str, str]) -> prep_ahead.Rules:
+    """His `## Prep rules`, read before every run (the seed if he has none)."""
+    folder = _vault(identities)
+    return prep_ahead.read_rules(folder.watchlist_path if folder is not None else None)
+
+
+def _prep_ahead_match(
+    events: Sequence[Mapping[str, Any]],
+    rules: prep_ahead.Rules,
+    directory: People | None,
+    identities: Mapping[str, str],
+    days: Sequence[date],
+) -> tuple[list[prep_ahead.Matched], list[str]]:
+    """The matched meetings on the target days, and every line worth saying."""
+    wanted = set(days)
+    on_day = [
+        e
+        for e in events
+        if isinstance(e, Mapping) and _Payloads._day_of(_Payloads.timed(e)) in wanted
+    ]
+    roles = {} if directory is None else {person.key: person for person in directory.all()}
+    matched, warnings = prep_ahead.match(
+        on_day, rules, roles, principal=str(identities.get("EMAIL_PRINCIPAL", "") or "")
+    )
+    lines = [*rules.notes, *rules.warnings]
+    if directory is None and any(rule.attendees for rule in rules.rules):
+        lines.append("no people directory (pass --log) - attendee rules can't match anyone")
+    else:
+        lines += warnings
+    return matched, lines
+
+
+def _plan_prep_ahead(
+    now: datetime,
+    day: date,
+    identities: Mapping[str, str],
+    calendar: Sequence[Mapping[str, Any]] | None,
+    log: Path | str | None,
+) -> Plan:
+    """Stage one: the next working day's calendar. Stage two: the reads."""
+    rules = _prep_ahead_rules(identities)
+    days = prep_ahead.target_days(day, rules)
+    tz = timezone_for(identities)
+    if calendar is None:
+        return Plan(
+            loop="prep-ahead",
+            at=now.isoformat(),
+            steps=tuple(
+                Step(
+                    "calendar",
+                    "one day, never a range; keep attachments and description. then run"
+                    " `plan prep-ahead --calendar <that json> --log <db>` for the reads",
+                    {"day": str(w.day), "time_min": w.time_min, "time_max": w.time_max},
+                )
+                for w in (recipes.calendar_day(d, tz=tz) for d in days)
+            ),
+        )
+    directory = People(EventLog.open(log)) if log is not None else None
+    matched, _ = _prep_ahead_match(calendar, rules, directory, identities, days)
+    reads = prep_ahead.plan_reads(matched, today=day, identities=identities)
+    return Plan(
+        loop="prep-ahead",
+        at=now.isoformat(),
+        steps=tuple(Step(r["source"], r["how"], r["detail"]) for r in reads),
+    )
+
+
+def _prep_ahead(
+    now: datetime,
+    identities: Mapping[str, str],
+    payloads: Mapping[str, Any],
+    directory: People | None,
+) -> str:
+    """Tonight's prep for the next working day's calls his rules name (#171)."""
+    rules = _prep_ahead_rules(identities)
+    day = now.astimezone(timezone_for(identities)).date()
+    days = prep_ahead.target_days(day, rules)
+    events = payloads.get("calendar")
+    if not isinstance(events, list):
+        return f"prep: couldn't check the calendar for {days[0]}"
+    matched, lines = _prep_ahead_match(events, rules, directory, identities, days)
+    return prep_ahead.assemble(days[0], matched, payloads.get("prep_ahead"), notes=lines).render()
 
 
 def _extra_notes(loop: str, day: date) -> list[Step]:
@@ -1260,7 +1367,11 @@ def render(
     sources = _Payloads(payloads)
     folder = state if state is not None else _vault(identities)
     events = log if log is None else EventLog.open(log)
-    directory = People(events) if events is not None and loop in _NEEDS_LEDGER else None
+    directory = (
+        People(events)
+        if events is not None and (loop in _NEEDS_LEDGER or loop == "prep-ahead")
+        else None
+    )
     tz = timezone_for(identities)
     # The meeting table is read only by a loop that fetched a calendar or
     # reads the ledger; `chase`, `ingest` and `ship` have nothing to add to it.
@@ -1314,6 +1425,8 @@ def render(
             return _ingest(payloads, identities, events, folder, write_state=write_state)
         if loop == "prep":
             return _prep(now, identities, payloads, ledger, selector, directory)
+        if loop == "prep-ahead":
+            return _prep_ahead(now, identities, payloads, directory)
         if loop == "morning":
             return brief.assemble(
                 now=now,
@@ -1356,7 +1469,7 @@ def render(
         if events is not None:
             for row in gave_up:
                 events.record(GAVE_UP, id=row.event_id, start=row.start.isoformat())
-    if loop not in _NO_REMEMBER:
+    if loop not in _NO_REMEMBER and loop not in _LOOKS_AHEAD:
         # A prep is a QUESTION about the week ahead, not a day's seeding.
         # Remembering its seven fetched days persisted every future meeting;
         # one cancelled after the snapshot was re-seeded on every later run and
@@ -1588,11 +1701,22 @@ def main(argv: list[str] | None = None) -> int:
             print("--for needs a meeting or a person after it", file=sys.stderr)
             return 2
         selector = after[0]
+    # `--calendar <json>` is `prep-ahead`'s second plan stage: the day it asked
+    # for, fetched, so the plan can name each matched meeting's reads.
+    calendar = None
+    if "--calendar" in args:
+        after = args[args.index("--calendar") + 1 :]
+        if not after or after[0].startswith("--"):
+            print("--calendar needs the path of the fetched calendar json", file=sys.stderr)
+            return 2
+        calendar = json.loads(Path(after[0]).read_text(encoding="utf-8"))
     try:
         identities = Identities.from_file(Path(".env"))
         now = datetime.now().astimezone()
         if command == "plan":
-            built = plan(loop, now=now, identities=identities, selector=selector)
+            built = plan(
+                loop, now=now, identities=identities, selector=selector, calendar=calendar, log=log
+            )
             print(json.dumps(built.to_dict(), indent=2))
         else:
             payloads = json.load(sys.stdin)

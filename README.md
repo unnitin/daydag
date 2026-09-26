@@ -9,9 +9,9 @@ them. And it owns almost nothing: five weekly routines already produce the
 plan, the progress report and the pod update, so DayDAG reads their output
 instead of re-deriving it.
 
-**Status: in development.** All seven loops the skill advertises now run. Two of
+**Status: in development.** All eight loops the skill advertises now run. Two of
 them - the morning brief and the Sunday week-ahead - have been checked end to
-end against live connectors on days verified by hand; the other five run but
+end against live connectors on days verified by hand; the other six run but
 have not, and that gap is where every defect found so far has lived. Nothing
 runs on a schedule. See [USAGE.md](USAGE.md) for the per-loop split and how to
 run one.
@@ -53,6 +53,7 @@ artifact is the load-bearing rule; the rest is plumbing.
 | `week_ahead` | SPEC §3.6's Sunday week-ahead: a read of Friday's plan, assembled into one push |
 | `delivery` | The one autonomous send - the principal's DM - and the threaded prep reply |
 | `prep_selector` | Naming the meeting to prep for, and refusing to guess between two |
+| `prep_ahead` | Day-before prep for the calls his `## Prep rules` name - rows he edits, not code |
 | `people` | Who someone is - ids, title, DM, groups, how often met - with stated facts outranking inferred ones |
 | `run` | The two-phase contract that makes a loop runnable: plan the fetch, assemble the push |
 | `evalset` | The hand-labelled ingestion ground truth, and `score()` — so precision is measured, not asserted |
