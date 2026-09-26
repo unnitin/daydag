@@ -529,3 +529,22 @@ def test_an_unknown_timezone_is_refused_rather_than_silently_ignored():
     """A typo must not present as correct-looking wrong times."""
     with pytest.raises(ConfigError, match="not a known IANA zone"):
         timezone_for({"TIMEZONE": "Not/AZone"})
+
+
+# --------------------------------------------------------------------------
+# the next working day - what the EOD wrap means by "tomorrow" (#170)
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("today", "expected"),
+    [
+        (date(2026, 9, 21), date(2026, 9, 22)),  # mon -> tue
+        (date(2026, 9, 24), date(2026, 9, 25)),  # thu -> fri
+        (date(2026, 9, 25), date(2026, 9, 28)),  # fri -> mon, the real case
+        (date(2026, 9, 26), date(2026, 9, 28)),  # sat -> mon
+        (date(2026, 9, 27), date(2026, 9, 28)),  # sun -> mon
+    ],
+)
+def test_the_next_working_day_skips_the_weekend(today, expected):
+    assert recipes.next_working_day(today) == expected

@@ -432,3 +432,51 @@ def test_the_moved_count_counts_movement_not_failure_notices(tmp_path):
 
     assert "could not fetch" in text, "the degrade line still ships"
     assert "moved (1)" not in text, f"a failure notice was counted as movement:\n{text}"
+
+
+# --------------------------------------------------------------------------
+# "tomorrow" is the next WORKING day (#170)
+# --------------------------------------------------------------------------
+
+
+def _monday_event(event_id, summary, hour, minute=0):
+    start = datetime(2026, 9, 28, hour, minute, tzinfo=PT)
+    return _event(event_id, summary, hour, minute) | {
+        "start": start,
+        "end": start + timedelta(minutes=60),
+    }
+
+
+def test_a_friday_wrap_previews_monday_not_saturday():
+    """The real case: Fri 9/25 17:00 PT read Saturday, found nothing, and said
+    nothing about Monday's 10:30 - the one meeting that needed a decision."""
+    sources = FakeSources(events=[_monday_event("m", "sprint demo", 10, 30)])
+    text = _assemble(sources, now=datetime(2026, 9, 25, 17, 0, tzinfo=PT)).render()
+
+    (window,) = sources.calendar_windows
+    assert window.day == date(2026, 9, 28)
+    start = datetime.fromisoformat(window.time_min)
+    assert datetime.fromisoformat(window.time_max) - start == timedelta(days=1)
+    assert "monday 9/28" in text, f"the header does not name the day:\n{text}"
+    assert "10:30 sprint demo" in text
+    assert "\ntomorrow\n" not in text, "monday is not literally tomorrow"
+    assert not voice_violations(text)
+
+
+@pytest.mark.parametrize("weekend_day", [26, 27])
+def test_a_weekend_wrap_previews_monday(weekend_day):
+    sources = FakeSources(events=[_monday_event("m", "sprint demo", 10, 30)])
+    text = _assemble(sources, now=datetime(2026, 9, weekend_day, 17, 0, tzinfo=PT)).render()
+
+    (window,) = sources.calendar_windows
+    assert window.day == date(2026, 9, 28)
+    assert "10:30 sprint demo" in text
+
+
+def test_the_section_is_still_called_tomorrow_when_it_is():
+    """Sunday -> Monday is literally tomorrow; naming the date there is noise."""
+    sources = FakeSources(events=[_monday_event("m", "sprint demo", 10, 30)])
+    text = _assemble(sources, now=datetime(2026, 9, 27, 17, 0, tzinfo=PT)).render()
+
+    assert "\ntomorrow\n" in text
+    assert "monday 9/28" not in text

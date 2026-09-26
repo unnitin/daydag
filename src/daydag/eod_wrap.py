@@ -68,6 +68,13 @@ KNOWN LIMIT
     for are NOT built: there is no Workstreams parser and no gmail-draft-status
     source anywhere in this codebase yet, and inventing either would spend
     guardrail 3 on a claim nothing actually sourced.
+
+    "Tomorrow" is the next working day (`recipes.next_working_day`, #170) -
+    Friday and weekend runs preview Monday, and the section is headed by the
+    day's name when it is not literally tomorrow. Only weekends are skipped:
+    a full-day OOO or holiday on that Monday is NOT, because `run.plan` must
+    pick the one day to fetch before any calendar has been read, so there is
+    nothing to know it from. Such a day previews as it is on the calendar.
 """
 
 from __future__ import annotations
@@ -183,7 +190,7 @@ def assemble(
             "is silently hours wrong on a UTC runner"
         )
     day = now.astimezone(recipes.PACIFIC).date()
-    tomorrow = day + timedelta(days=1)
+    tomorrow = recipes.next_working_day(day)
     read = Reader()
     sections: list[Section] = []
 
@@ -239,7 +246,7 @@ def assemble(
                 tomorrow_lines.append(
                     f"- {summary}: no note found from last time - want prep built another way? lmk"
                 )
-        sections.append(Section("tomorrow", tuple(tomorrow_lines)))
+        sections.append(Section(_day_heading(day, tomorrow), tuple(tomorrow_lines)))
 
     # -- Friday only: the planning outcome, never an offer to run it -------
     if day.weekday() == _FRIDAY:
@@ -258,6 +265,17 @@ def assemble(
         sections=tuple(sections),
         unreachable=tuple(read.unreachable),
     )
+
+
+def _day_heading(day: date, ahead: date) -> str:
+    """``"tomorrow"`` when it literally is, else the day by name: ``"monday 9/28"``.
+
+    A Friday wrap previews Monday (#170), and a heading that still said
+    "tomorrow" would read as Saturday.
+    """
+    if ahead == day + timedelta(days=1):
+        return "tomorrow"
+    return f"{ahead.strftime('%A').lower()} {ahead.month}/{ahead.day}"
 
 
 def _friday_outcome(read: Reader, sources: Sources, day: date) -> list[Section]:

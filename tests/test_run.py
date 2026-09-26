@@ -353,6 +353,37 @@ def test_the_eod_plan_fetches_tomorrow_not_today(identities):
     assert calendar.detail["day"] == "2026-09-08", "the wrap previews tomorrow, not today"
 
 
+def test_the_friday_eod_plan_fetches_monday_and_the_render_shows_it(identities):
+    """Fri 2026-09-25 ~17:00 PT: the wrap read Saturday and said nothing about
+    Monday 9/28 (#170). Still exactly one calendar day - the output bound stands.
+    """
+    friday = datetime(2026, 9, 26, 0, 0, tzinfo=UTC)  # Fri 17:00 PT
+    calendars = [
+        s
+        for s in run.plan("eod", now=friday, identities=identities).steps
+        if s.source == "calendar"
+    ]
+
+    assert len(calendars) == 1, "eod fetches exactly one calendar day"
+    assert calendars[0].detail["day"] == "2026-09-28", "friday previews monday, not saturday"
+
+    payloads = _payloads(
+        calendar=[
+            {
+                "id": "demo1",
+                "summary": "Sprint demo",
+                "start": "2026-09-28T10:30:00-07:00",
+                "end": "2026-09-28T11:30:00-07:00",
+                "attendees": ["a@example.com", "b@example.com"],
+            }
+        ]
+    )
+    text = run.render("eod", now=friday, identities=identities, payloads=payloads)
+
+    assert "monday 9/28" in text, f"the header does not name monday:\n{text}"
+    assert "10:30 Sprint demo" in text, f"monday's first meeting is missing:\n{text}"
+
+
 def test_the_week_ahead_plan_fetches_seven_days_of_next_week(identities):
     """SKILL.md advertises "next 7 days". The plan fetched one, so the Monday
     prep queue could only ever see a single day - and that day was in the past
