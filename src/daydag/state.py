@@ -18,12 +18,13 @@ USING IT
 
 CONTRACTS
     1. Every record carries a sensitivity MARK, and ONE switch decides what
-       the mark does in the vault: `WITHHOLD_PRIVATE_FROM_VAULT`, below. Since
-       2026-09-25 (#180, the principal's explicit decision) it is False and a
-       private item is written to `State.md` exactly like a normal one. Set it
-       True and `_visible` withholds private items from the vault again - the
-       rule before #180 - with nothing to re-derive, because the mark was
-       never dropped. The event log keeps the mark either way.
+       the mark does, in the vault and in the DM: `WITHHOLD_PRIVATE`, read
+       only through `withholds_private()`. Since 2026-09-25 (#180, the
+       principal's explicit decision) it is False and a private item is
+       quoted and written to `State.md` exactly like a normal one. Set it
+       True and `_visible` withholds private items from the vault while
+       `call_notes` quotes them minimally in the DM - the rule before #180 -
+       with nothing to re-derive, because the mark was never dropped.
     2. `update_state` runs `chase`, `watch` AND `notes_gaps` through one
        `_visible` gate before anything is rendered - one filter, so the
        switch in (1) cannot be wired to two of the three lists and forgotten
@@ -84,23 +85,34 @@ from typing import Any
 from daydag.payloads import has
 from daydag.voice import WARN
 
-#: THE SWITCH for house rule 7 in the vault - the one place it is decided.
-#:
-#: False (since 2026-09-25, #180): a record marked ``sensitivity: private`` is
-#: written to `State.md` exactly like a normal one. The principal, after
-#: discussing the tradeoff: "i think we should treat sensitive items the same"
-#: / "i think wire everything consistently for now, we can change later".
-#:
-#: True: `_visible` withholds private items from `chase`, `watch` and
-#: `notes_gaps` again - the rule before #180, when the vault being plaintext
-#: on every device outweighed a missed item. Every record still carries its
-#: mark (`classify_sensitivity`, `SensitivityRequired`), so flipping this
-#: back needs nothing re-derived. Read at call time, so a test can flip it.
-WITHHOLD_PRIVATE_FROM_VAULT = False
-
 #: The sanctioned warning glyph (plain U+26A0, not its emoji-presentation
 #: twin) - `daydag.voice` is the register authority on this; a chase item that
 #: cannot be rendered in full still has to stay inside house voice.
+
+#: THE SWITCH for house rule 7 - the one place it is decided, for the vault
+#: AND the DM. Read it through `withholds_private()`, never directly.
+#:
+#: False (since 2026-09-25, #180): a record marked ``sensitivity: private`` is
+#: quoted in the DM and written to `State.md` exactly like a normal one. The
+#: principal, after discussing the tradeoff: "i think we should treat
+#: sensitive items the same" / "i think wire everything consistently for now,
+#: we can change later".
+#:
+#: True: the rule before #180, both halves. `_visible` withholds private
+#: items from `chase`, `watch` and `notes_gaps`, and `call_notes` goes back
+#: to minimal quoting in the DM (a private line withheld, a step from a
+#: private note shown by title, a private sentence never the attendance
+#: quote). Every record still carries its mark (`classify_sensitivity`,
+#: `SensitivityRequired`), so flipping this needs nothing re-derived.
+WITHHOLD_PRIVATE = False
+
+
+def withholds_private() -> bool:
+    """Whether house rule 7 is on: private items withheld from the vault and
+    minimally quoted in the DM. The ONLY reader of `WITHHOLD_PRIVATE` - read
+    at call time, so a test can flip it - and a guardrail holds it that way."""
+    return WITHHOLD_PRIVATE
+
 
 README = """# DayDAG
 
@@ -115,8 +127,9 @@ a hand edit is an event, and it wins over anything the agent derived.
 | `Proposals/` | the agent | proposed diffs awaiting a yes |
 | `Archive/` | the agent | pre-cutover snapshots |
 
-History, metrics, the meeting ledger and anything sensitive live in the event
-log outside this vault, not here.
+History, metrics and the meeting ledger live in the event log outside this
+vault, not here. Sensitive items are marked there and, by the principal's
+2026-09-25 decision, written here like anything else.
 """
 
 #: A pending decision line, e.g. "- [3] draft nudge to VP-Data? no"
@@ -418,7 +431,7 @@ def _is_private(item: Any) -> bool:
 
 def _visible(items: Iterable[Any]) -> list[Any]:
     """Every item in ``items`` the vault may show: all of them while
-    `WITHHOLD_PRIVATE_FROM_VAULT` is False, the non-private ones when it is True.
+    `withholds_private()` is False, the non-private ones when it is True.
 
     `update_state`'s one gate for `chase`, `watch` and `notes_gaps` alike - the
     filter that a private carry-forward once slipped past because `watch` had
@@ -427,7 +440,7 @@ def _visible(items: Iterable[Any]) -> list[Any]:
     same way three times, is what makes "forgotten on the third list" a
     contradiction rather than a recurring incident.
     """
-    if not WITHHOLD_PRIVATE_FROM_VAULT:
+    if not withholds_private():
         return list(items)
     return [item for item in items if not _is_private(item)]
 
@@ -751,10 +764,12 @@ def _needles_for(item: ChaseItem) -> tuple[str, ...]:
     False and the item is appended on EVERY run: four loops a day, four copies
     a day, unbounded, in the one file this whole change exists to protect.
     """
+    # A producer whose ask is a short title ("Test Plan") names a longer
+    # needle - its own rendered head prefix - since the bare title sits inside
+    # other titles ("Create Test Plan") and a false match drops a real ask.
+    ask = str(item.extra.get("needle") or item.ask)
     return tuple(
-        n
-        for n, floor in ((item.ask, _MIN_ASK), (item.key, _MIN_KEY))
-        if n and len(_flatten(n)) >= floor
+        n for n, floor in ((ask, _MIN_ASK), (item.key, _MIN_KEY)) if n and len(_flatten(n)) >= floor
     )
 
 
@@ -844,7 +859,7 @@ class StateFolder:
 
         ``chase``, ``watch`` and ``notes_gaps`` still pass through ``_visible``
         first - one filter, applied the same way to all three, so the
-        `WITHHOLD_PRIVATE_FROM_VAULT` switch cannot be wired to two of them and
+        `WITHHOLD_PRIVATE` switch cannot be wired to two of them and
         forgotten on the third. Appending rather than replacing must not route
         around the gate a private carry-forward once slipped past.
 
@@ -1000,7 +1015,7 @@ class _Event:
 VAULT_BOUND = frozenset({"loop_opened", "carry_forward", "call_note_item"})
 
 #: House rule 7's categories, as the words that carry them - the MARK, which
-#: `WITHHOLD_PRIVATE_FROM_VAULT` decides the effect of. A FLOOR, not a
+#: `WITHHOLD_PRIVATE` decides the effect of. A FLOOR, not a
 #: ceiling: matching any of these makes an item private; matching none proves
 #: nothing, which is why a DM origin is decisive on its own - that is where
 #: these conversations actually happen. Extend it, never narrow it.
@@ -1051,7 +1066,7 @@ def classify_sensitivity(*texts: Any, origin: str = "") -> str:
     better says ``"normal"`` explicitly.
 
     This decides the MARK only. What the mark does in the vault is
-    `WITHHOLD_PRIVATE_FROM_VAULT`'s call - nothing, since #180.
+    `WITHHOLD_PRIVATE`'s call - nothing, since #180.
     """
     if str(origin).strip().casefold() in _DM_ORIGINS:
         return "private"

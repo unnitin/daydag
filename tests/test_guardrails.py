@@ -32,8 +32,9 @@ COVERED (behavioural - real code, real assertions)
       other vault file, keeping their private mark in the event log - a
       DELIBERATE rule change (#180, the principal's decision of 2026-09-25);
       the pre-#180 "reach no file in the vault" rule is still pinned, under
-      its one switch `state.WITHHOLD_PRIVATE_FROM_VAULT`, which an AST check
-      holds to a single reader
+      its one switch `state.WITHHOLD_PRIVATE`, which also restores minimal
+      quoting in the DM; an AST check holds it to a single reader,
+      `state.withholds_private()`
     - a pending decision never reads its own text as an answer
     - `sensitivity: private` is un-routable to any shared surface
     - the registry's one-writer check fires regardless of declaration order
@@ -701,7 +702,7 @@ def test_a_private_item_reaches_state_md_like_a_normal_one_and_no_other_vault_fi
     item is written to `State.md` exactly as a normal one is. What still
     holds: it lands in `State.md` and in no other vault file, and the event
     log keeps its private mark, so the rule can be switched back
-    (`state.WITHHOLD_PRIVATE_FROM_VAULT`, pinned below) with nothing to re-derive.
+    (`state.WITHHOLD_PRIVATE`, pinned below) with nothing to re-derive.
     """
     marker = "growth-area-carry-forward"
     log = EventLog.open(":memory:")
@@ -750,10 +751,13 @@ def test_switching_rule_7_back_withholds_private_items_from_every_vault_file(
 
 @pytest.mark.guardrail
 def test_the_rule_7_switch_is_read_in_exactly_one_place():
-    """BEHAVIOURAL (AST). "One flag, one obvious place" (#180): the switch is
-    defined in `daydag.state` and read only by `_visible`, the one gate all
-    three lists pass through. A second reader is a second rule."""
+    """BEHAVIOURAL (AST). "One flag, one obvious place" (#180, #181): the
+    switch is defined in `daydag.state` and read only by
+    `state.withholds_private()`. The vault gate (`_visible`) and the DM's
+    minimal quoting (`call_notes`) both ask that function, so one flag
+    tightens both and neither can grow a private copy of the rule."""
     readers: list[str] = []
+    askers: set[str] = set()
     for path in PACKAGE.rglob("*.py"):
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
@@ -761,9 +765,12 @@ def test_the_rule_7_switch_is_read_in_exactly_one_place():
                 continue
             for inner in ast.walk(node):
                 name = getattr(inner, "id", None) or getattr(inner, "attr", None)
-                if name == "WITHHOLD_PRIVATE_FROM_VAULT":
+                if name == "WITHHOLD_PRIVATE":
                     readers.append(f"{path.name}:{node.name}")
-    assert sorted(set(readers)) == ["state.py:_visible"], readers
+                if name == "withholds_private" and node.name != "withholds_private":
+                    askers.add(path.name)
+    assert sorted(set(readers)) == ["state.py:withholds_private"], readers
+    assert {"state.py", "call_notes.py"} <= askers, askers
 
 
 @pytest.mark.guardrail

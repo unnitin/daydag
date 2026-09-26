@@ -160,7 +160,7 @@ def test_two_sweeps_append_each_item_exactly_once(tmp_path, folder):
         _sweep(log)
         folder.update_state(chase=_filed(log))
 
-    assert folder.read_state().count("Run Data Checks: Execute") == 2  # head + quote
+    assert folder.read_state().count("Run Data Checks: Execute") == 1  # the quote only
     assert folder.read_state().count("- Alex Rivera · Run Data Checks") == 1
 
 
@@ -314,4 +314,170 @@ def test_ingest_files_only_call_note_items_not_other_producers(identities, tmp_p
 def test_rule_7_is_off_by_the_principals_decision_until_he_tightens_it():
     """The switch's default IS the decision (#180, 2026-09-25). Flipping it is
     a guardrail change and comes with the docs that state the rule."""
-    assert state.WITHHOLD_PRIVATE_FROM_VAULT is False
+    assert state.WITHHOLD_PRIVATE is False
+    assert state.withholds_private() is False
+
+
+# --------------------------------------------------------------------------
+# follow-ups from the real 9/25 replay (#181 review)
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.guardrail
+def test_one_flag_tightens_both_the_dm_and_the_vault(tmp_path, folder, withholding):
+    """The principal: the rule-7 switch gates the DM AND the vault, as the
+    pre-#180 rule did. On: the comp step is not quoted in the DM and is not
+    filed to State.md; its row is still recorded, with its mark, in the log."""
+    log = EventLog.open(tmp_path / "e.db")
+    text = _sweep(log, notes=[NOTES[3]])
+    folder.update_state(chase=_filed(log))
+
+    assert "salary" not in text.casefold() and "promotion" not in text.casefold()
+    assert "personnel/comp" in text
+    assert "Draft Promotion Case" not in folder.read_state()
+    assert [i.sensitivity for i in _filed(log)] == ["private"]
+
+
+def test_with_the_flag_on_a_sensitive_notes_step_shows_only_its_title(tmp_path, withholding):
+    note = mail(
+        "m8",
+        "Alex / Sam - 1:1",
+        "2026-09-25T19:43:22Z",
+        body(
+            "Alex / Sam - 1:1",
+            ["Alex suggested capping the contractor's compensation."],
+            ["[Alex Rivera] Discuss Contracting: Consult finance about the contract."],
+        ),
+    )
+    text = _sweep(EventLog.open(tmp_path / "e.db"), notes=[note])
+
+    assert "Discuss Contracting - detail not quoted" in text
+    assert "Consult finance about the contract" not in text
+
+
+def test_with_the_flag_on_sensitive_speech_proves_attendance_without_being_quoted(withholding):
+    evidence = body(
+        "x",
+        [
+            "Alex suggested capping the salary band for the role.",
+            "Alex noted the roadmap needs a three-month cut.",
+        ],
+        [],
+    )
+    verdict = call_notes.attendance("needsAction", evidence, PRINCIPAL)
+    assert verdict.status == call_notes.ATTENDED
+    assert "salary" not in verdict.reason and "three-month cut" in verdict.reason
+
+    only = body("x", ["Alex suggested capping the salary band for the role."], [])
+    verdict = call_notes.attendance("needsAction", only, PRINCIPAL)
+    assert "salary" not in verdict.reason and "not quoted" in verdict.reason
+
+
+def test_a_notes_section_heading_never_becomes_an_item(tmp_path):
+    """Replay bug: "unassigned · Revenue data platform data model and
+    architecture" - a Quick Notes HEADING - was filed under "touches an open
+    decision". A heading is not a sentence, and it is not an ask either."""
+    note = mail(
+        "m5",
+        "Eng Sync",
+        "2026-09-25T17:13:04Z",
+        body(
+            "Eng Sync",
+            ["Revenue spine grain options and data model", "", "Robin reviewed the grain."],
+            ["[Robin Hale] Consolidate Notes: Organize discussion points."],
+        ),
+    )
+    log = EventLog.open(tmp_path / "e.db")
+    text = _sweep(log, notes=[note])
+    eod = "\n".join(
+        s.render()
+        for s in call_notes.priorities(
+            [note], EVENTS, PRINCIPAL, decisions=DECISIONS, day=SWEEP.date(), tz=PT
+        )
+    )
+
+    assert "Revenue spine grain options and data model" not in text
+    assert "Revenue spine grain options and data model" not in eod
+    assert not _filed(log)
+
+
+def test_only_bracket_owner_next_steps_are_filed_never_prose(tmp_path):
+    """Prose that touches a decision still ranks in the EOD, but the chase list
+    takes owned next steps only - a status sentence has nobody to chase."""
+    log = EventLog.open(tmp_path / "e.db")
+    _sweep(log)
+
+    assert all(i.owner != "unassigned" for i in _filed(log))
+    assert not any("Robin walked through" in i.quote for i in _filed(log))
+
+
+def test_the_ask_line_is_the_steps_title_and_the_quote_is_the_full_text(tmp_path, folder):
+    log = EventLog.open(tmp_path / "e.db")
+    _sweep(log, notes=[NOTES[0]])
+    folder.update_state(chase=_filed(log))
+
+    item = next(i for i in _filed(log) if i.ask == "Run Data Checks")
+    assert item.quote.startswith("Run Data Checks: Execute data quality checks")
+    head = next(line for line in folder.read_state().splitlines() if "Run Data Checks" in line)
+    assert head.startswith("- Alex Rivera · Run Data Checks · (from Pod Standup")
+    assert "..." not in folder.read_state()
+    assert folder.read_state().count("Execute data quality checks") == 1  # the quote only
+
+
+def test_a_title_inside_another_title_is_still_filed(tmp_path, folder):
+    """ "Test Plan" sits inside "Create Test Plan" (both real 9/25 step
+    shapes, one owner, one note). A bare-title needle reads the second as
+    already filed and drops it."""
+    note = mail(
+        "m6",
+        "Pod Standup",
+        "2026-09-25T16:42:42Z",
+        body(
+            "Pod Standup",
+            ["Casey walked the release plan."],
+            [
+                "[Sam Okafor] Create Test Plan: Develop a test plan for the loads.",
+                "[Sam Okafor] Test Plan: Generate the document.",
+            ],
+        ),
+    )
+    log = EventLog.open(tmp_path / "e.db")
+    _sweep(log, notes=[note])
+    folder.update_state(chase=_filed(log))
+    folder.update_state(chase=_filed(log))
+
+    text = folder.read_state()
+    assert text.count("- Sam Okafor · Create Test Plan ·") == 1
+    assert text.count("- Sam Okafor · Test Plan ·") == 1
+
+
+def test_an_unplaced_note_is_reported_once_not_every_sweep(tmp_path):
+    bare = [{k: v for k, v in n.items() if k != "body"} for n in NOTES[:2]]
+    log = EventLog.open(tmp_path / "e.db")
+
+    first = _sweep(log, notes=bare)
+    second = _sweep(log, notes=bare)
+
+    assert "unplaced (2)" in first
+    assert "unplaced (" not in second
+    assert "2 unplaced already reported" in second
+
+
+def test_a_note_still_unplaced_at_the_eod_is_named_there_again(tmp_path):
+    bare = [{k: v for k, v in n.items() if k != "body"} for n in NOTES[:1]]
+    _sweep(EventLog.open(tmp_path / "e.db"), notes=bare)
+
+    eod = "\n".join(
+        s.render()
+        for s in call_notes.priorities(
+            bare, EVENTS, PRINCIPAL, decisions=[], day=SWEEP.date(), tz=PT
+        )
+    )
+    assert "Pod Standup - no body fetched" in eod
+
+
+def test_a_note_unplaced_then_fetched_is_ingested_normally(tmp_path):
+    log = EventLog.open(tmp_path / "e.db")
+    _sweep(log, notes=[{k: v for k, v in NOTES[0].items() if k != "body"}])
+
+    assert "1 new" in _sweep(log, notes=[NOTES[0]])

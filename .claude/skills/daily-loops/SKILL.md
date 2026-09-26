@@ -197,10 +197,14 @@ harmless by construction.
 an open decision in `Decisions.md`, or an ask to one of his reports: each is
 recorded in the event log once per (message id, item text), and with
 `--write-state` appended to `State.md`'s chase list through the append-only
-writer - owner, verbatim quote, note permalink, asked-on, the attendance marker,
-status open. Never a rewrite; his edits and strikes win. The DM lists the same
-items in the same words, and says `filed N to the State.md chase list`.
-"Everything else" stays in the DM. So a missed DM is no longer a missed item.
+writer - owner, the step's title as the ask, the full step as the verbatim quote,
+note permalink, asked-on, the attendance marker, status open. Only `[Owner]` next
+steps are filed; a prose sentence or a section heading never is. Never a
+rewrite; his edits and strikes win. The DM lists the same steps in the same
+words, and says `filed N to the State.md chase list`. "Everything else" stays in
+the DM. So a missed DM is no longer a missed item. An unplaced note (no body,
+not Gemini-shaped) is named once, not every sweep; the EOD's attendance roll
+names it again if it is still unread.
 
 Every note carries his attendance, read off the calendar row's RSVP
 (`response_status` from the attendee marked `self`):
@@ -212,7 +216,8 @@ to him from such a call adds `⚠ you may not have heard this one`. The EOD wrap
 carries "priorities from today's calls", ranked: assigned to him > touches an
 open decision in `Decisions.md` > asks to his reports > everything else, every
 line with the note's permalink. Personnel/comp text is quoted like any other
-line, in the DM and in `State.md` (guardrail 3, changed by #180).
+line, in the DM and in `State.md` (guardrail 3, changed by #180); with
+`state.WITHHOLD_PRIVATE` on, both go back to the pre-#180 minimal quoting.
 
 Match the message format in the SPEC section exactly - the formats were tuned against
 real briefs, and a redesign costs a correction round-trip. Three rules cut across all
@@ -279,7 +284,7 @@ U+26A0 the vault actually uses, not the emoji-presentation variant.
    "wire everything consistently for now, we can change later". They still never go
    into a channel draft or to anyone else (guardrail 1). Every record keeps its
    sensitivity mark, so this can be tightened again later with one switch,
-   `state.WITHHOLD_PRIVATE_FROM_VAULT`. The feedback scan's carry-forward items are
+   `state.WITHHOLD_PRIVATE`, which gates the vault and the DM together. The feedback scan's carry-forward items are
    still not fed into DayDAG at all (SPEC §10.1).
 4. **Surface, don't resolve.** Conflicting dates, duplicate slots, defunct invites from
    people who left, unverified "done" claims - flag them and move on.
