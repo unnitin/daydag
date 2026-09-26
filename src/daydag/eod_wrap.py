@@ -44,6 +44,11 @@ CONTRACTS
        over a 17,703-character file. Everything else it reports comes from a
        `Ledger` or `Pulse` the caller already built and owns; this module
        never queries either directly.
+    7. Live-source evidence is a QUESTION (#134, #167). `looks closed -
+       confirm` and `looks moved - confirm` render `movement` rows as
+       `item: "quote" (permalink) · proposed: status`; `board + repos moved`
+       squashes unclaimed merges and ticket moves to one line per repo or
+       project. None of it ever adds to `closed`, which is his own ticks.
 
 WHY IT EXISTS
     It owns no source and no query, same as `daydag.brief`. Tomorrow's window
@@ -96,9 +101,9 @@ from daydag.brief import (
     render_push,
 )
 from daydag.ledger import Ledger
-from daydag.movement import Movement
+from daydag.movement import Evidence, Movement
 from daydag.pulse import Pulse
-from daydag.voice import Push, render
+from daydag.voice import Push, clipped, render
 
 __all__ = [
     "Sources",
@@ -113,6 +118,10 @@ _FRIDAY = 4
 #: How far ahead the wrap looks for the planning outcome: the week that
 #: `weekly-planning` writes on Fridays is the one starting the next Monday.
 _NEXT_WEEK = timedelta(days=7)
+
+#: How much of an open item's own text leads a proposal line. The row he wrote
+#: can be a paragraph; the permalink and the vault row carry the rest.
+_ITEM_CAP = 100
 
 
 class WrapError(RuntimeError):
@@ -177,6 +186,8 @@ def assemble(
     ledger: Ledger | None = None,
     pulse: Pulse | None = None,
     movement: Sequence[Movement] = (),
+    unclaimed: Sequence[Evidence] = (),
+    unchecked: Sequence[str] = (),
 ) -> Wrap:
     """Build the EOD wrap for ``now``'s local day.
 
@@ -186,6 +197,10 @@ def assemble(
     :func:`daydag.brief.assemble`. ``movement`` arrives already detected
     because this module owns no source and `daydag.movement` reads Slack and
     Gmail, which the wrap's own protocol deliberately does not.
+
+    ``unclaimed`` is board and repo movement no open item claimed
+    (`movement.unclaimed`); ``unchecked`` names the evening sources the caller
+    could not read, each rendered as its own "couldn't check" line (#167).
     """
     if now.tzinfo is None or now.utcoffset() is None:
         raise WrapError(
@@ -233,20 +248,7 @@ def assemble(
     # "1 to confirm" above a section that `render_push` then omitted for being
     # empty. `assemble` is public and takes any Sequence[Movement].
     proposals = [row for row in movement if isinstance(row, Movement) and row.evidence]
-    if proposals:
-        sections.append(
-            Section(
-                f"looks moved - confirm ({len(proposals)})",
-                tuple(
-                    claim(
-                        f"{row.item.text} - {row.proposed} per {row.evidence[0].source}",
-                        row.evidence[0].permalink,
-                        quote=row.evidence[0].quote,
-                    )
-                    for row in proposals
-                ),
-            )
-        )
+    sections += _proposal_sections(proposals)
 
     # -- what moved: the pulse's own block, reused verbatim ----------------
     moved_lines: list[str] = []
@@ -262,6 +264,11 @@ def assemble(
             # failure to read is not a thing that moved.
             count = len(read("the pulse", pulse.items, []))
             sections.append(Section(f"moved ({count})", tuple(moved_lines)))
+
+    # -- board + repo movement no open item claimed (#167) -----------------
+    loose, loose_count = _unclaimed_section(unclaimed, "\n".join(moved_lines))
+    if loose is not None:
+        sections.append(loose)
 
     # -- tomorrow's first meeting, plus any prep gap -----------------------
     window = recipes.calendar_day(tomorrow)
@@ -289,15 +296,17 @@ def assemble(
         Push.EOD_WRAP,
         {
             "closed": "?" if "the weekly note" in read.unreachable else len(closed),
-            "moved": "?" if "the pulse" in read.unreachable else len(moved_lines),
+            "moved": "?" if "the pulse" in read.unreachable else len(moved_lines) + loose_count,
             "confirm": len(proposals),
         },
     )
+    unreachable = [*read.unreachable]
+    unreachable += [str(name) for name in unchecked if str(name) not in unreachable]
     return Wrap(
         day=day,
         header=header,
         sections=tuple(sections),
-        unreachable=tuple(read.unreachable),
+        unreachable=tuple(unreachable),
     )
 
 
@@ -310,6 +319,66 @@ def _day_heading(day: date, ahead: date) -> str:
     if ahead == day + timedelta(days=1):
         return "tomorrow"
     return f"{ahead.strftime('%A').lower()} {ahead.month}/{ahead.day}"
+
+
+def _line(row: Movement) -> str:
+    """`item: "verbatim evidence" (permalink) · proposed: status` - one row.
+
+    The evidence quoted is the one that earned the label (`movement.detect`
+    orders it first), so the status and the quote beside it agree. `claim`
+    renders the citation, so a linkless row still admits it rather than
+    passing as sourced.
+    """
+    evidence = row.evidence[0]
+    item = clipped(" ".join(row.item.text.split()), _ITEM_CAP, ellipsis="...")
+    return f"{claim(item, evidence.permalink, quote=evidence.quote)} · proposed: {row.proposed}"
+
+
+def _proposal_sections(proposals: Sequence[Movement]) -> list[Section]:
+    """The `looks closed` and `looks moved` sections - questions, never facts.
+
+    The split is `Movement.CLOSING`: he replied on the ask's own thread, or
+    dropped a link where the person he owes it would see it. Everything else
+    - a merge, a ticket that changed column, a meeting that now exists, a
+    mention - is movement. Neither heading ever adds to `closed`: that count
+    is his own ticks and nothing a live source says (#18, #134).
+    """
+    closing = [row for row in proposals if row.proposed in Movement.CLOSING]
+    moving = [row for row in proposals if row.proposed not in Movement.CLOSING]
+    out: list[Section] = []
+    if closing:
+        out.append(Section(f"looks closed - confirm ({len(closing)})", tuple(map(_line, closing))))
+    if moving:
+        out.append(Section(f"looks moved - confirm ({len(moving)})", tuple(map(_line, moving))))
+    return out
+
+
+def _unclaimed_section(
+    unclaimed: Sequence[Evidence], pulse_block: str
+) -> tuple[Section | None, int]:
+    """Board and repo movement no open item claimed - one line per repo or project.
+
+    Squashed to the repo or board, never a commit log (SPEC 3.7 rule 1): the
+    real 2026-09-25 evening had 31 merges across the watched repos, and one
+    line each buried everything else. Each line quotes the first item with
+    its own permalink and counts the rest. Skips anything the pulse block
+    already cites, so a merge the mirrors saw is not printed twice. A merge
+    is still only movement - counted in `moved`, never in `closed`.
+    """
+    groups: dict[tuple[str, str], list[Evidence]] = {}
+    for evidence in unclaimed:
+        if isinstance(evidence, Evidence) and evidence.permalink not in pulse_block:
+            key = (evidence.source, evidence.group or evidence.permalink)
+            groups.setdefault(key, []).append(evidence)
+    if not groups:
+        return None, 0
+    lines = []
+    for (_source, group), items in groups.items():
+        first = items[0]
+        more = f" · +{len(items) - 1} more in {group}" if len(items) > 1 else ""
+        lines.append(claim(f"{first.source}: {first.quote}", first.permalink) + more)
+    total = sum(len(items) for items in groups.values())
+    return Section(f"board + repos moved ({total})", tuple(lines)), total
 
 
 def _friday_outcome(read: Reader, sources: Sources, day: date) -> list[Section]:

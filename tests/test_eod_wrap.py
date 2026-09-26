@@ -590,3 +590,132 @@ def test_an_evidence_less_row_is_not_counted_as_something_to_confirm():
 
     assert "0 to confirm" in text, text
     assert "looks moved" not in text, text
+
+
+# --------------------------------------------------------------------------
+# #167 - "closed" and "moved" render from the proposals. The 2026-09-25 wrap
+# said `0 closed, 0 moved` on a day he answered the Sponsor by email and sent
+# a doc the chase list was waiting on.
+# --------------------------------------------------------------------------
+
+
+def _row(proposed, *, text="sponsor → owner-a · the youtube question", source="gmail"):
+    from daydag.movement import Evidence, Movement, OpenItem
+
+    return Movement(
+        item=OpenItem(key=text, text=text, owner="", source="DayDAG/State.md"),
+        evidence=(Evidence(source, "2 factors influence the deviation", "https://x/thread", "t"),),
+        proposed=proposed,
+    )
+
+
+def test_his_reply_renders_under_looks_closed_as_a_question():
+    text = _assemble(FakeSources(), movement=[_row("answered")]).render()
+
+    assert "looks closed - confirm (1)" in text, text
+    line = next(line for line in text.splitlines() if "youtube question" in line)
+    assert '"2 factors influence the deviation"' in line, line
+    assert "(https://x/thread)" in line and line.endswith("proposed: answered"), line
+
+
+def test_a_merged_pr_renders_under_looks_moved_never_looks_closed():
+    """#18: merged is evidence of movement, never closure."""
+    text = _assemble(FakeSources(), movement=[_row("merged", source="github")]).render()
+
+    assert "looks closed" not in text, text
+    assert "looks moved - confirm (1)" in text, text
+    assert "proposed: merged" in text, text
+
+
+def test_closing_and_moving_proposals_split_and_both_count_as_to_confirm():
+    text = _assemble(
+        FakeSources(),
+        movement=[
+            _row("answered"),
+            _row("sent", text="partner-b → you · two actions"),
+            _row("discussed", text="x · y"),
+        ],
+    ).render()
+
+    assert "looks closed - confirm (2)" in text, text
+    assert "looks moved - confirm (1)" in text, text
+    assert text.splitlines()[0].endswith("3 to confirm"), text
+
+
+@pytest.mark.guardrail
+def test_a_closing_proposal_is_never_counted_as_closed_today():
+    """`answered` and `sent` LOOK like closure; he confirms. Nothing a live
+    source says adds to the ticked-checkbox count or renders as a closure."""
+    text = _assemble(FakeSources(), movement=[_row("answered"), _row("sent")]).render()
+
+    assert text.startswith("wrap: 0 closed"), text
+    assert not [line for line in text.splitlines() if line.startswith("closed today")], text
+    for word in ("closed", "done", "resolved"):
+        assert f"- {word}" not in text.lower(), text
+    from daydag.brief import unsourced_claims
+
+    assert unsourced_claims(text) == [], text
+
+
+def test_board_and_repo_movement_no_item_claims_renders_as_moved_with_its_link():
+    from daydag.movement import Evidence
+
+    loose = [
+        Evidence(
+            "github",
+            "ExampleOrg/service-a#9 fix the thing",
+            "https://github.com/ExampleOrg/service-a/pull/9",
+            "",
+        ),
+        Evidence(
+            "jira", "CDI-900 s - now Done", "https://example.atlassian.net/browse/CDI-900", ""
+        ),
+    ]
+
+    text = _assemble(FakeSources(), unclaimed=loose).render()
+
+    assert "board + repos moved (2)" in text, text
+    assert (
+        "- github: ExampleOrg/service-a#9 fix the thing (https://github.com/ExampleOrg/service-a/pull/9)"
+        in text
+    )
+    assert text.splitlines()[0].startswith("wrap: 0 closed, 2 moved"), text
+
+
+def test_a_busy_repo_is_one_line_not_a_commit_log():
+    """SPEC 3.7 rule 1: squashed to workstream level, never a commit log. The
+    real 2026-09-25 evening had 31 merges across the watched repos; one line
+    each buried everything else in the wrap."""
+    from daydag.movement import Evidence
+
+    loose = [
+        Evidence(
+            "github",
+            f"Org/busy#{n} change {n}",
+            f"https://github.com/Org/busy/pull/{n}",
+            "",
+            "Org/busy",
+        )
+        for n in (1, 2, 3)
+    ]
+
+    text = _assemble(FakeSources(), unclaimed=loose).render()
+
+    lines = [line for line in text.splitlines() if "Org/busy" in line]
+    assert len(lines) == 1, text
+    assert "(https://github.com/Org/busy/pull/1)" in lines[0] and "+2 more in Org/busy" in lines[0]
+    assert "board + repos moved (3)" in text, text
+    assert text.splitlines()[0].startswith("wrap: 0 closed, 3 moved"), text
+
+
+def test_a_source_the_evening_could_not_reach_is_one_line_each():
+    text = _assemble(FakeSources(), unchecked=["jira", "github"]).render()
+
+    assert "- couldn't check jira" in text and "- couldn't check github" in text, text
+
+
+def test_a_source_that_ran_and_found_nothing_says_nothing():
+    text = _assemble(FakeSources(), unclaimed=[], unchecked=[]).render()
+
+    assert "couldn't check" not in text, text
+    assert "board + repos" not in text, text

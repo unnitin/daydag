@@ -1,12 +1,18 @@
-"""What the LIVE sources say moved, for him to confirm (#134).
+"""What the LIVE sources say moved, for him to confirm (#134, #167).
 
 USING IT
-    from daydag.movement import detect, open_items
+    from daydag.movement import detect, open_items, unclaimed
 
     items = open_items(state=state_md, note=weekly_note, note_path=path)
-    rows = detect(open_items=items, calendar=cal, slack=msgs, gmail=mail, now=now)
-    rows[0].proposed        # "scheduled" | "discussed" - never "closed"
+    rows = detect(
+        open_items=items, calendar=cal, slack=msgs, gmail=mail,
+        slack_sent=his_msgs, gmail_sent=his_mail, slack_sweep=channels_and_dms,
+        jira=moved_tickets, github=merged_reviewed_closed, now=now,
+    )
+    rows[0].proposed        # one of Movement.PROPOSALS - never "closed"
+    rows[0].proposed in Movement.CLOSING   # "answered" / "sent": looks closed
     rows[0].evidence[0].quote, rows[0].evidence[0].permalink
+    unclaimed(rows, jira=moved_tickets, github=merged_reviewed_closed)
 
 CONTRACTS
     1. PURE and TOTAL. No source of its own, no clock of its own, no write
@@ -15,7 +21,7 @@ CONTRACTS
        down with it. `daydag.ingestion` is held to the same two for the same
        reason.
     2. Nothing it returns is a CLOSURE. `Movement.PROPOSALS` is the whole
-       vocabulary and neither member asserts an item is done. This is #18's
+       vocabulary and no member asserts an item is done. This is #18's
        critical rule - "evidence of movement … surfaces it for confirmation,
        it never auto-closes" - lifted out of the chaser, because it is a
        property of the system and not of one loop.
@@ -28,6 +34,11 @@ CONTRACTS
        through, a false positive costs his trust in every row under it.
     5. Keyed on the item, so the same evening's second run proposes the same
        rows rather than a second copy of them.
+    6. IDS BEAT WORDS. An item that names a gmail thread, a Slack permalink, a
+       ticket key or a repo is matched on that id, including ids in his
+       sub-bullets - an id in common is the same thread, not a fuzzy match,
+       so reading sub-bullets for ids cannot manufacture the false positives
+       reading them for WORDS would.
 
 WHY IT EXISTS
     Every loop that reported status read it out of the vault, and the vault
@@ -42,23 +53,38 @@ WHY IT EXISTS
     checkboxes he ticks himself - and so reported `0 closed` on a full day, a
     fact about his bookkeeping dressed as a fact about his week.
 
+WHO SAID IT, AND WHY IT MATTERS (#167)
+    Authorship comes from the payload KEY, never from resolving an author:
+    `slack_sent` and `gmail_sent` are fetched as his by construction
+    (`from:<@principal>`, `in:sent`). That is what licenses the two CLOSING
+    proposals - `answered` (he replied on the thread the ask came from) and
+    `sent` (a link he dropped in the conversation of the person he owes it
+    to). Both are claims about what HE did, which is exactly what the
+    evidence shows; neither says the loop is done, and the wrap renders them
+    under "looks closed - confirm", never under "closed today".
+
 KNOWN LIMIT
-    It does not know who spoke. Resolving a Slack author to a role token needs
-    the people directory, which is why the proposal is "discussed" rather than
-    "the owner replied" - the weaker claim is the one the evidence supports.
-    Repo and Jira evidence is #18's half and is not read here.
+    It does not know who ELSE spoke. Resolving a Slack author to a role token
+    needs the people directory, which is why someone else's message is
+    "discussed" rather than "the owner replied" - the weaker claim is the one
+    the evidence supports. `sent` reads the counterpart from the item's own
+    head (`Name → you`), so a chase row written without an arrow cannot earn
+    it. Jira has no before/after here: a ticket in the window is one whose
+    status or assignee CHANGED, and the quote says where it is now.
 """
 
 from __future__ import annotations
 
+import html
 import re
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
+from daydag.board import keys_in
 from daydag.brief import red_items
-from daydag.state import read_section
+from daydag.state import _BULLET, _HEADING, read_section
 
 #: Words that carry no identity. Everything he writes is about a plan, a team,
 #: a list or the data, so overlap on one of these is overlap on nothing.
@@ -142,6 +168,13 @@ class OpenItem:
     text: str
     owner: str
     source: str
+    #: Ids the item names anywhere in its block, sub-bullets included:
+    #: `gmail:<thread>`, `slack:<channel>:<ts>`, `slackdm:<channel>`,
+    #: `jira:<KEY>`, `repo:<owner/name>`, `pr:<owner/name>#<n>`. Contract 6.
+    anchors: frozenset[str] = field(default_factory=frozenset)
+    #: Names on the OTHER side of an ask he owes (`Name → you`), lowercased
+    #: words. Empty when he does not owe it, which is what keeps `sent` off.
+    counterparts: frozenset[str] = field(default_factory=frozenset)
 
 
 @dataclass(frozen=True)
@@ -152,6 +185,9 @@ class Evidence:
     quote: str
     permalink: str
     at: str
+    #: The repo or Jira project a board/repo record belongs to, so the wrap
+    #: can squash a busy repo to one line (SPEC 3.7 rule 1). Empty elsewhere.
+    group: str = ""
 
 
 @dataclass(frozen=True)
@@ -160,7 +196,24 @@ class Movement:
 
     #: The whole vocabulary. Contract 2: neither member says an item is done.
     #: A scheduled meeting is not a held one and a mention is not an answer.
-    PROPOSALS = ("scheduled", "discussed")
+    #:
+    #: Ordered strongest first: when an item has evidence of several kinds,
+    #: the strongest names the row and its evidence is quoted first, so the
+    #: label and the quote beside it always agree.
+    PROPOSALS = (
+        "answered",
+        "sent",
+        "merged",
+        "ticket-moved",
+        "reviewed",
+        "scheduled",
+        "discussed",
+    )
+    #: The two that LOOK like closure - he replied on the ask's own thread, or
+    #: dropped a link where the person he owes it would see it. Rendered under
+    #: "looks closed - confirm". Still proposals: a reply is not an answer he
+    #: has accepted, and a link is not proof it was the thing asked for.
+    CLOSING = ("answered", "sent")
 
     item: OpenItem
     evidence: tuple[Evidence, ...]
@@ -205,6 +258,7 @@ def open_items(*, state: str, note: str, note_path: str) -> list[OpenItem]:
     open would propose movement against his own annotations.
     """
     items: list[OpenItem] = []
+    blocks = _blocks(str(state or ""), "Chase list")
     for body in read_section(str(state or ""), "Chase list", top_level=True):
         if "~~" in body or _PAUSED.search(body):
             continue
@@ -215,13 +269,118 @@ def open_items(*, state: str, note: str, note_path: str) -> list[OpenItem]:
                 text=body,
                 owner=re.sub(r"[*_`]", "", owner).strip(),
                 source="DayDAG/State.md",
+                anchors=_anchors(blocks.get(body, body), head=body),
+                counterparts=_counterparts(body),
             )
         )
     # `red_items` already skips the ticked side and the triage legend, and
     # reads the note's own layout rather than a template (invariant 6).
     for _lineno, text in red_items(str(note or "")):
-        items.append(OpenItem(key=_key(text), text=text, owner="", source=note_path))
+        items.append(
+            OpenItem(
+                key=_key(text),
+                text=text,
+                owner="",
+                source=note_path,
+                anchors=_anchors(text, head=text),
+            )
+        )
     return _deduped(items)
+
+
+def _blocks(text: str, name: str) -> dict[str, str]:
+    """Each top-level bullet under ``name``, mapped to itself plus its sub-bullets.
+
+    Same section rule as `state.read_section` - a nested heading does not end
+    the section - and its own regexes, imported rather than copied. The block
+    is read for IDS only (contract 6); its words never reach `_terms`.
+    """
+    wanted = name.casefold()
+    collecting, level_of, current = False, 0, ""
+    out: dict[str, list[str]] = {}
+    for line in text.splitlines():
+        heading = _HEADING.match(line)
+        if heading:
+            level = len(heading["hashes"])
+            if heading["name"].casefold() == wanted:
+                collecting, level_of = True, level
+            elif collecting and level <= level_of:
+                collecting = False
+            continue
+        if not collecting:
+            continue
+        bullet = _BULLET.match(line)
+        if bullet and not line[:1].isspace():
+            current = bullet["body"]
+            out.setdefault(current, [current])
+        elif current and line[:1].isspace():
+            out[current].append(line)
+    return {head: "\n".join(lines) for head, lines in out.items()}
+
+
+#: A gmail thread or message id: sixteen lowercase hex digits, standing alone.
+_GMAIL_ID = re.compile(r"(?<![0-9A-Za-z])[0-9a-f]{16}(?![0-9A-Za-z])")
+#: A Slack permalink: the conversation, and `p` + the ts with its dot removed.
+_SLACK_LINK = re.compile(r"archives/(?P<channel>[CDG][A-Z0-9]+)/p(?P<sec>\d{10})(?P<frac>\d{6})")
+#: `owner/name`, optionally as a github url, optionally with `/pull/N`. Loose
+#: on purpose: an anchor only ever matches a record that names the SAME repo,
+#: so a spurious one (`w/ seth`) costs nothing.
+_REPO = re.compile(
+    r"(?:github\.com/)?(?P<slug>[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9][A-Za-z0-9._-]*[A-Za-z0-9])"
+    r"(?:/(?:pull|issues)/(?P<number>\d+))?"
+)
+
+
+def _anchors(block: str, *, head: str = "") -> frozenset[str]:
+    """Every id ``block`` names, typed so two kinds of id can never collide.
+
+    A whole DM (`slackdm:`) is an anchor only when the row's ``head`` links
+    it - that is the conversation the ask came from, so his next message
+    there is plausibly the reply. A DM linked in a sub-bullet is CONTEXT: on
+    the real 2026-09-25 file the sponsor's-question row cited VP-Data's DM,
+    and "sure will join back" there was proposed as the answer.
+    """
+    text = str(block or "")
+    found: set[str] = {f"gmail:{gid}" for gid in _GMAIL_ID.findall(text)}
+    for link in _SLACK_LINK.finditer(text):
+        found.add(f"slack:{link['channel']}:{link['sec']}.{link['frac']}")
+    for link in _SLACK_LINK.finditer(str(head or "")):
+        if link["channel"].startswith("D"):
+            found.add(f"slackdm:{link['channel']}")
+    found |= {f"jira:{key}" for key in keys_in(text)}
+    for repo in _REPO.finditer(text):
+        slug = repo["slug"].casefold()
+        found.add(f"repo:{slug}")
+        if repo["number"]:
+            found.add(f"pr:{slug}#{repo['number']}")
+    return frozenset(found)
+
+
+#: Who "you" is in his own shorthand for an ask he owes.
+_HIM = frozenset({"you", "me", "mine"})
+_NAME_WORD = re.compile(r"[a-z][a-z'-]+")
+
+
+def _counterparts(head: str) -> frozenset[str]:
+    """The names he owes this to, from `Name → you` - or nothing.
+
+    Only the arrow form: it is the one place the row itself says who is
+    waiting on whom. `vp-data · ask` names an owner, and the owner of an ask
+    he is chasing is not someone he owes a delivery to.
+    """
+    first = _EMPHASIS.sub("", str(head).split("·")[0])
+    if "→" not in first:
+        return frozenset()
+    *others, target = first.split("→")
+    if target.strip().casefold() not in _HIM:
+        return frozenset()
+    words: set[str] = set()
+    for part in others:
+        for word in _NAME_WORD.findall(part.casefold()):
+            stem = word.split("-")[0]
+            if len(stem) >= 3 and stem not in _HIM:
+                words.add(stem)
+    return frozenset(words)
 
 
 def _deduped(items: list[OpenItem]) -> list[OpenItem]:
@@ -260,23 +419,226 @@ def _text(record: Mapping[str, Any], *fields: str) -> str:
     return " ".join(str(record.get(f) or "") for f in fields).strip()
 
 
-#: Per source: the field QUOTED, the fields matched on, where the link is, and
-#: where the timestamp is. Quote and match are separate columns because they
-#: answer different questions - a Gemini note matches on its subject and its
-#: snippet together, but quoting the two concatenated produces a sentence that
-#: appears nowhere in the message he is being sent to go and read, which is
-#: contract 3 and house rule 1 broken in the one place they are load-bearing.
-_SHAPES: tuple[tuple[str, str, tuple[str, ...], tuple[str, ...], str], ...] = (
-    ("calendar", "summary", ("summary",), ("htmlLink", "permalink"), "start"),
-    ("slack", "text", ("text",), ("permalink",), "ts"),
-    ("gmail", "subject", ("subject", "snippet"), ("permalink", "link"), "date"),
-)
+@dataclass(frozen=True)
+class _Candidate:
+    """One live record, reduced once to everything any rule reads off it."""
+
+    evidence: Evidence
+    terms: frozenset[str]
+    #: Ids this record IS, in the same typed form as `OpenItem.anchors`.
+    ids: frozenset[str] = frozenset()
+    #: Fetched as HIS (`slack_sent`, `gmail_sent`) - by the payload key, never
+    #: by resolving an author.
+    his: bool = False
+    #: Lowercased words naming the conversation or the recipients - who
+    #: would see it. `sent` matches an item's counterparts against these.
+    audience: frozenset[str] = frozenset()
+    #: Carries a link or an attachment - the shape of a delivery.
+    delivers: bool = False
+    #: Fixed proposal for board/repo records, whose meaning is their kind.
+    fixed: str = ""
+
+
+#: Per word-matched source: the field QUOTED, the fields matched on, where the
+#: link is, and where the timestamp is. Quote and match are separate columns
+#: because they answer different questions - a Gemini note matches on its
+#: subject and its snippet together, but quoting the two concatenated produces
+#: a sentence that appears nowhere in the message he is being sent to go and
+#: read, which is contract 3 and house rule 1 broken where they are
+#: load-bearing.
+_SHAPES: dict[str, tuple[str, tuple[str, ...], tuple[str, ...], str]] = {
+    "calendar": ("summary", ("summary",), ("htmlLink", "permalink"), "start"),
+    "slack": ("text", ("text",), ("permalink",), "ts"),
+    "gmail": ("subject", ("subject", "snippet"), ("permalink", "link"), "date"),
+}
+
+_URL = re.compile(r"https?://", re.IGNORECASE)
+
+
+def _link(record: Mapping[str, Any], fields: Sequence[str]) -> str:
+    return next((str(record[f]) for f in fields if record.get(f)), "")
+
+
+def _slack_ids(record: Mapping[str, Any]) -> frozenset[str]:
+    """The thread a message sits in and the conversation it was posted to."""
+    channel = str(record.get("channel") or record.get("channel_id") or "")
+    if not channel:
+        found = _SLACK_LINK.search(str(record.get("permalink") or ""))
+        channel = found["channel"] if found else ""
+    if not channel:
+        return frozenset()
+    ids = {f"slack:{channel}:{record.get(f)}" for f in ("ts", "thread_ts") if record.get(f)}
+    if channel.startswith("D"):
+        ids.add(f"slackdm:{channel}")
+    return frozenset(ids)
+
+
+def _words(*values: Any) -> frozenset[str]:
+    text = " ".join(
+        " ".join(map(str, v)) if isinstance(v, list | tuple) else str(v or "") for v in values
+    )
+    return frozenset(re.findall(r"[a-z]{3,}", text.casefold()))
+
+
+#: Slack markup that names a person, a channel or a link - never the subject.
+#: `<@U123|Seth Jensen>` and a pasted URL's path segments matched open items on
+#: the real 2026-09-25 evening.
+_SLACK_MARKUP = re.compile(r"<[@#!][^>]*>|<https?://[^>]*>|https?://\S+")
+
+
+def _subject_terms(text: str, participants: frozenset[str]) -> frozenset[str]:
+    """What a message is ABOUT: its words, minus markup and minus the names of
+    the people in the conversation, who are in every message in it."""
+    return frozenset(_terms(_SLACK_MARKUP.sub(" ", text)) - participants)
+
+
+#: A `Name, Name` conversation label or recipient list, as name words.
+_PERSON = re.compile(r"[a-z][a-z'-]{2,}")
+
+
+def _people(*values: Any) -> frozenset[str]:
+    text = " ".join(
+        " ".join(map(str, v)) if isinstance(v, list | tuple) else str(v or "") for v in values
+    )
+    return frozenset(_PERSON.findall(text.casefold().replace(".", " ")))
+
+
+def _slack(records: Any, *, his: bool) -> list[_Candidate]:
+    out: list[_Candidate] = []
+    for record in _records(records):
+        quote, link = _text(record, "text"), _link(record, ("permalink",))
+        if not quote or not link:
+            continue
+        participants = _people(record.get("channel_name"))
+        out.append(
+            _Candidate(
+                Evidence("slack", quote, link, str(record.get("ts") or "")),
+                _subject_terms(quote, participants),
+                ids=_slack_ids(record),
+                his=his,
+                audience=_words(record.get("channel_name"), quote),
+                delivers=bool(_URL.search(quote) or record.get("files")),
+            )
+        )
+    return out
+
+
+#: A Gmail emoji reaction lands in Sent on the thread. It acknowledges; it
+#: answers nothing - on 2026-09-25 a 👍 was proposed as a reply.
+_REACTION = re.compile(r"reacted via Gmail", re.IGNORECASE)
+
+
+def _gmail_sent(records: Any) -> list[_Candidate]:
+    """His own mail. Quoted by its SNIPPET - his words, verbatim - because the
+    subject of a reply is the other person's subject with `Re:` on it."""
+    out: list[_Candidate] = []
+    for record in _records(records):
+        link = _link(record, ("permalink", "viewUrl", "link"))
+        quote = html.unescape(_text(record, "snippet") or _text(record, "subject"))
+        if not quote or not link or _REACTION.search(quote):
+            continue
+        ids = {f"gmail:{record[f]}" for f in ("threadId", "id") if record.get(f)}
+        recipients = _people(record.get("to"), record.get("toRecipients"))
+        out.append(
+            _Candidate(
+                Evidence("gmail", quote, link, str(record.get("date") or "")),
+                _subject_terms(html.unescape(_text(record, "subject", "snippet")), recipients),
+                ids=frozenset(ids),
+                his=True,
+                audience=_words(record.get("to"), record.get("toRecipients")),
+                delivers=bool(record.get("attachments") or _URL.search(quote)),
+            )
+        )
+    return out
+
+
+def _field(record: Mapping[str, Any], name: str) -> Any:
+    """A Jira field, flat or under `fields` - the agent may hand back either."""
+    fields = record.get("fields")
+    if isinstance(fields, Mapping) and name in fields:
+        return fields[name]
+    return record.get(name)
+
+
+def _named(value: Any, key: str = "name") -> str:
+    return str(value.get(key) or "") if isinstance(value, Mapping) else str(value or "")
+
+
+def _jira(records: Any) -> list[_Candidate]:
+    """Tickets whose status or assignee changed in the window - by key only.
+
+    Keys are the spine (SPEC 3.7): a ticket matches the item that names it,
+    never one that happens to share two words with its summary.
+    """
+    out: list[_Candidate] = []
+    for record in _records(records):
+        key = str(record.get("key") or "")
+        link = _link(record, ("permalink", "webUrl", "url"))
+        if not key or not link:
+            continue
+        status = _named(_field(record, "status"))
+        assignee = _named(_field(record, "assignee"), "displayName")
+        quote = " ".join(part for part in (key, _named(_field(record, "summary"))) if part)
+        quote += f" - now {status}" if status else ""
+        quote += f", {assignee}" if assignee else ""
+        out.append(
+            _Candidate(
+                Evidence("jira", quote, link, _named(_field(record, "updated")), key.split("-")[0]),
+                frozenset(),
+                ids=frozenset({f"jira:{key}"}),
+                fixed="ticket-moved",
+            )
+        )
+    return out
+
+
+#: A GitHub hit's `kind` (the plan step that fetched it) -> what it proposes.
+#: A closed ISSUE is a ticket that moved; nothing here says "closed".
+_GITHUB_KINDS = {
+    "merged": "merged",
+    "approved": "reviewed",
+    "changes_requested": "reviewed",
+    "issue_closed": "ticket-moved",
+}
+
+
+def _github(records: Any) -> list[_Candidate]:
+    """Merged, reviewed and closed on watched repos - by repo or PR id only."""
+    out: list[_Candidate] = []
+    for record in _records(records):
+        link = str(record.get("url") or "")
+        proposal = _GITHUB_KINDS.get(str(record.get("kind") or ""))
+        found = _REPO.search(link)
+        if not link or proposal is None or found is None:
+            continue
+        repo = _named(record.get("repository"), "nameWithOwner") or found["slug"]
+        slug = repo.casefold()
+        number = str(record.get("number") or found["number"] or "")
+        ids = {f"repo:{slug}"} | ({f"pr:{slug}#{number}"} if number else set())
+        quote = f"{repo}#{number} {_text(record, 'title')}".strip()
+        out.append(
+            _Candidate(
+                Evidence("github", quote, link, str(record.get("closedAt") or ""), repo),
+                frozenset(),
+                ids=frozenset(ids),
+                fixed=proposal,
+            )
+        )
+    return out
 
 
 def _candidates(
-    calendar: Any, slack: Any, gmail: Any
-) -> list[tuple[str, Evidence, frozenset[str]]]:
-    """Every live record, reduced to (source, evidence, its terms).
+    *,
+    calendar: Any,
+    slack: Any,
+    gmail: Any,
+    slack_sent: Any,
+    gmail_sent: Any,
+    slack_sweep: Any,
+    jira: Any,
+    github: Any,
+) -> list[_Candidate]:
+    """Every live record, reduced once.
 
     One pass over each payload rather than one per open item: the terms are
     the expensive part and they do not depend on which item is being matched.
@@ -287,23 +649,68 @@ def _candidates(
     instead, which renders a Slack quote as though `DayDAG/State.md` said it -
     a citation that points at the wrong document is worse than no row.
     """
-    out: list[tuple[str, Evidence, frozenset[str]]] = []
-    for payload, (source, quote_field, match_fields, link_fields, at_field) in zip(
-        (calendar, slack, gmail), _SHAPES, strict=True
-    ):
+    out: list[_Candidate] = []
+    for source, payload in (("calendar", calendar), ("gmail", gmail)):
+        quote_field, match_fields, link_fields, at_field = _SHAPES[source]
         for record in _records(payload):
-            quote = _text(record, quote_field)
-            link = next((str(record[f]) for f in link_fields if record.get(f)), "")
+            quote, link = _text(record, quote_field), _link(record, link_fields)
             if not quote or not link:
                 continue
             out.append(
-                (
-                    source,
+                _Candidate(
                     Evidence(source, quote, link, str(record.get(at_field) or "")),
                     _terms(_text(record, *match_fields)),
                 )
             )
+    out += _slack(slack, his=False)
+    out += _slack(slack_sweep, his=False)
+    out += _slack(slack_sent, his=True)
+    out += _gmail_sent(gmail_sent)
+    out += _jira(jira)
+    out += _github(github)
     return out
+
+
+#: A bold title at the head of a row - `weekly-planning`'s house format, and
+#: how he writes chase rows. Optional checkbox and triage mark before it.
+_BOLD_TITLE = re.compile(r"^\s*(?:\[[ xX]\]\s*)?(?:🔴\s*)?\*\*(?P<title>.+?)\*\*")
+
+
+def _identity(text: str) -> str:
+    """The words that say WHAT an item is - what words get matched on.
+
+    The bold title when the row has one, since the rest is his annotation (the
+    same reason sub-bullets are never matched on); then the owner field off
+    the front, since `nitin+seth · ...` names who, not what. On the real
+    2026-09-25 evening, matching the whole row proposed a 32-term red item as
+    discussed because an unrelated message shared `draft` and `roadmap` with
+    its description, and a chase row because a DM said `nitin` and `seth`.
+    """
+    found = _BOLD_TITLE.search(str(text))
+    head = found["title"] if found else str(text)
+    return head.split("·", 1)[1] if "·" in head else head
+
+
+def _proposal(item: OpenItem, wanted: frozenset[str], candidate: _Candidate) -> str:
+    """What ``candidate`` proposes about ``item``, or ``""`` for nothing.
+
+    Ids first (contract 6), then his deliveries, then words (contract 4).
+    """
+    shared = item.anchors & candidate.ids
+    if candidate.fixed:
+        return candidate.fixed if shared else ""
+    if shared:
+        return "answered" if candidate.his else "discussed"
+    if (
+        candidate.his
+        and candidate.delivers
+        and item.counterparts
+        and item.counterparts & candidate.audience
+    ):
+        return "sent"
+    if len(wanted & candidate.terms) >= _MIN_OVERLAP:
+        return "scheduled" if candidate.evidence.source == "calendar" else "discussed"
+    return ""
 
 
 def detect(
@@ -312,9 +719,17 @@ def detect(
     calendar: Any = (),
     slack: Any = (),
     gmail: Any = (),
+    slack_sent: Any = (),
+    gmail_sent: Any = (),
+    slack_sweep: Any = (),
+    jira: Any = (),
+    github: Any = (),
     now: datetime | None = None,
 ) -> list[Movement]:
     """One row per open item with evidence against it, in item order.
+
+    The row's label is the strongest proposal any of its evidence supports
+    (`Movement.PROPOSALS` order), and that evidence leads the tuple.
 
     ``now`` is accepted and unused: the windows are the caller's, bounded by
     the recipe that fetched them, and a module that re-derived "today" here
@@ -325,23 +740,54 @@ def detect(
     Args:
         open_items: from :func:`open_items`. Anything that is not an
             ``OpenItem`` is skipped rather than coerced - contract 1.
+        slack_sent, gmail_sent: HIS messages and mail, fetched as his.
+        slack_sweep: watched channels and DMs to him, whoever wrote them.
+        jira, github: the evening's board and repo movement (`run.plan eod`).
     """
-    candidates = _candidates(calendar, slack, gmail)
+    candidates = _candidates(
+        calendar=calendar,
+        slack=slack,
+        gmail=gmail,
+        slack_sent=slack_sent,
+        gmail_sent=gmail_sent,
+        slack_sweep=slack_sweep,
+        jira=jira,
+        github=github,
+    )
+    rank = {name: index for index, name in enumerate(Movement.PROPOSALS)}
     rows: list[Movement] = []
     for item in open_items:
         if not isinstance(item, OpenItem):
             continue
-        wanted = _terms(item.text)
-        hits = [
-            (source, evidence)
-            for source, evidence, terms in candidates
-            if len(wanted & terms) >= _MIN_OVERLAP
-        ]
+        wanted = _terms(_identity(item.text))
+        hits: list[tuple[str, Evidence]] = []
+        seen: set[str] = set()
+        for candidate in candidates:
+            proposal = _proposal(item, wanted, candidate)
+            # One message fetched twice - mentioned AND in a watched channel -
+            # is one piece of evidence, not two.
+            if proposal and candidate.evidence.permalink not in seen:
+                seen.add(candidate.evidence.permalink)
+                hits.append((proposal, candidate.evidence))
         if not hits:
             continue
-        # Calendar wins the label: a room that now exists is a stronger and
-        # more checkable statement than a mention, and it is the one he named
-        # ("you can confirm that yourself through calendar").
-        proposed = "scheduled" if any(source == "calendar" for source, _ in hits) else "discussed"
-        rows.append(Movement(item=item, evidence=tuple(e for _, e in hits), proposed=proposed))
+        hits.sort(key=lambda hit: rank[hit[0]])  # stable: source order within a rank
+        rows.append(Movement(item=item, evidence=tuple(e for _, e in hits), proposed=hits[0][0]))
     return rows
+
+
+def unclaimed(rows: Sequence[Movement], *, jira: Any = (), github: Any = ()) -> list[Evidence]:
+    """Board and repo movement no open item claimed - Jira first, then GitHub.
+
+    The wrap's "moved" block. A merged PR on a watched repo is worth one line
+    whether or not a chase row names it; it is still evidence, never closure,
+    and it is not duplicated when a row already carries it.
+    """
+    claimed = {
+        evidence.permalink for row in rows if isinstance(row, Movement) for evidence in row.evidence
+    }
+    return [
+        candidate.evidence
+        for candidate in (*_jira(jira), *_github(github))
+        if candidate.evidence.permalink not in claimed
+    ]

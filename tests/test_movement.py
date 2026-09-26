@@ -362,3 +362,348 @@ def test_a_gemini_note_is_quoted_by_its_subject_not_by_subject_plus_snippet():
 
     assert row.evidence[0].quote == 'Notes: "Finance x Data" 2026-09-15'
     assert "reconciliation" not in row.evidence[0].quote
+
+
+# --------------------------------------------------------------------------
+# #167 - his own side of the day, the board and the repos
+#
+# The 2026-09-25 wrap rendered `0 closed, 0 moved` on a day he answered the
+# Sponsor's question by email and sent a doc the chase list was waiting on.
+# Neither could be seen: the evening fetched @-mentions and Gemini notes. The
+# fixtures below are synthetic stand-ins for that day's two items.
+# --------------------------------------------------------------------------
+
+SPONSOR_THREAD = "1a0d000000000f44"
+
+STATE_0925 = f"""# State
+
+## Chase list
+
+- **Sponsor → Owner-A · the youtube question that gates the performance roadshow** 🔴
+\t- sponsor replied 05:45: *"do we understand what's driving the still material 6% difference"*
+\t- source: gmail thread `{SPONSOR_THREAD}` (`Performance Domain Ready for the Business`)
+\t- asked-on 2026-09-25 · status open
+- **Partner-B → you · two actions out of the 9/24 1:1** (note landed 9/24 23:34)
+\t- send partner-b the data platform roadmap + walkthrough materials for feedback
+\t- the repo is `ExampleOrg/roadmap-repo` (PR #1 merged)
+- **vp-data · compute consolidation ticket** · CDI-812 · status open
+- **eng-4 · wave 2 cutover** · [slack](https://x.slack.com/archives/C0POD0001/p1790000000000100)
+"""
+
+
+def _sent_mail(thread=SPONSOR_THREAD, subject="Re: Performance Domain Ready for the Business"):
+    return {
+        "id": "1a0d00000000d405",
+        "threadId": thread,
+        "subject": subject,
+        "snippet": "Was just catching up w/ the engineer. 2 factors influence the deviation",
+        "to": ["sponsor@example.com"],
+        "date": "2026-09-25T23:45:30Z",
+        "permalink": f"https://mail.example.com/#all/{thread}",
+    }
+
+
+def _sent_dm(
+    text, *, channel="DPARTNER01", name="DM with Partner-B Park, Principal", ts="1790380022.1"
+):
+    return {
+        "text": text,
+        "ts": ts,
+        "channel": channel,
+        "channel_name": name,
+        "permalink": f"https://example.slack.com/archives/{channel}/p{ts.replace('.', '')}",
+    }
+
+
+def _items():
+    return open_items(state=STATE_0925, note="", note_path="p.md")
+
+
+def _row(rows, fragment):
+    matches = [row for row in rows if fragment in row.item.text]
+    assert len(matches) == 1, [(row.item.text, row.proposed) for row in rows]
+    return matches[0]
+
+
+def _pr(number=2, repo="ExampleOrg/roadmap-repo", title="Apply styling and Overview/Roadmap UI"):
+    return {
+        "kind": "merged",
+        "number": number,
+        "title": title,
+        "url": f"https://github.com/{repo}/pull/{number}",
+        "repository": {"nameWithOwner": repo},
+        "closedAt": "2026-09-25T16:27:16Z",
+    }
+
+
+def _ticket(key="CDI-812", status="In Review"):
+    return {
+        "key": key,
+        "fields": {
+            "summary": "compute engine consolidation",
+            "status": {"name": status},
+            "assignee": {"displayName": "Eng Four"},
+        },
+        "webUrl": f"https://example.atlassian.net/browse/{key}",
+    }
+
+
+def test_his_reply_on_the_asks_own_email_thread_proposes_answered():
+    """The item names the thread in a sub-bullet, which is where he keeps
+    sources. An id in common is not a fuzzy match - it is the same thread."""
+    rows = detect(open_items=_items(), gmail_sent=[_sent_mail()], now=NOW)
+
+    row = _row(rows, "youtube question")
+    assert row.proposed == "answered"
+    assert row.evidence[0].source == "gmail"
+    assert row.evidence[0].permalink.endswith(SPONSOR_THREAD)
+    assert row.proposed in Movement.CLOSING
+
+
+def test_a_reply_on_some_other_thread_is_not_an_answer():
+    other = _sent_mail(thread="1a0dffffffffffff", subject="Re: lunch")
+
+    rows = detect(open_items=_items(), gmail_sent=[other], now=NOW)
+
+    assert not [row for row in rows if "youtube" in row.item.text]
+
+
+def test_a_link_he_sent_in_the_dm_of_the_person_owed_proposes_sent():
+    """`Partner-B → you` - the ask is his. A link dropped in that person's DM
+    is the delivery, and it names nothing the item's head says, which is why
+    term overlap alone never saw it."""
+    dm = _sent_dm("yo, finished some table setting for the platform - https://example.com/doc")
+
+    rows = detect(open_items=_items(), slack_sent=[dm], now=NOW)
+
+    row = _row(rows, "two actions")
+    assert row.proposed == "sent"
+    assert "table setting" in row.evidence[0].quote
+
+
+def test_a_dm_with_no_link_in_it_is_not_a_delivery():
+    dm = _sent_dm("can still talk for a bit if needed")
+
+    rows = detect(open_items=_items(), slack_sent=[dm], now=NOW)
+
+    assert not [row for row in rows if "two actions" in row.item.text]
+
+
+def test_a_link_to_someone_else_is_not_a_delivery_of_this():
+    dm = _sent_dm("here you go https://example.com/x", name="DM with Someone Else, Principal")
+
+    rows = detect(open_items=_items(), slack_sent=[dm], now=NOW)
+
+    assert not [row for row in rows if "two actions" in row.item.text]
+
+
+def test_a_link_he_sends_on_an_ask_he_does_not_owe_is_not_his_delivery():
+    """`Sponsor → Owner-A`: he is not the one who owes it. A link he posts to
+    the sponsor is not the delivery of someone else's answer."""
+    dm = _sent_dm("fyi https://example.com/x", name="DM with Sponsor Name, Principal")
+
+    rows = detect(open_items=_items(), slack_sent=[dm], now=NOW)
+
+    assert not [row for row in rows if row.proposed == "sent"]
+
+
+def _thread_reply(text):
+    return {
+        "text": text,
+        "ts": "1790000500.0002",
+        "thread_ts": "1790000000.000100",
+        "channel": "C0POD0001",
+        "permalink": "https://example.slack.com/archives/C0POD0001/p1790000500000200",
+    }
+
+
+def test_his_reply_in_the_thread_an_ask_came_from_proposes_answered():
+    rows = detect(open_items=_items(), slack_sent=[_thread_reply("on it - lmk")], now=NOW)
+
+    assert _row(rows, "wave 2 cutover").proposed == "answered"
+
+
+def test_someone_elses_reply_in_that_thread_is_discussion_not_an_answer():
+    rows = detect(open_items=_items(), slack_sweep=[_thread_reply("moved to tue")], now=NOW)
+
+    assert _row(rows, "wave 2 cutover").proposed == "discussed"
+
+
+def test_channel_traffic_that_never_mentions_him_is_evidence():
+    """#141's done-when: `movement.detect` fires on a channel message that
+    never mentions him."""
+    msg = _slack("sent the compute consolidation plan to finance", ts="1790000900.1")
+
+    rows = detect(open_items=_items(), slack_sweep=[msg], now=NOW)
+
+    assert _row(rows, "compute consolidation").proposed == "discussed"
+
+
+def test_a_ticket_the_item_names_that_moved_proposes_ticket_moved():
+    rows = detect(open_items=_items(), jira=[_ticket()], now=NOW)
+
+    row = _row(rows, "compute consolidation")
+    assert row.proposed == "ticket-moved"
+    assert row.evidence[0].permalink == "https://example.atlassian.net/browse/CDI-812"
+    assert "In Review" in row.evidence[0].quote
+
+
+def test_a_merged_pr_on_a_repo_the_item_names_proposes_merged_not_closed():
+    """#18: merged is evidence of movement, never closure."""
+    rows = detect(open_items=_items(), github=[_pr()], now=NOW)
+
+    row = _row(rows, "two actions")
+    assert row.proposed == "merged"
+    assert row.proposed not in Movement.CLOSING
+    assert row.evidence[0].permalink == "https://github.com/ExampleOrg/roadmap-repo/pull/2"
+
+
+def test_closing_evidence_leads_when_an_item_has_both():
+    """He delivered AND a PR merged. The stronger claim leads the row, and its
+    evidence is the one quoted first - the label and the quote must agree."""
+    dm = _sent_dm("roadmap walkthrough here https://example.com/doc")
+
+    rows = detect(open_items=_items(), github=[_pr()], slack_sent=[dm], now=NOW)
+
+    row = _row(rows, "two actions")
+    assert row.proposed == "sent"
+    assert row.evidence[0].source == "slack"
+    assert len(row.evidence) == 2
+
+
+def test_board_and_repo_movement_no_item_claims_is_returned_separately():
+    """The done-when's second half: a merged PR on a watched repo renders as
+    moved with its link, whether or not a chase item names it."""
+    from daydag.movement import unclaimed
+
+    pr = _pr(number=9, repo="ExampleOrg/service-a", title="fix the thing")
+    ticket = _ticket(key="CDI-900", status="Done")
+    rows = detect(open_items=_items(), github=[pr], jira=[ticket], now=NOW)
+
+    loose = unclaimed(rows, jira=[ticket], github=[pr])
+
+    assert [e.permalink for e in loose] == [
+        "https://example.atlassian.net/browse/CDI-900",
+        "https://github.com/ExampleOrg/service-a/pull/9",
+    ]
+
+
+def test_evidence_an_item_already_claimed_is_not_also_unclaimed():
+    from daydag.movement import unclaimed
+
+    rows = detect(open_items=_items(), github=[_pr()], now=NOW)
+
+    assert unclaimed(rows, jira=[], github=[_pr()]) == []
+
+
+@pytest.mark.guardrail
+def test_no_source_can_propose_a_closure_word():
+    """#18 again, over every source this module now reads. `answered` and
+    `sent` are claims about what HE did - neither says the loop is done."""
+    found = detect(
+        open_items=_items(),
+        gmail_sent=[_sent_mail()],
+        slack_sent=[_sent_dm("done https://example.com/doc")],
+        jira=[_ticket(status="Done")],
+        github=[_pr()],
+        now=NOW,
+    )
+
+    assert len(found) >= 3
+    assert all(m.proposed in Movement.PROPOSALS for m in found)
+    assert not {"closed", "done", "complete", "resolved"} & set(Movement.PROPOSALS)
+
+
+def test_the_new_sources_are_total_over_junk():
+    assert (
+        detect(
+            open_items=_items(),
+            slack_sent=[None, {"text": 3}, "x"],
+            gmail_sent={"not": "a list"},
+            slack_sweep=7,
+            jira=[{"key": None}, {"fields": "x"}],
+            github=[{"url": None}, []],
+            now=NOW,
+        )
+        == []
+    )
+
+
+# --------------------------------------------------------------------------
+# what the replay of the real 2026-09-25 evening found. Each of these was a
+# wrong row on real data while every test above was green.
+# --------------------------------------------------------------------------
+
+
+def test_a_dm_cited_as_context_is_not_the_thread_the_ask_came_from():
+    """The sponsor's-question row cited VP-Data's DM in a sub-bullet ("seth's
+    10:18 DM calls it the most urgent item"). He then wrote "sure will join
+    back" in that DM, and the row was proposed `answered` - quoting a message
+    about something else. A DM counts as the ask's own conversation only when
+    the row's HEAD links it."""
+    state = (
+        "# State\n\n## Chase list\n\n"
+        "- **Sponsor → Owner-A · the youtube question**\n"
+        "\t- coupling: the DM calls it urgent - "
+        "https://x.slack.com/archives/DCONTEXT01/p1790356734421279\n"
+        "- **roland · does this time still work?** - "
+        "[slack](https://x.slack.com/archives/DASKED0001/p1789755681441679)\n"
+    )
+    items = open_items(state=state, note="", note_path="p.md")
+    context = _sent_dm("sure will join back", channel="DCONTEXT01", name="DM with Other")
+    asked = _sent_dm("yes still works", channel="DASKED0001", name="DM with Roland R")
+
+    rows = detect(open_items=items, slack_sent=[context, asked], now=NOW)
+
+    assert [(row.item.text[:12], row.proposed) for row in rows] == [("**roland · d", "answered")]
+
+
+def test_a_gmail_reaction_is_not_a_reply():
+    """ "👍 ... reacted via Gmail" lands in sent mail on the thread, and is not
+    an answer to anything."""
+    reaction = _sent_mail()
+    reaction["snippet"] = "👍 Principal reacted via Gmail On Fri, Sep 25 someone wrote:"
+
+    rows = detect(open_items=_items(), gmail_sent=[reaction], now=NOW)
+
+    assert not [row for row in rows if "youtube" in row.item.text]
+
+
+def test_the_names_of_the_people_in_the_room_are_not_what_it_was_about():
+    """Real false positive: "nitin+seth · establish a process..." matched a
+    DM on the two words `nitin` and `seth`. The owner field is who, not what,
+    and the conversation's participants are in every message in it."""
+    state = "# State\n\n## Chase list\n\n- ownera+ownerb · establish a lineage process\n"
+    items = open_items(state=state, note="", note_path="p.md")
+    msg = _sent_dm("ownera ownerb can we talk tomorrow", name="DM with Ownera Person, Ownerb")
+
+    assert detect(open_items=items, slack_sweep=[msg], now=NOW) == []
+
+
+def test_mentions_and_urls_are_not_subject_matter():
+    """`<@U123|Seth Jensen>` and a pasted link's path segments are not words
+    he wrote about the item."""
+    items = [OpenItem(key="k", text="claude artifact jensen review", owner="", source="s")]
+    msg = _slack("<@UPEER00001|Seth Jensen> see <https://claude.ai/artifact/abc|here>")
+
+    assert detect(open_items=items, slack_sweep=[msg], now=NOW) == []
+
+
+def test_a_long_weekly_note_item_matches_on_its_title_not_its_description():
+    """Real false positive: a 32-term red item ("Will 1:1 Wed - bring three
+    things *(mine)* - (a) the progress email ... draft ... roadmap ...")
+    matched an unrelated message on `draft` + `roadmap`, both in the
+    description. The bold title is the item; the rest is his annotation."""
+    note = (
+        "# 0921-0925\n\n## Priorities\n\n"
+        "- [ ] 🔴 **Pin the revenue-domain design date** *(mine)* - carry the "
+        "draft roadmap and the finance review into the steering room\n"
+    )
+    items = open_items(state="", note=note, note_path="p.md")
+
+    unrelated = _slack("can you share the draft roadmap for the platform please")
+    related = _slack("revenue-domain design date is oct 9, pinned", ts="1789000000.0009")
+
+    assert detect(open_items=items, slack_sweep=[unrelated], now=NOW) == []
+    (row,) = detect(open_items=items, slack_sweep=[related], now=NOW)
+    assert row.proposed == "discussed"

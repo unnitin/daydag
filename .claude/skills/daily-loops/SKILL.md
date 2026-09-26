@@ -81,6 +81,11 @@ Then write a payloads file keyed by source:
 | calendar | `id`, `summary`, `start`, `end`, `attendees`, `response_status`, `organizer`, `organizer_is_self`, `notes_attached`, `permalink` (`htmlLink`) | no `end` and the ledger refuses the event - no notes-gap, today or tomorrow. No `permalink` and EVERY line renders "couldn't source this one", because a claim without evidence is tagged rather than trusted |
 | gmail | `subject`, and the mail's own `date` | without a date a note can never attach to its meeting, and ingestion loses it |
 | slack | `permalink` | a claim with no link is withheld - evidence or silence |
+| slack_sent *(eod)* | `text`, `ts`, `permalink`, `channel`, `channel_name` (e.g. "DM with <name>, <him>"), `thread_ts` for a reply | HIS messages today, fetched as his by the query - that is what licenses `answered` (his reply in the thread an ask came from) and `sent` (a link he dropped where the person he owes it would see it). No `channel_name` and `sent` can never fire; no `thread_ts` and a thread reply cannot be matched to its ask |
+| gmail_sent *(eod)* | `threadId`, `id`, `snippet`, `subject`, `to`, `date`, `permalink` (`viewUrl`) - **one record per SENT message dated today**, not per thread | no `threadId` and his reply on the ask's own thread is invisible: the thread id is the match, not the words |
+| slack_sweep *(eod)* | same fields as `slack_sent`; every watched-channel step and the DM step concatenated into ONE list | channel traffic and DMs to him - `discussed`, never closing. A DM does not @-mention him, so the morning query never saw these |
+| jira *(eod)* | `key`, `webUrl` (or `permalink`), and `summary` / `status.name` / `assignee.displayName` flat or under `fields`; every project's step concatenated into ONE list | no link and the ticket is dropped. Keys are the match - a ticket counts for the item that NAMES it, never on shared words |
+| github *(eod)* | `kind` (the step's own: `merged` / `approved` / `changes_requested` / `issue_closed`), `url`, `number`, `title`, `repository.nameWithOwner`; all four steps in ONE list | no `kind` and the hit is dropped - a merged PR and a closed issue propose different things. Merged is evidence of movement, never closure |
 
 **Shaping the calendar payload**, because google's shape is not the ledger's:
 
@@ -135,6 +140,21 @@ Do not send `""` for a file that is not there - it means "read it, it was
 empty", so the brief says nothing at all and the day is silently triaged
 against no plan of record. An absent note is a fact about the week; an
 unreachable vault is a degrade. They must not read the same.
+
+**The evening sweep (`plan eod`, #167).** Besides the morning's steps, the EOD
+plan asks for his own side of the day and for board and repo movement, each
+under its own key: `slack_sent`, `gmail_sent`, `slack_sweep`, `jira`,
+`github`. Every step is bounded - one day, id-scoped Slack at most
+`max_pages` pages, one JQL per project at `maxResults` 15 with five fields
+(three projects at nine fields measured 81,582 chars on 2026-09-25 and
+overflowed), one `gh search` per kind across every watched repo. Run them
+**verbatim**. The wrap renders what they show as questions: `looks closed -
+confirm` (`answered`, `sent`) and `looks moved - confirm` (`merged`,
+`ticket-moved`, `reviewed`, `scheduled`, `discussed`), each line `item:
+"verbatim evidence" (permalink) · proposed: <status>`, plus `board + repos
+moved` for merges and ticket moves no open item names. Nothing auto-closes
+and nothing here adds to `closed`, which stays his own ticks. If `plan` says
+there are no watched repos, leave `github` out.
 
 A source you could not reach: **leave the key out**. That renders one
 "couldn't check X" line and the push still ships. Do not pass an empty list to
