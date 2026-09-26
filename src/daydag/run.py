@@ -70,7 +70,14 @@ from typing import Any
 from daydag import brief, closure, eod_wrap, recipes, week_ahead
 from daydag.config import ConfigError, resolve_reference, timezone_for
 from daydag.ingestion import classify_items, unplaced
-from daydag.ledger import Ledger, Match, title_from_gemini_subject
+from daydag.ledger import (
+    CANCELLED,
+    REPLAY_HORIZON,
+    Ledger,
+    Match,
+    Row,
+    title_from_gemini_subject,
+)
 from daydag.people import People
 from daydag.prep import Audience, Reason, build, point, prep_worthy
 from daydag.prep_selector import HORIZON_DAYS, select
@@ -551,8 +558,170 @@ def _vault(identities: Mapping[str, str]) -> StateFolder | None:
     return StateFolder.create(Path(root) / "DayDAG")
 
 
-def _remembered(log: EventLog | None) -> Ledger:
-    """A ledger carrying every meeting seeded on a previous run.
+#: Recorded once per remembered meeting that aged past `REPLAY_HORIZON` with no
+#: note and was surfaced as "gave up" - so it is said once, not every morning.
+GAVE_UP = "meeting_gave_up"
+
+_Key = tuple[str, datetime]
+
+
+def _key(payload: Mapping[str, Any], *, seedable: bool = True) -> _Key | None:
+    """``(event_id, start)`` of a calendar record or remembered row, or None.
+
+    None too, unless ``seedable=False``, for a record `seed_day` cannot take.
+    """
+    record = _Payloads.timed(dict(payload))
+    start = record.get("start")
+    needed = _SEEDABLE if seedable else ("id",)
+    if not isinstance(start, datetime) or not all(record.get(k) for k in needed):
+        return None
+    return (str(payload["id"]), start)
+
+
+#: The fields `Ledger.seed_day` indexes. A record missing one is never keyed,
+#: so it is neither remembered nor replayed - replayed, it raised KeyError.
+_SEEDABLE = ("id", "start", "end", "summary")
+
+
+def _local(instant: datetime, tz: Any) -> datetime:
+    """``instant`` in ``tz``; a naive one is already his wall clock."""
+    return instant.astimezone(tz) if instant.tzinfo else instant.replace(tzinfo=tz)
+
+
+def _latest(log: EventLog | None) -> dict[_Key, dict[str, Any]]:
+    """The newest remembered snapshot of every meeting instance, by key.
+
+    The log is replayed oldest first, so a later snapshot - a decline, the
+    evening's `notes_attached`, a tombstone - overwrites an earlier one. This
+    is contract 5 of `ledger` applied at the source, and what makes each
+    later read O(instances) rather than O(renders).
+    """
+    latest: dict[_Key, dict[str, Any]] = {}
+    if log is None:
+        return latest
+    for payload in log.recorded(MEETING):
+        if isinstance(payload, Mapping) and (key := _key(payload)) is not None:
+            latest[key] = dict(payload)
+    return latest
+
+
+def _snapshot(
+    latest: Mapping[_Key, Mapping[str, Any]],
+    payloads: Mapping[str, Any],
+    *,
+    loop: str,
+    now: datetime,
+    tz: Any,
+) -> list[dict[str, Any]]:
+    """What this run knows about TODAY's meetings that the log does not yet.
+
+    Three rules, each an issue:
+
+    * Only records whose local start day is ``now``'s (#155). eod fetches
+      tomorrow and week-ahead next week; a future meeting remembered and then
+      cancelled was a permanent gap.
+    * Only records that differ from the newest remembered snapshot of the
+      same ``(event_id, start)`` (#114). Every render used to append the same
+      rows again.
+    * A remembered meeting absent from today's fetch gets a `CANCELLED`
+      tombstone - but only when today was actually fetched (#169). Absence
+      from a day nobody asked about is not evidence.
+    """
+    day = now.astimezone(tz).date()
+    todays: dict[_Key, dict[str, Any]] = {}
+    for raw in _seeded(payloads):
+        key = _key(raw)
+        if key is not None and _local(key[1], tz).date() == day:
+            todays[key] = json.loads(json.dumps({k: _jsonable(v) for k, v in raw.items()}))
+    changed = [record for key, record in todays.items() if latest.get(key) != record]
+    if not _fetched(day, payloads, loop=loop, tz=tz):
+        return changed
+    gone = [
+        {**payload, "status": CANCELLED}
+        for key, payload in latest.items()
+        if key not in todays
+        and _local(key[1], tz).date() == day
+        and payload.get("status") != CANCELLED
+    ]
+    return changed + gone
+
+
+def _fetched(day: date, payloads: Mapping[str, Any], *, loop: str, tz: Any) -> bool:
+    """Whether the calendar for ``day`` was actually read this run.
+
+    Yes when the loop's own plan asks for that day, or when the payload holds
+    an event that both starts and ends on it - no other day's window can
+    return one. Starting on it is not enough: tomorrow's window returns an
+    overnight event that began tonight, and reading that as today's fetch
+    would tombstone every meeting he had today.
+    """
+    if not isinstance(payloads.get("calendar"), list):
+        return False
+    if any(window.day == day for window in _calendar_windows(loop, day, tz=tz)):
+        return True
+    for raw in _seeded(payloads):
+        record = _Payloads.timed(dict(raw))
+        start, end = record.get("start"), record.get("end")
+        if isinstance(start, datetime) and isinstance(end, datetime):
+            if _local(start, tz).date() == day == _local(end, tz).date():
+                return True
+    return False
+
+
+def _gave_up(
+    log: EventLog | None, latest: Mapping[_Key, Mapping[str, Any]], now: datetime, tz: Any
+) -> list[Row]:
+    """Remembered gaps past `REPLAY_HORIZON` that have not been surfaced yet (#125).
+
+    Past the horizon no source can still produce the note, so the gap is a
+    decision for him rather than a line to repeat forever. Returned once:
+    the caller records `GAVE_UP` for each after showing them.
+    """
+    if log is None:
+        return []
+    horizon = now - REPLAY_HORIZON
+    surfaced = {
+        key
+        for payload in log.recorded(GAVE_UP)
+        if isinstance(payload, Mapping) and (key := _key(payload, seedable=False))
+    }
+    old = Ledger()
+    old.seed_day(
+        [
+            record
+            for key, payload in latest.items()
+            if key not in surfaced and _past(record := _Payloads.timed(dict(payload)), horizon, tz)
+        ]
+    )
+    return [row for row in old.open_rows() if not row.notes_declared]
+
+
+def _past(record: Mapping[str, Any], horizon: datetime, tz: Any) -> bool:
+    end = record.get("end")
+    return isinstance(end, datetime) and _local(end, tz) < horizon
+
+
+def _gave_up_section(rows: Sequence[Row], tz: Any) -> str:
+    """One line per title, its dates beside it: a daily standup that never
+    produced a note is one decision, not five lines."""
+    dates: dict[str, list[str]] = {}
+    for row in rows:
+        start = _local(row.start, tz)
+        dates.setdefault(row.summary, []).append(f"{start:%a %b} {start.day}".lower())
+    return brief.Section(
+        f"gave up on notes ({len(rows)})",
+        tuple(
+            f"- {summary} ({', '.join(days)}) - no note found in"
+            f" {REPLAY_HORIZON.days} days, dropping it from the list"
+            for summary, days in dates.items()
+        ),
+    ).render()
+
+
+def _remembered(
+    latest: Mapping[_Key, Mapping[str, Any]], now: datetime, tz: Any = recipes.PACIFIC
+) -> Ledger:
+    """A ledger carrying every meeting seeded on a previous run, inside the horizon.
 
     THE reason this module exists rather than `Ledger()` being enough.
     `_seed_and_gaps` seeds today's rows precisely so that tomorrow can report
@@ -564,23 +733,29 @@ def _remembered(log: EventLog | None) -> Ledger:
     Replayed through `seed_day`, which is idempotent per instance, rather than
     given a second persistence API inside `Ledger` - the composition belongs
     here, not in the thing being composed.
+
+    Reads `_latest`, so only the newest snapshot of each instance is replayed,
+    and skips anything that ended before `REPLAY_HORIZON` - `_gave_up` owns
+    those.
     """
+    horizon = now - REPLAY_HORIZON
     ledger = Ledger()
-    if log is None:
-        return ledger
-    for payload in log.recorded(MEETING):
-        if isinstance(payload, Mapping):
-            ledger.seed_day([_Payloads.timed(dict(payload))])
+    ledger.seed_day(
+        [
+            record
+            for payload in latest.values()
+            if not _past(record := _Payloads.timed(dict(payload)), horizon, tz)
+        ]
+    )
     return ledger
 
 
-def _remember(log: EventLog | None, events: Iterable[Mapping[str, Any]]) -> None:
-    """Record today's meetings so the next run can ask what produced nothing."""
+def _remember(log: EventLog | None, snapshot: Iterable[Mapping[str, Any]]) -> None:
+    """Record what `_snapshot` found, so the next run can ask what produced nothing."""
     if log is None:
         return
-    for event in events:
-        if isinstance(event, Mapping) and event.get("id"):
-            log.record(MEETING, **{k: _jsonable(v) for k, v in event.items()})
+    for record in snapshot:
+        log.record(MEETING, **record)
 
 
 def _jsonable(value: Any) -> Any:
@@ -851,6 +1026,13 @@ def render(
     folder = state if state is not None else _vault(identities)
     events = log if log is None else EventLog.open(log)
     directory = People(events) if events is not None and loop in _NEEDS_LEDGER else None
+    tz = timezone_for(identities)
+    # The meeting table is read only by a loop that fetched a calendar or
+    # reads the ledger; `chase`, `ingest` and `ship` have nothing to add to it.
+    fetched_calendar = isinstance(payloads.get("calendar"), list)
+    latest = _latest(events) if fetched_calendar or loop in _NEEDS_LEDGER else {}
+    snapshot = _snapshot(latest, payloads, loop=loop, now=now, tz=tz)
+    gave_up: list[Row] = []
     if loop not in _NEEDS_LEDGER:
         # `chase`, `ingest`, `ship` and `week-ahead` never read this ledger
         # (week-ahead builds its own). Rehydrating every remembered meeting and
@@ -859,7 +1041,13 @@ def render(
         # run, so the waste grows with the log.
         ledger = Ledger()
     else:
-        ledger = _remembered(events)
+        ledger = _remembered(latest, now, tz)
+        # This run's snapshot is newer than anything remembered: a meeting
+        # declined or removed since the last run leaves the ledger now, not
+        # only on the next run (#169).
+        ledger.seed_day([_Payloads.timed(record) for record in snapshot])
+        if loop == "morning":
+            gave_up = _gave_up(events, latest, now, tz)
         # SEED TODAY BEFORE OFFERING NOTES. `brief._seed_and_gaps` seeds during
         # assembly, which is too late: a note offered to a ledger that has no
         # rows yet attaches to nothing, and on a FIRST run there are no
@@ -915,13 +1103,20 @@ def render(
             text = _assemble()
             active.observe([{"name": loop, "source": "daydag", "status": REACHED, "reason": ""}])
 
+    if gave_up:
+        # Said once, in the morning, then recorded so it is not said again.
+        text += "\n\n" + _gave_up_section(gave_up, tz)
+        if events is not None:
+            for row in gave_up:
+                events.record(GAVE_UP, id=row.event_id, start=row.start.isoformat())
     if loop != "prep":
         # A prep is a QUESTION about the week ahead, not a day's seeding.
         # Remembering its seven fetched days persisted every future meeting;
         # one cancelled after the snapshot was re-seeded on every later run and
         # reported as a permanent "meeting w/ no notes", and a rescheduled one
-        # became two rows - a phantom gap beside the real meeting.
-        _remember(events, _seeded(payloads))
+        # became two rows - a phantom gap beside the real meeting. `_snapshot`
+        # now keeps only today's rows, but prep still records nothing.
+        _remember(events, snapshot)
     # Only the ledger-carrying loops project. The original reason - that a loop
     # handed an empty ledger would REPLACE the notes-gaps section with nothing -
     # stopped applying when `update_state` became an append (#130): projecting

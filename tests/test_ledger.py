@@ -549,3 +549,58 @@ def test_a_recording_of_a_meeting_named_gemini_is_still_not_a_note():
     )
 
     assert led.notes_gaps(as_of=T + timedelta(hours=2)) == ["Discovery sync"]
+
+
+# --------------------------------------------------------------------------
+# #169: the latest snapshot of an instance wins
+# --------------------------------------------------------------------------
+
+
+def test_a_later_decline_removes_the_row_an_earlier_snapshot_seeded():
+    """The 2026-09-25 bug. The morning seeded a needsAction invite, he declined
+    it that afternoon, and `setdefault` kept the morning's row - so a meeting
+    he never attended was reported as having no notes."""
+    led = Ledger()
+    led.seed_day([ev()])
+    led.seed_day([ev(response_status="declined")])
+    assert led.open_rows() == []
+
+
+def test_a_cancelled_instance_removes_its_row():
+    """Google marks a removed instance `status: cancelled`; the runner writes
+    the same mark when an event vanishes from a day it re-fetched."""
+    led = Ledger()
+    led.seed_day([ev()])
+    led.seed_day([ev(status="cancelled")])
+    assert led.open_rows() == []
+
+
+def test_a_later_snapshot_replaces_the_fields_of_an_earlier_one():
+    """The evening's calendar knows the note was attached; the morning's did not."""
+    led = Ledger()
+    led.seed_day([ev(notes_attached=False)])
+    led.seed_day([ev(notes_attached=True, summary="Discovery sync (moved)")])
+    (row,) = led.open_rows()
+    assert row.notes_declared
+    assert row.summary == "Discovery sync (moved)"
+    assert led.notes_gaps(as_of=T + timedelta(days=1)) == []
+
+
+def test_reseeding_keeps_a_note_already_attached():
+    """`brief` re-seeds the same events after notes were offered. Replacing
+    the row must not throw the attached note away."""
+    led = Ledger()
+    led.seed_day([ev()])
+    led.offer_note(
+        Match(title="Discovery sync", arrived=T + timedelta(hours=1), attendees=[], source="gemini")
+    )
+    led.seed_day([ev()])
+    assert led.open_rows() == []
+
+
+def test_the_replay_horizon_is_the_widest_arrival_window_plus_a_day():
+    """Past the slowest source's lag no note can still arrive, so a gap older
+    than this can only be closed by hand (#125)."""
+    from daydag.ledger import ARRIVAL_WINDOW, REPLAY_HORIZON
+
+    assert REPLAY_HORIZON == max(ARRIVAL_WINDOW.values()) + timedelta(days=1)
