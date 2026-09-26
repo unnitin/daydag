@@ -10,7 +10,10 @@ USING IT
     A payloads file is `{source: whatever the connector returned}`:
         {"calendar": [...], "slack": [...], "gmail": [...],
          "vault": "..." | null,                 # null: the note does not exist
-         "vault_notes": {"<path>": "..." | null}}   # eod's Friday reads, by path
+         "vault_notes": {"<path>": "..." | null},   # eod's Friday reads, by path
+         # eod only - the evening sweep (#167); absent = "couldn't check X"
+         "slack_sent": [...], "gmail_sent": [...], "slack_sweep": [...],
+         "jira": [...], "github": [...]}
 
 CONTRACTS - break one and the guarantee is gone
     1. This module FETCHES NOTHING. Python cannot call an MCP connector; the
@@ -67,7 +70,8 @@ from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any
 
-from daydag import brief, closure, eod_wrap, recipes, week_ahead
+from daydag import brief, closure, eod_wrap, movement, recipes, week_ahead
+from daydag.board import read_board_watchlist
 from daydag.config import ConfigError, resolve_reference, timezone_for
 from daydag.ingestion import classify_items, unplaced
 from daydag.ledger import (
@@ -81,6 +85,7 @@ from daydag.ledger import (
 from daydag.people import People
 from daydag.prep import Audience, Reason, build, point, prep_worthy
 from daydag.prep_selector import HORIZON_DAYS, select
+from daydag.pulse import PulseError, read_watchlist
 from daydag.runlog import RunLog
 from daydag.smoke import REACHED
 from daydag.state import (
@@ -237,6 +242,7 @@ def plan(loop: str, *, now: datetime, identities: Mapping[str, str], selector: s
             {"path": note},
         ),
         *_extra_notes(loop, day),
+        *_evening_sweep(loop, day, principal=principal, identities=identities),
     ]
     if loop == "chase":
         # The chaser reads the file he corrects by hand and then READS THE
@@ -279,6 +285,159 @@ def _extra_notes(loop: str, day: date) -> list[Step]:
             {"paths": [recipes.weekly_note(next_week), recipes.meeting_prep(next_week)]},
         )
     ]
+
+
+#: The data team's live board (#2 audit), asked for when the watchlist names
+#: none or cannot be read - the evening still gets its one bounded Jira read.
+_DEFAULT_JIRA_PROJECTS = ("CDI",)
+
+#: Pages of 20 per Slack sweep query. A watched channel on a busy day runs
+#: past one page; three is 60 messages a channel, which is the bound.
+_SWEEP_MAX_PAGES = 3
+
+
+def _watchlist_path(identities: Mapping[str, str]) -> Path | None:
+    """`DayDAG/Watchlist.md`, or None with no vault configured.
+
+    Built directly rather than through `_vault`, because `StateFolder.create`
+    lays out missing files and a PLAN must not write to the vault.
+    """
+    try:
+        return recipes.vault_path(identities, recipes.DAYDAG, "Watchlist.md")
+    except recipes.RecipeError:
+        return None
+
+
+def _watchlist_text(path: Path | None) -> str:
+    """The watchlist's text, or ``""`` if absent or evicted - an empty
+    watchlist, which the plan then reports one step at a time."""
+    if path is None:
+        return ""
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+
+
+def _evening_sweep(
+    loop: str, day: date, *, principal: str, identities: Mapping[str, str]
+) -> list[Step]:
+    """What the EOD wrap needs to see what MOVED today (#141, #167).
+
+    The morning's two queries - @-mentions and Gemini notes - cannot carry it:
+    his reply on an email thread, a doc dropped in a DM, channel traffic that
+    never names him, a merged PR, a ticket that changed column. Each step here
+    is one bounded query from `daydag.recipes`, and each lands under its own
+    payload key so a source that could not be reached degrades to its own
+    "couldn't check" line instead of silently thinning another's evidence.
+
+        slack_sent   his own messages today           -> answered / sent
+        gmail_sent   his sent mail today              -> answered / sent
+        slack_sweep  watched channels + DMs to him    -> discussed
+        jira         status/assignee changes, per project -> ticket-moved
+        github       merged / reviewed / closed, watched repos -> merged ...
+
+    Evening only: the morning brief's queries are unchanged, per #141.
+    """
+    if loop != "eod":
+        return []
+    path = _watchlist_path(identities)
+    watchlist = _watchlist_text(path)
+    sweep_how = (
+        "search with this query verbatim, newest first, at most max_pages pages; "
+        "concatenate every step's records into ONE `slack_sweep` list"
+    )
+    steps = [
+        Step(
+            "slack_sent",
+            "his own messages today, every conversation type; newest first, at most "
+            "max_pages pages. Keep channel, channel_name, thread_ts and permalink",
+            {
+                "query": recipes.slack_sent_on(day, principal=principal, identities=identities),
+                "max_pages": _SWEEP_MAX_PAGES,
+            },
+        ),
+        Step(
+            "gmail_sent",
+            "search, then keep only messages labelled SENT dated today - one record per "
+            "message with threadId, to, subject, snippet, date and the permalink (viewUrl)",
+            {"query": recipes.gmail_sent_on(day)},
+        ),
+        Step(
+            "slack_sweep",
+            sweep_how,
+            {
+                "query": recipes.slack_dms_on(day, principal=principal, identities=identities),
+                "channel_types": "im,mpim",
+                "max_pages": _SWEEP_MAX_PAGES,
+            },
+        ),
+    ]
+    steps += [
+        Step(
+            "slack_sweep",
+            sweep_how,
+            {
+                "query": recipes.slack_channel_on(day, channel=channel, identities=identities),
+                "max_pages": _SWEEP_MAX_PAGES,
+            },
+        )
+        for channel in recipes.watched_channels(watchlist)
+    ]
+    steps += _jira_steps(path if watchlist else None, day)
+    steps += _github_steps(path if watchlist else None, day)
+    return steps
+
+
+def _jira_steps(watchlist: Path | None, day: date) -> list[Step]:
+    """One bounded JQL per watched project - the three-project form overflowed."""
+    projects: list[str] = []
+    if watchlist is not None:
+        try:
+            projects = [project.key for project in read_board_watchlist(watchlist).projects]
+        except PulseError:  # unreadable; degrade to the default board
+            projects = []
+    how = (
+        "searchJiraIssuesUsingJql with exactly these jql, fields and maxResults (read-only); "
+        "concatenate every step's issues into ONE `jira` list, each with its webUrl"
+    )
+    return [
+        Step("jira", how, recipes.jira_moved_on(project, day))
+        for project in (projects or list(_DEFAULT_JIRA_PROJECTS))
+    ]
+
+
+def _github_steps(watchlist: Path | None, day: date) -> list[Step]:
+    """Merged, reviewed and closed across every watched repo - one search each.
+
+    A merged PR is evidence of movement and never closure (#18): the wrap
+    renders it under "moved", and nothing it reads can close a loop.
+    """
+    repos: list[str] = []
+    if watchlist is not None:
+        try:
+            repos = [repo.slug for repo in read_watchlist(watchlist).repos]
+        except PulseError:
+            repos = []
+    if not repos:
+        return [
+            Step(
+                "github",
+                "no watched repos in DayDAG/Watchlist.md - leave `github` out of the payloads",
+                {},
+            )
+        ]
+    how = (
+        "run this argv with `gh` (read-only); tag every hit with this step's kind and "
+        "concatenate all four into ONE `github` list"
+    )
+    searches = [
+        ("merged", recipes.gh_merged_on(repos, day)),
+        ("approved", recipes.gh_reviewed_on(repos, day, review="approved")),
+        ("changes_requested", recipes.gh_reviewed_on(repos, day, review="changes_requested")),
+        ("issue_closed", recipes.gh_closed_issues_on(repos, day)),
+    ]
+    return [Step("github", how, {"kind": kind, "argv": argv}) for kind, argv in searches]
 
 
 def _closure_reads(identities: Mapping[str, str]) -> list[Step]:
@@ -347,11 +506,16 @@ def _calendar_windows(
         # this same arithmetic, so fetch and match are one set.
         return recipes.calendar_days(day, day + timedelta(days=HORIZON_DAYS - 1), tz=tz)
     if loop == "eod":
-        # `eod_wrap` reads exactly one window, and it is the next WORKING
-        # day's: the wrap reports the day that just ended and previews the
-        # first meeting of the next one he works - Monday from a Friday, not
-        # an empty Saturday (#170).
-        return [recipes.calendar_day(recipes.next_working_day(day))]
+        # TWO windows, and they have different consumers. `eod_wrap` reads the
+        # next WORKING day's, to preview the first meeting of the next day he
+        # works - Monday from a Friday, not an empty Saturday (#170).
+        # `daydag.movement` reads today's, because a room that was asked for
+        # and has now HAPPENED is the cheapest evidence there is that a loop
+        # moved - his own example for #134 was "drokit meeting w/ chris has
+        # been scheduled, you can confirm that yourself through calendar".
+        # `_Payloads.calendar` filters by window, so the wrap still sees only
+        # the day it previews.
+        return [recipes.calendar_day(day), recipes.calendar_day(recipes.next_working_day(day))]
     if loop == "week-ahead":
         this_monday, _ = recipes.week_range(day)
         next_monday = this_monday + timedelta(days=7)
@@ -1090,7 +1254,18 @@ def render(
                 pulse=pulse,
             ).render()
         if loop == "eod":
-            return eod_wrap.assemble(now=now, sources=sources, ledger=ledger, pulse=pulse).render()
+            rows = _movement_rows(folder, payloads, now)
+            return eod_wrap.assemble(
+                now=now,
+                sources=sources,
+                ledger=ledger,
+                pulse=pulse,
+                movement=rows,
+                unclaimed=movement.unclaimed(
+                    rows, jira=_evening(payloads, "jira"), github=_evening(payloads, "github")
+                ),
+                unchecked=_unchecked(payloads),
+            ).render()
         return week_ahead.assemble(
             now=now, sources=sources, identities=identities, state=folder, pulse=pulse
         ).render()
@@ -1217,6 +1392,75 @@ def _seedable(payloads: Mapping[str, Any]) -> list[dict[str, Any]]:
 def _seeded(payloads: Mapping[str, Any]) -> list[Mapping[str, Any]]:
     raw = payloads.get("calendar")
     return [r for r in raw if isinstance(r, Mapping)] if isinstance(raw, list) else []
+
+
+def _movement_rows(
+    folder: StateFolder | None, payloads: Mapping[str, Any], now: datetime
+) -> list[movement.Movement]:
+    """Evidence from the live sources that an open item moved (#134).
+
+    Built here rather than inside `eod_wrap` because the wrap owns no source
+    and its `Sources` protocol deliberately does not reach Slack or Gmail -
+    but `plan eod` already fetches both, so the payloads are sitting right
+    here. `daydag.movement` is pure, so this is the only place the two meet.
+
+    Degrades to no rows rather than raising, for the same reason every other
+    read in this file does: a detector is not worth a dead wrap (guardrail 6).
+    """
+    state = ""
+    if folder is not None:
+        try:
+            state = folder.read_state()
+        except OSError:
+            state = ""
+    note = payloads.get("vault")
+    day = now.astimezone(recipes.PACIFIC).date()
+    return movement.detect(
+        open_items=movement.open_items(
+            state=state,
+            note=note if isinstance(note, str) else "",
+            note_path=recipes.weekly_note(day),
+        ),
+        calendar=payloads.get("calendar", ()),
+        slack=payloads.get("slack", ()),
+        gmail=payloads.get("gmail", ()),
+        slack_sent=_evening(payloads, "slack_sent"),
+        gmail_sent=_evening(payloads, "gmail_sent"),
+        slack_sweep=_evening(payloads, "slack_sweep"),
+        jira=_evening(payloads, "jira"),
+        github=_evening(payloads, "github"),
+        now=now,
+    )
+
+
+#: The evening sweep's payload keys (`_evening_sweep`), and the name each one
+#: goes by in a "couldn't check" line.
+_EVENING_SOURCES = {
+    "slack_sent": "his slack messages",
+    "gmail_sent": "his sent mail",
+    "slack_sweep": "slack channels + dms",
+    "jira": "jira",
+    "github": "github",
+}
+
+
+def _evening(payloads: Mapping[str, Any], key: str) -> list[Any]:
+    """One evening source's records, or ``[]`` when it is absent or malformed.
+
+    The two are told apart by `_unchecked`, not here: to the detector both are
+    simply no evidence, and to the wrap they are a "couldn't check" line.
+    """
+    value = payloads.get(key)
+    return value if isinstance(value, list) else []
+
+
+def _unchecked(payloads: Mapping[str, Any]) -> list[str]:
+    """Evening sources that were not fetched, or came back as something other
+    than a list - contract 3. An EMPTY list is not here: it means the query
+    ran and found nothing, which is silence, not a degrade."""
+    return [
+        name for key, name in _EVENING_SOURCES.items() if not isinstance(payloads.get(key), list)
+    ]
 
 
 def _project(folder: StateFolder, log: EventLog, ledger: Ledger, now: datetime) -> None:

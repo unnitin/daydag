@@ -336,26 +336,33 @@ def test_the_gmail_step_covers_the_window_the_brief_will_actually_ask_for(identi
 # --------------------------------------------------------------------------
 
 
-def test_the_eod_plan_fetches_tomorrow_not_today(identities):
-    """`eod_wrap` reads exactly one calendar window and it is TOMORROW's.
+def test_the_eod_plan_fetches_today_and_tomorrow_for_its_two_consumers(identities):
+    """Tomorrow for `eod_wrap`, today for `daydag.movement`.
 
     The plan fetched today for every loop, because it never looked at `loop`
     at all - and `_Payloads.calendar` then answered the tomorrow request from
     the today bucket. The wrap printed this morning's 8:15 standup as
     tomorrow's first meeting, and nothing failed.
+
+    Fixed to tomorrow-only, which was right while the wrap was the one
+    consumer. #134 added a second: a room that was asked for and has now
+    happened is evidence a loop moved, and that room is TODAY's. The wrap
+    still sees only tomorrow, because `_Payloads.calendar` filters by window.
     """
-    (calendar,) = [
-        s
+    days = [
+        s.detail["day"]
         for s in run.plan("eod", now=MONDAY_PT, identities=identities).steps
         if s.source == "calendar"
     ]
 
-    assert calendar.detail["day"] == "2026-09-08", "the wrap previews tomorrow, not today"
+    assert days == ["2026-09-07", "2026-09-08"], "the wrap previews tomorrow; movement reads today"
 
 
 def test_the_friday_eod_plan_fetches_monday_and_the_render_shows_it(identities):
     """Fri 2026-09-25 ~17:00 PT: the wrap read Saturday and said nothing about
-    Monday 9/28 (#170). Still exactly one calendar day - the output bound stands.
+    Monday 9/28 (#170). Two single-day windows, never a range - today's for the
+    movement detector (#167), the next working day's for the preview. The
+    one-day output bound stands per step.
     """
     friday = datetime(2026, 9, 26, 0, 0, tzinfo=UTC)  # Fri 17:00 PT
     calendars = [
@@ -364,8 +371,8 @@ def test_the_friday_eod_plan_fetches_monday_and_the_render_shows_it(identities):
         if s.source == "calendar"
     ]
 
-    assert len(calendars) == 1, "eod fetches exactly one calendar day"
-    assert calendars[0].detail["day"] == "2026-09-28", "friday previews monday, not saturday"
+    days = [s.detail["day"] for s in calendars]
+    assert days == ["2026-09-25", "2026-09-28"], "today, then monday - not saturday"
 
     payloads = _payloads(
         calendar=[
@@ -976,3 +983,37 @@ def test_a_past_meeting_teaches_the_directory_and_a_future_one_does_not(identiti
     assert directory.resolve("wren@x.com") is not None, "a past meeting taught nothing"
     assert directory.resolve("bo@x.com") is None, "a meeting not yet held was recorded as met"
     assert directory.resolve("principal@x.com") is None, "he was added to his own directory"
+
+
+def test_the_eod_wrap_gets_movement_from_the_payloads_it_already_fetched(identities, tmp_path):
+    """#134, wired. `plan eod` already asks for slack and gmail; the wrap read
+    neither, and reported the day from checkboxes he had not ticked.
+
+    The chase item lives in State.md, the evidence arrives in the Slack
+    payload, and nothing about either mentions the other - which is the point:
+    the vault says nothing moved and the live sources say otherwise.
+    """
+    from daydag.state import StateFolder
+
+    folder = StateFolder.create(tmp_path / "vault" / "DayDAG")
+    # Written by hand, not through the writer: this is the file he corrects,
+    # and `movement` only ever reads it. It also keeps this branch independent
+    # of the append path on #130.
+    folder.state_path.write_text(
+        "# State\n\n## Chase list\n\n- vp-data · fruits metadata list for finance · status open\n",
+        encoding="utf-8",
+    )
+    payloads = _payloads(
+        slack=[
+            {
+                "text": "fruits metadata list is in the workhorse, sending to finance now",
+                "ts": "1789000000.0001",
+                "permalink": "https://example.com/p1",
+            }
+        ]
+    )
+
+    text = run.render("eod", now=MONDAY_PT, identities=identities, payloads=payloads, state=folder)
+
+    assert "looks moved - confirm" in text, f"the live sources were not read:\n{text}"
+    assert "sending to finance now" in text, "the verbatim quote was dropped"
