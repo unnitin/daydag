@@ -28,7 +28,12 @@ COVERED (behavioural - real code, real assertions)
     - every reported item carries a resolvable permalink, and an item with no
       permalink is refused at construction rather than rendered unsourced
     - repo evidence marks movement and may only add a flag, never close a loop
-    - sensitive items reach no file in the vault, via chase or watch
+    - sensitive items are written to `State.md` like normal ones and to no
+      other vault file, keeping their private mark in the event log - a
+      DELIBERATE rule change (#180, the principal's decision of 2026-09-25);
+      the pre-#180 "reach no file in the vault" rule is still pinned, under
+      its one switch `state.WITHHOLD_PRIVATE_FROM_VAULT`, which an AST check
+      holds to a single reader
     - a pending decision never reads its own text as an answer
     - `sensitivity: private` is un-routable to any shared surface
     - the registry's one-writer check fires regardless of declaration order
@@ -43,7 +48,8 @@ COVERED (behavioural - real code, real assertions)
     - the vault write path joins only literal names onto the folder root
     - `notes_gaps` carries the same sensitivity channel `chase` and `watch` do,
       via `NotesGap`, so a meeting whose own title is sensitive is withheld the
-      same way a private chase or watch item is (was GAP 3, #61)
+      same way a private chase or watch item is when the rule-7 switch is on
+      (was GAP 3, #61)
     - `daydag.delivery.deliver_push` and `deliver_prep_ping` have no
       destination parameter at all - the resolved principal id is the only
       channel a send can ever name (#10, full coverage in `tests/test_delivery.py`)
@@ -674,17 +680,58 @@ FEEDBACK_MANIFEST = {
 }
 
 
-@pytest.mark.guardrail
-def test_no_private_item_reaches_any_file_in_the_vault(folder: StateFolder):
-    """BEHAVIOURAL. The vault is plaintext on every device the principal owns.
+def _files_holding(folder: StateFolder, marker: str) -> list[Path]:
+    return [
+        path.relative_to(folder.root)
+        for path in folder.root.rglob("*")
+        if path.is_file() and marker in path.read_text(encoding="utf-8")
+    ]
 
-    Walks the whole folder rather than checking State.md, because the guarantee
-    is about the folder: a private item that lands in Watchlist or a Proposal
-    has leaked just as completely.
+
+@pytest.mark.guardrail
+def test_a_private_item_reaches_state_md_like_a_normal_one_and_no_other_vault_file(
+    folder: StateFolder,
+):
+    """BEHAVIOURAL. GUARDRAIL CHANGED by #180 - a deliberate rule change, not a
+    weakened test. Was `test_no_private_item_reaches_any_file_in_the_vault`.
+
+    The principal, 2026-09-25, after discussing the tradeoff: "i think we
+    should treat sensitive items the same" / "i think wire everything
+    consistently for now, we can change later". So a private chase or watch
+    item is written to `State.md` exactly as a normal one is. What still
+    holds: it lands in `State.md` and in no other vault file, and the event
+    log keeps its private mark, so the rule can be switched back
+    (`state.WITHHOLD_PRIVATE_FROM_VAULT`, pinned below) with nothing to re-derive.
     """
     marker = "growth-area-carry-forward"
     log = EventLog.open(":memory:")
-    log.record("carry_forward", subject="a report", body=marker, sensitivity="private")
+    log.record("carry_forward", owner="sam", ask=marker, key="k", sensitivity="private")
+    log.record(
+        "loop_opened", sensitivity="normal", key="DATA-812", ask="compute consolidation", day=0
+    )
+
+    folder.update_state(
+        chase=log.chase_items(),
+        watch=[{"what": f"{marker} watch", "sensitivity": "private"}, {"what": "nightly job"}],
+    )
+
+    assert _files_holding(folder, marker) == [Path("State.md")]
+    written = folder.read_state()
+    assert f"{marker} watch" in written
+    assert "compute consolidation" in written and "nightly job" in written
+    assert [i.sensitivity for i in log.chase_items() if i.ask == marker] == ["private"]
+
+
+@pytest.mark.guardrail
+def test_switching_rule_7_back_withholds_private_items_from_every_vault_file(
+    folder: StateFolder, withholding
+):
+    """BEHAVIOURAL. The pre-#180 guarantee, under its one switch: chase, watch
+    and notes_gaps alike, and in every file of the folder - a private item in
+    Watchlist or a Proposal would have leaked just as completely."""
+    marker = "growth-area-carry-forward"
+    log = EventLog.open(":memory:")
+    log.record("carry_forward", owner="sam", ask=marker, key="k", sensitivity="private")
     log.record(
         "loop_opened", sensitivity="normal", key="DATA-812", ask="compute consolidation", day=0
     )
@@ -692,50 +739,54 @@ def test_no_private_item_reaches_any_file_in_the_vault(folder: StateFolder):
     folder.update_state(
         chase=log.chase_items(),
         watch=[{"what": marker, "sensitivity": "private"}, {"what": "nightly ingest job"}],
+        notes_gaps=[{"title": marker, "sensitivity": "private"}, "Pod Steering"],
     )
 
-    leaked = [
-        path.relative_to(folder.root)
-        for path in folder.root.rglob("*")
-        if path.is_file() and marker in path.read_text(encoding="utf-8")
-    ]
-    assert not leaked, f"private content reached the vault: {leaked}"
+    assert not _files_holding(folder, marker), "private content reached the vault"
     assert "compute consolidation" in folder.read_state(), "the filter ate the normal items too"
     assert "nightly ingest job" in folder.read_state()
+    assert "Pod Steering" in folder.read_state()
 
 
 @pytest.mark.guardrail
-def test_a_sensitive_meeting_title_never_reaches_the_vault_as_a_notes_gap(folder: StateFolder):
-    """BEHAVIOURAL. Was GAP 3 (#61): `notes_gaps` had no sensitivity channel.
+def test_the_rule_7_switch_is_read_in_exactly_one_place():
+    """BEHAVIOURAL (AST). "One flag, one obvious place" (#180): the switch is
+    defined in `daydag.state` and read only by `_visible`, the one gate all
+    three lists pass through. A second reader is a second rule."""
+    readers: list[str] = []
+    for path in PACKAGE.rglob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.FunctionDef):
+                continue
+            for inner in ast.walk(node):
+                name = getattr(inner, "id", None) or getattr(inner, "attr", None)
+                if name == "WITHHOLD_PRIVATE_FROM_VAULT":
+                    readers.append(f"{path.name}:{node.name}")
+    assert sorted(set(readers)) == ["state.py:_visible"], readers
 
-    A meeting whose own TITLE is the sensitive fact - a comp conversation, an
-    exit interview - could not be withheld, because `notes_gaps` was a list of
-    bare strings with nothing to tag "private" onto; the caller had to
-    pre-filter, and every other list in this file is filtered right here
-    because a caller cannot be trusted to remember. `NotesGap` gives it the
-    same shape `chase` and `watch` already had, so `update_state` closes the
-    gap structurally instead of asking `notes_gaps`' one caller to.
 
-    Walks the whole folder, like its `chase`/`watch` sibling above: the
-    guarantee is about the vault, not about one section of one file.
-    """
+@pytest.mark.guardrail
+def test_a_sensitive_meeting_title_is_filed_as_a_notes_gap_like_any_other(folder: StateFolder):
+    """BEHAVIOURAL. GUARDRAIL CHANGED by #180 (see above). Was
+    `test_a_sensitive_meeting_title_never_reaches_the_vault_as_a_notes_gap`.
+
+    `NotesGap` still carries the title's sensitivity (#61, was GAP 3), so the
+    switch can withhold it again; by default the title is written."""
     marker = "exit interview follow-up"
     folder.update_state(notes_gaps=[{"title": marker, "sensitivity": "private"}, "Pod Steering"])
 
-    leaked = [
-        path.relative_to(folder.root)
-        for path in folder.root.rglob("*")
-        if path.is_file() and marker in path.read_text(encoding="utf-8")
-    ]
-    assert not leaked, f"a sensitive meeting title reached the vault: {leaked}"
-    assert "Pod Steering" in folder.read_state(), "the filter ate the normal gap too"
+    assert _files_holding(folder, marker) == [Path("State.md")]
+    assert "Pod Steering" in folder.read_state()
 
 
 @pytest.mark.guardrail
 def test_a_sensitive_notes_gap_is_withheld_whichever_shape_it_arrives_in(
-    folder: StateFolder,
+    folder: StateFolder, withholding
 ):
-    """The same guarantee, given the module's OWN type rather than a dict.
+    """The mark must survive coercion, given the module's OWN type rather than
+    a dict - under the rule-7 switch since #180, because that is the only
+    time the mark decides anything.
 
     `NotesGap.from_value` took a Mapping or "anything else". A `NotesGap` is
     not a Mapping - it carries a `get()` but does not subclass one - so it fell
@@ -751,11 +802,7 @@ def test_a_sensitive_notes_gap_is_withheld_whichever_shape_it_arrives_in(
     marker = "exit interview follow-up"
     folder.update_state(notes_gaps=[NotesGap(title=marker, sensitivity="private")])
 
-    leaked = [
-        path.relative_to(folder.root)
-        for path in folder.root.rglob("*")
-        if path.is_file() and marker in path.read_text(encoding="utf-8")
-    ]
+    leaked = _files_holding(folder, marker)
     assert not leaked, f"a private NotesGap reached the vault: {leaked}"
 
 

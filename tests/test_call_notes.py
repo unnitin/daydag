@@ -318,13 +318,14 @@ def test_the_attendance_roll_lists_every_call_with_its_reason():
     assert "Eng Sync - attended" in text
 
 
-def test_personnel_content_is_not_quoted_even_in_the_dm():
-    """House rule 7: personnel and comp reach the DM only, minimally quoted.
-    The line says an item exists and links the note; it does not repeat it."""
+def test_personnel_content_is_quoted_like_anything_else():
+    """#180 changed house rule 7 (the principal, 2026-09-25: "i think we
+    should treat sensitive items the same"). The comp step is quoted in full,
+    with its permalink, like every other line - it was withheld under #177."""
     text = _eod_text()
 
-    assert "promotion" not in text.casefold() and "salary" not in text.casefold()
-    assert "personnel/comp" in text
+    assert "Draft Promotion Case: Write up the promotion packet and salary ask." in text
+    assert "personnel/comp" not in text
 
 
 def test_notes_from_another_day_are_left_out_of_todays_priorities():
@@ -430,9 +431,9 @@ def test_a_step_with_several_owners_counts_for_each():
     assert PRINCIPAL.is_him("Casey Moreno and Alex Rivera")
 
 
-def test_a_sensitive_sentence_is_never_the_quoted_attendance_evidence():
-    """The quote proving he spoke must not itself be the comp line - it lands
-    in the attendance roll, which is the first thing the DM shows."""
+def test_the_first_sentence_he_speaks_is_the_attendance_evidence_whatever_it_says():
+    """#180: a comp sentence is no longer passed over for a later one - the
+    first time the notes quote him is the evidence, and it is quoted."""
     text = body(
         "x",
         [
@@ -444,22 +445,20 @@ def test_a_sensitive_sentence_is_never_the_quoted_attendance_evidence():
     verdict = attendance("tentative", text, PRINCIPAL)
 
     assert verdict.status == ATTENDED
-    assert "compensation" not in verdict.reason
-    assert "three-month cut" in verdict.reason
+    assert "direct compensation" in verdict.reason
 
 
-def test_only_sensitive_speech_still_proves_attendance_without_quoting_it():
+def test_sensitive_speech_proves_attendance_and_is_quoted():
     text = body("x", ["Alex suggested capping the salary band for the role."], [])
     verdict = attendance("needsAction", text, PRINCIPAL)
 
     assert verdict.status == ATTENDED
-    assert "salary" not in verdict.reason and "not quoted" in verdict.reason
+    assert "salary band" in verdict.reason and "not quoted" not in verdict.reason
 
 
-def test_steps_from_a_sensitive_note_show_only_their_title():
-    """A comp conversation's next step can read innocuously on its own
-    ("changes to the contracting structure for Casey") while the note around
-    it is plainly about pay. Minimal quoting: the step's title, not its body."""
+def test_steps_from_a_sensitive_note_are_quoted_whole():
+    """#180 removed #177's title-only rendering: a step from a comp
+    conversation reads the same as any other, in the DM and in State.md."""
     note = mail(
         "m8",
         "Alex / Sam - 1:1",
@@ -477,8 +476,8 @@ def test_steps_from_a_sensitive_note_show_only_their_title():
     text = "\n".join(s.render() for s in sections)
 
     assert "Discuss Contracting" in text
-    assert "contracting structure for Casey" not in text
-    assert "compensation" not in text
+    assert "contracting structure for Casey" in text
+    assert "detail not quoted" not in text
 
 
 def test_a_step_that_names_him_is_tagged_and_leads_its_bucket():

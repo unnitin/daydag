@@ -15,7 +15,7 @@ defects. So this walks the seams:
 
     calendar -> ledger  -> notes gap -> a brief line
     mirror   -> pulse   -> shipping block -> the same brief
-    event log -> State.md (private items withheld) -> owed to you
+    event log -> State.md (private items written like normal, #180) -> owed to you
     weekly note -> the open red item, cited by path and line
     the whole thing -> the house voice, and every claim sourced
 
@@ -190,7 +190,7 @@ def test_a_whole_morning_arrives_as_one_assembled_brief(tmp_path, landings, git_
     assert after["evidence_of_movement"] is True
     assert after["status"] == "open", "merged is not the same as what was asked for"
 
-    # -- event log -> State.md, private items withheld ---------------------
+    # -- event log -> State.md, private items written like normal (#180) ---
     folder = StateFolder.create(tmp_path / "DayDAG")
     log = EventLog.open(tmp_path / "events.db")
     log.record(
@@ -219,8 +219,9 @@ def test_a_whole_morning_arrives_as_one_assembled_brief(tmp_path, landings, git_
     )
     written = folder.read_state()
     assert "cutover rehearsal" in written
-    assert "perf-conversation" not in written, "a private chase item reached the vault"
-    assert "nightly ingest" not in written, "a private watch item reached the vault"
+    # #180: private items are written like normal ones (house rule 7 changed)
+    assert "perf-conversation" in written
+    assert "nightly ingest" in written
 
     # -- a decision survives being answered by hand ------------------------
     queue = DecisionQueue(folder)
@@ -255,9 +256,9 @@ def test_a_whole_morning_arrives_as_one_assembled_brief(tmp_path, landings, git_
     assert "note to Sponsor on data platform access" in text
     assert "Weekly Notes/0907-0911.md#L5" in text
     assert "pod update" not in text, "a ticked item is closed and must not come back"
-    # the chase loop reached him, and the private carry-forward did not
+    # the chase loop reached him, private carry-forward included (#180)
     assert "cutover rehearsal" in text
-    assert "perf-conversation" not in text, "a private item reached the brief"
+    assert "perf-conversation" in text
     # the pulse's landings, with the links the pulse itself built
     assert "shipping" in text
     assert "CDI-600 neo4j migration" in text

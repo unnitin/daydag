@@ -133,7 +133,7 @@ def test_a_morning_run_leaves_its_row_in_the_log_and_nothing_in_the_vault(
     # -- and the vault, rewritten from the same log, carries none of it -----
     written = folder.read_state()
     assert "cutover rehearsal" in written, "the walk must be doing real work"
-    assert "perf-conversation" not in written, "a private chase item reached the vault"
+    assert "perf-conversation" in written, "#180: private chase items are written like normal"
     for leaked in ("morning brief", "reached:", smoke.NO_PROBE):
         assert leaked not in written, f"{leaked!r} reached a synced markdown file"
 

@@ -3,7 +3,9 @@
 USING IT
     principal = Principal.from_identities(identities)   # names from .env addresses
 
-    call_notes.sweep(gmail, events, principal, log=log, tz=tz)     # the ingest push
+    call_notes.sweep(gmail, events, principal, log=log,
+                     decisions=open_decision_texts, tz=tz)          # the ingest push
+    log.chase_items(kinds={call_notes.CHASED})   # what it filed, for State.md
     call_notes.priorities(gmail, events, principal,
                           decisions=open_decision_texts, day=day, tz=tz)  # EOD sections
 
@@ -33,11 +35,20 @@ CONTRACTS - break one and the guarantee is gone
        body is not marked seen - a metadata-only fetch must not burn it.
     3. Every priority line carries the note's permalink, and every line from
        a call he did not attend or is not confirmed in says so on the line.
-    4. Personnel / comp / M&A text (`state.classify_sensitivity`) is never
-       quoted, even in the DM (house rule 7): the line says such an item
-       exists and links the note. Nothing in this module writes the vault.
+    4. Personnel / comp / M&A text is quoted like anything else, in the DM
+       and in `State.md` alike (#180 - the principal's decision of
+       2026-09-25, which changed house rule 7). `classify_sensitivity` still
+       MARKS every record, so `state.WITHHOLD_PRIVATE_FROM_VAULT` can switch
+       the vault back; the DM's old minimal quoting (#177) is removed, not
+       switched off - restore it from #177 if the rule is tightened again.
     5. Pure over what it is handed, like `ingestion`: no connector, no vault
-       read. `run` fetches, reads `Decisions.md`, and passes text in.
+       read or write. `run` fetches, reads `Decisions.md`, passes text in,
+       and projects what `sweep` recorded through `StateFolder.update_state`.
+    6. Every ACTIONABLE item of a fresh note - assigned to him, touches an
+       open decision, asks to his reports - is recorded as a `CHASED` row,
+       once per (message id, item text), with owner, verbatim quote,
+       permalink, asked-on, attendance marker and status open. "Everything
+       else" is DM-only. A missed DM no longer means a missed item (#180).
 
 WHY IT EXISTS
     The principal, 2026-09-25: "call notes need to be pulled automatically
@@ -56,6 +67,9 @@ WHY IT EXISTS
     window-bounded, ambiguity-surfacing matcher, not a second one.
 
 KNOWN LIMIT
+    - `State.md`'s own dedupe matches on the ask text (`update_state`), so the
+      same step, word for word, from two different notes is ONE row there -
+      the log holds both.
     - Speech detection is a verb list after his name. It will miss "per
       Alex, ..." and similar; a miss leaves the call unconfirmed, which is the
       honest answer, never a wrong "attended".
@@ -68,6 +82,7 @@ KNOWN LIMIT
 
 from __future__ import annotations
 
+import hashlib
 import re
 from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
@@ -83,6 +98,7 @@ from daydag.state import EventLog, classify_sensitivity
 
 __all__ = [
     "ATTENDED",
+    "CHASED",
     "INGESTED",
     "NOT_ATTENDED",
     "UNCONFIRMED",
@@ -103,6 +119,10 @@ UNCONFIRMED = "unconfirmed"
 
 #: The event-log kind that is the sweep's seen-set (contract 2).
 INGESTED = "note_ingested"
+
+#: The event-log kind an actionable item is filed under (contract 6). In
+#: `state.VAULT_BOUND`, so it cannot be recorded without a sensitivity mark.
+CHASED = "call_note_item"
 
 #: Directory keys for his direct reports, per CLAUDE.md's ownership map.
 REPORT_KEYS = ("EMAIL_VP_DATA", "EMAIL_VP_AI", "EMAIL_ENABLEMENT_LEAD")
@@ -259,15 +279,10 @@ def _speech(body: str, principal: Principal) -> list[str]:
 def spoke(body: str, principal: Principal) -> str | None:
     """The first prose sentence that reports him speaking, or ``None``.
 
-    A sentence `classify_sensitivity` calls private is passed over for a
-    later one, because this is what the attendance roll QUOTES. If every one
-    is private, the first is still returned - it is still evidence - and
-    `attendance` declines to quote it.
+    Whatever it says - a comp sentence is evidence, and quoted, like any
+    other (#180).
     """
     said = _speech(body, principal)
-    for sentence in said:
-        if classify_sensitivity(sentence) != "private":
-            return sentence
     return said[0] if said else None
 
 
@@ -311,12 +326,6 @@ def attendance(rsvp: str | None, body: str, principal: Principal) -> Verdict:
     if said:
         if rsvp == "accepted":
             return Verdict(ATTENDED, label, "accepted")
-        if classify_sensitivity(said) == "private":
-            return Verdict(
-                ATTENDED,
-                label,
-                f"rsvp {label}, but the notes quote you (personnel/comp - not quoted)",
-            )
         return Verdict(ATTENDED, label, f'rsvp {label}, but the notes quote you: "{short(said)}"')
     if rsvp == "accepted":
         return Verdict(ATTENDED, label, "accepted")
@@ -345,11 +354,6 @@ class Note:
     @property
     def has_body(self) -> bool:
         return bool(self.body.strip())
-
-    @property
-    def sensitive(self) -> bool:
-        """The note as a whole carries personnel / comp / M&A text."""
-        return classify_sensitivity(self.title, self.body) == "private"
 
     def local_day(self, tz: tzinfo) -> date | None:
         start = self.event.get("start") if self.event else None
@@ -517,21 +521,10 @@ def _items(notes: Sequence[Note], principal: Principal, decisions: Sequence[str]
 
 
 def _line(item: _Item) -> str:
+    """One push line. ``short(item.text)`` is also the filed row's ask, so the
+    DM and `State.md` read the same (#180), sensitive or not."""
     note = item.note
-    if classify_sensitivity(item.text) == "private":
-        # House rule 7: DM only, minimally quoted - so not quoted at all.
-        body = "a personnel/comp item - not quoted here, open the note"
-    elif note.sensitive:
-        # The step reads innocuously but the note around it is about pay or
-        # people: its title only (Gemini's "Title: detail" shape).
-        title = item.text.split(":", 1)[0] if ":" in item.text else ""
-        body = (
-            f"{title} - detail not quoted, open the note"
-            if title
-            else ("an item from a personnel/comp conversation - open the note")
-        )
-    else:
-        body = short(item.text)
+    body = short(item.text)
     who = f"[{item.owner}] " if item.owner else ""
     heard = " - names you" if item.names_him else ""
     if item.rank == _MINE and note.verdict.status != ATTENDED:
@@ -649,17 +642,70 @@ def _digest(note: Note, principal: Principal, tz: tzinfo) -> str:
     )
 
 
+def _key(item: _Item) -> str:
+    """The dedupe key: the note's message id and the item's own text."""
+    digest = hashlib.sha256(item.text.encode("utf-8")).hexdigest()[:12]
+    return f"call:{item.note.message_id}:{digest}"
+
+
+def _chase_payload(item: _Item, tz: tzinfo) -> dict[str, Any]:
+    """The `CHASED` row for ``item``: `state.ChaseItem`'s fields, plus the
+    provenance `state._render_chase` prints as the attendance marker."""
+    note = item.note
+    day = note.local_day(tz)
+    return {
+        "key": _key(item),
+        "owner": item.owner or "unassigned",
+        "ask": short(item.text),
+        "quote": item.text,
+        "permalink": note.permalink,
+        "asked_on": day.isoformat() if day else "",
+        "status": "open",
+        "marker": note.marker(),
+        "attendance": note.verdict.status,
+        "message_id": note.message_id,
+        "note_title": note.title,
+        "why": _BUCKETS[item.rank],
+    }
+
+
+def _file(items: Sequence[_Item], log: EventLog, tz: tzinfo) -> None:
+    """Record every actionable item not already recorded (contract 6).
+
+    Deduped on its key against the log itself, not only through the note
+    seen-set: the two are separate rows, and a pruned seen-set row must not
+    double every item it covered.
+    """
+    have = {item.key for item in log.chase_items(kinds={CHASED})}
+    for item in items:
+        payload = _chase_payload(item, tz)
+        if payload["key"] in have:
+            continue
+        have.add(payload["key"])
+        log.record(
+            CHASED,
+            # The MARK, kept so the rule can be switched back (#180). The
+            # whole note counts: a step can read innocuously while the call
+            # around it was about pay.
+            sensitivity=classify_sensitivity(item.note.title, item.note.body, item.text),
+            **payload,
+        )
+
+
 def sweep(
     notes: Sequence[Any],
     events: Iterable[Any],
     principal: Principal,
     *,
     log: EventLog | None,
+    decisions: Sequence[str] = (),
     tz: tzinfo = recipes.PACIFIC,
 ) -> str:
-    """The ingest push: new notes only, each with attendance; marks them seen.
+    """The ingest push: new notes only, each with attendance; marks them seen
+    and records their actionable items for the chase list (contract 6).
 
-    Safe to run every ~30 minutes (contract 2). Returns the push text.
+    Safe to run every ~30 minutes (contract 2). ``decisions`` are the open
+    decisions' texts, as `priorities` takes them. Returns the push text.
     """
     from daydag.brief import render_push
 
@@ -668,6 +714,7 @@ def sweep(
     seen = _seen(log)
     fresh = [n for n in joined if n.has_body and n.message_id and n.message_id not in seen]
     already = [n for n in joined if n.message_id and n.message_id in seen]
+    actionable = [i for i in _items(fresh, principal, decisions) if i.rank != _REST]
     handled = {id(n) for n in fresh + already}
 
     # Unplaced: not a Gemini note, or one fetched without a body. Named by
@@ -696,19 +743,18 @@ def sweep(
                 tuple(_digest(n, principal, tz) for n in fresh),
             )
         )
-        mine = [
-            _Item(n, owner, text, _MINE)
-            for n in fresh
-            for owner, text in next_steps(n.body)
-            if principal.is_him(owner)
-        ]
-        sections.append(Section(f"assigned to you ({len(mine)})", tuple(_line(i) for i in mine)))
+        # The three buckets that are filed for the chase list, line for line
+        # what `_file` records - "everything else" stays out of both.
+        for rank in (_MINE, _DECISION, _REPORTS):
+            lines = tuple(_line(i) for i in actionable if i.rank == rank)
+            sections.append(Section(f"{_BUCKETS[rank]} ({len(lines)})", lines))
     if unplaced:
         sections.append(
             Section(f"unplaced ({len(unplaced)}) - these need you, not a guess", tuple(unplaced))
         )
 
     if log is not None:
+        _file(actionable, log, tz)
         for note in fresh:
             log.record(
                 INGESTED,

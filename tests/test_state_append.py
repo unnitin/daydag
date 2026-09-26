@@ -203,9 +203,14 @@ def test_watch_items_and_notes_gaps_append_the_same_way(folder):
 
 
 @pytest.mark.guardrail
-def test_a_private_item_is_still_filtered_on_the_append_path(folder):
+def test_a_private_item_is_still_filtered_on_the_append_path_when_rule_7_is_on(folder, withholding):
     """Contract 2's `_visible` gate. Appending rather than replacing must not
-    route around the one filter a private carry-forward slipped past once."""
+    route around the one filter a private carry-forward slipped past once.
+
+    Guardrail changed by #180: the rule is off by default (private items are
+    written like normal ones - see `test_guardrails.py`), so this now pins the
+    gate itself under the switch, which is what makes tightening it again a
+    one-line change."""
     marker = "growth-area-carry-forward"
 
     folder.update_state(

@@ -115,3 +115,17 @@ def repo_landing_on_dev(tmp_path, git_env):
         run("git", "commit", "-qm", f"Merge PR #{n}")
     run("git", "checkout", "-q", "main")
     return repo
+
+
+@pytest.fixture
+def withholding(monkeypatch):
+    """House rule 7 switched back on: private items withheld from the vault.
+
+    The rule before #180. `state.WITHHOLD_PRIVATE_FROM_VAULT` is the one
+    switch; a test that exercises the withholding machinery - the one `_visible`
+    gate, the mark surviving every coercion - runs under this fixture, so the
+    rule can be tightened again without rebuilding what it relies on.
+    """
+    from daydag import state
+
+    monkeypatch.setattr(state, "WITHHOLD_PRIVATE_FROM_VAULT", True)

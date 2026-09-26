@@ -178,7 +178,7 @@ Four files rather than one, because they have genuinely different edit patterns 
 
 `README.md` in that folder is not decoration. It is the one thing that stops a future session from inventing a fifth file.
 
-**The sensitive partition lives only in the log.** `weekly-feedback-scan` carries personnel items forward across reviews — structurally identical to a chase loop, but the vault is plaintext synced to every device Nitin owns, and chase entries exist to be surfaced in a brief. Those items never touch the `DayDAG/` folder.
+**Sensitivity is a mark, and one switch decides what it does in the vault.** Every record the log projects carries `sensitivity: private | normal`. Since #180 (the principal, 2026-09-25: *"i think we should treat sensitive items the same"* / *"wire everything consistently for now, we can change later"*) `state.WITHHOLD_PRIVATE_FROM_VAULT` is off, and a private item is written to `State.md` like a normal one. Turning it back on withholds private items from the vault again, with nothing to re-derive. `weekly-feedback-scan` is separate from this: it writes its own private Drive doc, its registry-level `sensitivity: private` routing is unchanged, and nothing records its carry-forward items in the event log. Wiring them in would now put them in `State.md`, so decide that when it comes up.
 
 ## Invariants
 

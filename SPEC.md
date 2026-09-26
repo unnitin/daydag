@@ -77,7 +77,7 @@ Qualifying: 1:1s, steering/pod meetings, anything with Sponsor/CTO/external part
 
 ### 3.3 Meeting-notes ingestion — the self-update loop
 
-**Trigger:** arrival of a Gemini-notes email (from:gemini-notes@google.com), a new Granola/Notion meeting note, or a sweep every 30 min 7am-7pm PT weekdays (#168). The sweep is idempotent on the Gmail message id - a note already ingested is never re-reported - and labels each note with his attendance: accepted → attended, declined → not attended, unanswered/tentative → unconfirmed unless the note quotes him speaking. Observations from calls he was not in carry that marker on the line.
+**Trigger:** arrival of a Gemini-notes email (from:gemini-notes@google.com), a new Granola/Notion meeting note, or a sweep every 30 min 7am-7pm PT weekdays (#168). The sweep is idempotent on the Gmail message id - a note already ingested is never re-reported - and labels each note with his attendance: accepted → attended, declined → not attended, unanswered/tentative → unconfirmed unless the note quotes him speaking. Observations from calls he was not in carry that marker on the line. Every actionable item (assigned to him, touches an open decision, an ask to one of his reports) is appended to the `State.md` chase list once per (message id, item) with owner, verbatim quote, note permalink, asked-on, attendance marker and status open (#180), so a missed DM is not a missed item.
 
 **Pipeline per note:**
 1. Parse Summary / Decisions / Next steps (treat as evidence to verify, not gospel — existing house rule).
@@ -213,7 +213,7 @@ All output in Nitin's stored voice profile: lowercase openers, short direct sent
 2. Vault writes are additive (create/append) or proposed diffs; the agent never rewrites an existing note wholesale. Weekly-note format follows whatever the **latest note actually uses** — the layout evolves; the note's own header wins over any template.
 3. Every claim traceable: quote + permalink or file path. If the agent can't source it, it says so instead of asserting.
 4. Discrepancies (conflicting dates, duplicate invites, defunct 1:1s with departed people, "done" claims unverified) are surfaced as flags, never auto-resolved.
-5. Sensitive threads (personnel, comp, M&A) never appear in channel drafts — DM-to-Nitin only, minimal quoting.
+5. Sensitive threads (personnel, comp, M&A) never appear in channel drafts or reach anyone but Nitin. Inside what is his — the DM and `DayDAG/State.md` — they are **treated like any other item**: quoted, and written to the chase list the same way. Changed 2026-09-25 on his explicit decision (#180): *"i think we should treat sensitive items the same"* / *"wire everything consistently for now, we can change later"*. Every record keeps its sensitivity mark, so this can be tightened again later by flipping one switch (`state.WITHHOLD_PRIVATE_FROM_VAULT`), which withholds private items from the vault as before.
 6. Failure honesty: if a connector is down (Databricks auth, Obsidian index timeout — both observed), the brief ships anyway with a one-line "couldn't check X" rather than stalling or guessing.
 
 ---
@@ -281,9 +281,9 @@ Its own rule, verbatim: *"read from Slack/Gmail/Drive, write one Google Doc, sen
 
 **Where it touches the DayDAG loops — and where it must not.**
 
-1. **It is the sharpest test of guardrail 5.** Everything this routine handles is personnel content about named reports. It must never reach a brief, a channel draft, a shared artifact, or any surface with an audience of more than one.
+1. **It is the sharpest test of guardrail 5.** Everything this routine handles is personnel content about named reports. It must never reach a channel draft, a shared artifact, or any surface with an audience of more than one. Its registry-level `sensitivity: private` routing is unchanged by #180.
 
-2. **Its carry-forward items are open loops that cannot live in the chase list.** The methodology carries unresolved items across reviews and flags anything open past two reviews for re-scope — structurally identical to §3.4. But `DayDAG/State.md` is plaintext in an iCloud-synced vault that reaches every device Nitin owns, and chase entries are written to be surfaced in a morning brief. **Personnel carry-forward needs a separate, private partition** — which is an argument for the local state database (outside the vault) holding the sensitive slice, rather than folding these into the markdown file.
+2. **Its carry-forward items are open loops, and today they are not in the chase list.** The methodology carries unresolved items across reviews and flags anything open past two reviews for re-scope — structurally identical to §3.4. The original argument for keeping them out: `DayDAG/State.md` is plaintext in an iCloud-synced vault that reaches every device Nitin owns, and chase entries are written to be surfaced in a morning brief, so personnel carry-forward needed a separate, private partition in the local state database. **Changed 2026-09-25 (#180):** DayDAG no longer withholds sensitive items from `State.md` (guardrail 5). Nothing records the feedback scan's carry-forward into the event log yet, so none of it reaches the vault today. Wiring it in would put it in `State.md` unless the rule is tightened again with `state.WITHHOLD_PRIVATE_FROM_VAULT`, and that is a decision to take when the wiring is proposed.
 
 3. **The evidence sweep is duplicated work.** It scans the same 7-day Slack/Gmail window over the same channels as §3.3 and §3.7 — releases, incidents, missed dates, stakeholder friction. The pulse should hand it evidence with permalinks already attached rather than repeat the search. Note it names `#ar-tooling-dev-team`, which CLAUDE.md records as renamed to `#pod-discovery`.
 

@@ -189,9 +189,18 @@ unplaced and NOT marked seen, so the next sweep that fetches it still reads it.
 
 Nothing fires it on a schedule yet (#25 - a bare cron cannot call an MCP
 connector). Until then, run it from a session: `/loop 30m` over
-`plan ingest` -> fetch -> `render ingest --log ~/.local/state/daydag/events.db`,
+`plan ingest` -> fetch -> `render ingest --log ~/.local/state/daydag/events.db --write-state`,
 or a scheduled cloud routine doing the same. Overlapping or repeated runs are
 harmless by construction.
+
+**Every actionable item goes to the chase list (#180).** Assigned to him, touches
+an open decision in `Decisions.md`, or an ask to one of his reports: each is
+recorded in the event log once per (message id, item text), and with
+`--write-state` appended to `State.md`'s chase list through the append-only
+writer - owner, verbatim quote, note permalink, asked-on, the attendance marker,
+status open. Never a rewrite; his edits and strikes win. The DM lists the same
+items in the same words, and says `filed N to the State.md chase list`.
+"Everything else" stays in the DM. So a missed DM is no longer a missed item.
 
 Every note carries his attendance, read off the calendar row's RSVP
 (`response_status` from the attendee marked `self`):
@@ -202,8 +211,8 @@ was not in say so: `(from DE Demo Prep - you weren't in it)`; an item assigned
 to him from such a call adds `⚠ you may not have heard this one`. The EOD wrap
 carries "priorities from today's calls", ranked: assigned to him > touches an
 open decision in `Decisions.md` > asks to his reports > everything else, every
-line with the note's permalink. Personnel/comp text is never quoted, even in
-the DM - see `src/daydag/call_notes.py`.
+line with the note's permalink. Personnel/comp text is quoted like any other
+line, in the DM and in `State.md` (guardrail 3, changed by #180).
 
 Match the message format in the SPEC section exactly - the formats were tuned against
 real briefs, and a redesign costs a correction round-trip. Three rules cut across all
@@ -240,8 +249,8 @@ but knowing which is which before you start saves a wasted round-trip.
 rather than being conveniences: inside `DayDAG/` only, additive or a proposed
 diff, never a wholesale rewrite. `State.md` is the file he corrects by hand and
 those corrections WIN - so append his instruction, do not re-derive the list
-around it. Personnel, comp and M&A never land there at all (guardrail 3); those
-belong in the event log.
+around it. Personnel, comp and M&A are written there like anything else since #180
+(guardrail 3).
 
 ## The output contract
 
@@ -264,10 +273,14 @@ U+26A0 the vault actually uses, not the emoji-presentation variant.
 2. **Write only inside `DayDAG/`.** The weekly note, `Fact Base/Workstreams.md`, the
    Goals doc and the feedback log each have another sole writer. Propose a block diff
    into `DayDAG/Proposals/`; never edit them, and never rewrite any note wholesale.
-3. **Personnel, comp and M&A go to the DM only**, minimally quoted, and **never** into
-   `DayDAG/State.md` - the vault is plaintext synced to every device he owns. The
-   feedback scan's carry-forward items belong in the event log, nowhere else
-   (SPEC §10.1).
+3. **Personnel, comp and M&A are treated like any other item** - quoted in the DM and
+   written to `DayDAG/State.md` the same way. Changed 2026-09-25 on the principal's
+   explicit decision (#180): "i think we should treat sensitive items the same" /
+   "wire everything consistently for now, we can change later". They still never go
+   into a channel draft or to anyone else (guardrail 1). Every record keeps its
+   sensitivity mark, so this can be tightened again later with one switch,
+   `state.WITHHOLD_PRIVATE_FROM_VAULT`. The feedback scan's carry-forward items are
+   still not fed into DayDAG at all (SPEC §10.1).
 4. **Surface, don't resolve.** Conflicting dates, duplicate slots, defunct invites from
    people who left, unverified "done" claims - flag them and move on.
 5. **No weekend chases.** Sunday lists what is due Mon-Wed so Monday is not a surprise;
