@@ -1043,26 +1043,58 @@ def _ingest(
     payloads: Mapping[str, Any],
     identities: Mapping[str, str],
     log: EventLog | None,
+    folder: StateFolder | None = None,
+    *,
+    write_state: bool = False,
 ) -> str:
-    """The sweep: new notes only, each with attendance, marked seen (#168).
+    """The sweep: new notes only, each with attendance, marked seen (#168),
+    and - with ``write_state`` - their actionable items filed to the
+    `State.md` chase list (#180).
 
     Safe on a ~30-minute cadence - `call_notes.sweep` dedupes on the Gmail
-    message id against the event log. A note that is not Gemini-shaped or
-    came back without its body is named under "unplaced", never guessed at
-    and never marked seen.
+    message id against the event log, and each filed item on (message id,
+    item text). A note that is not Gemini-shaped or came back without its
+    body is named under "unplaced", never guessed at and never marked seen.
+
+    Files ONLY `call_notes.CHASED` rows. `loop_opened` and `carry_forward`
+    stay the morning / EOD projection's to file - this loop does not take
+    over their cadence in passing.
     """
     mail = payloads.get("gmail")
     if not isinstance(mail, list):
         return "ingest: couldn't check gmail"
     if not mail:
         return "ingest: nothing new landed"
-    return call_notes.sweep(
+    text = call_notes.sweep(
         mail,
         _timed_calendar(payloads),
         call_notes.Principal.from_identities(identities),
         log=log,
+        decisions=_open_decisions(folder),
         tz=timezone_for(identities),
     )
+    if write_state and folder is not None and log is not None:
+        try:
+            filed = folder.update_state(chase=log.chase_items(kinds={call_notes.CHASED}))
+        except StateNotWritable as unwritable:
+            # Guardrail 6, as in `render`: one line, never a dead push.
+            return text + f"\n\n- couldn't update State.md: {unwritable}"
+        if filed:
+            text += f"\n\n- filed {filed} to the State.md chase list"
+    return text
+
+
+def _open_decisions(folder: StateFolder | None) -> list[str]:
+    """Open decisions' texts from `Decisions.md`, through `closure.asks_in` -
+    the same reading the chaser uses, so "open" means one thing. A vault that
+    cannot be read costs the decision ranking, nothing else."""
+    if folder is None:
+        return []
+    try:
+        text = folder.decisions_path.read_text(encoding="utf-8")
+    except OSError:
+        return []
+    return [ask.text for ask in closure.asks_in("", text) if ask.section == "Pending decisions"]
 
 
 def _timed_calendar(payloads: Mapping[str, Any]) -> list[Mapping[str, Any]]:
@@ -1086,21 +1118,12 @@ def _calls(
     mail = payloads.get("gmail")
     if not isinstance(mail, list):
         return [brief.Section("today's calls", ("- couldn't check today's call notes",))]
-    decisions: list[str] = []
-    if folder is not None:
-        try:
-            text = folder.decisions_path.read_text(encoding="utf-8")
-        except OSError:
-            text = ""
-        decisions = [
-            ask.text for ask in closure.asks_in("", text) if ask.section == "Pending decisions"
-        ]
     tz = timezone_for(identities)
     return call_notes.priorities(
         mail,
         _timed_calendar(payloads),
         call_notes.Principal.from_identities(identities),
-        decisions=decisions,
+        decisions=_open_decisions(folder),
         day=now.astimezone(tz).date(),
         tz=tz,
     )
@@ -1288,7 +1311,7 @@ def render(
                 principal=identities.get("SLACK_USER_PRINCIPAL", ""),
             )
         if loop == "ingest":
-            return _ingest(payloads, identities, events)
+            return _ingest(payloads, identities, events, folder, write_state=write_state)
         if loop == "prep":
             return _prep(now, identities, payloads, ledger, selector, directory)
         if loop == "morning":

@@ -162,9 +162,12 @@ def test_a_hand_written_chase_item_reaches_the_brief(home):
     assert "compute consolidation" in text, f"State.md was not read:\n{text}"
 
 
-def test_a_private_chase_item_never_reaches_the_vault_through_the_runner(home):
+def test_a_private_chase_item_never_reaches_the_vault_through_the_runner_when_rule_7_is_on(
+    home, withholding
+):
     """The runner writes `State.md` back, so it inherits the one `_visible`
-    gate - or it becomes a second writer with its own idea of the rules."""
+    gate - or it becomes a second writer with its own idea of the rules.
+    Under the rule-7 switch since #180; see the sibling below for the default."""
     log = EventLog.open(home["log"])
     log.record("carry_forward", sensitivity="private", owner="VP-AI", ask="SECRET-ASK", key="k1")
 
@@ -183,6 +186,25 @@ def test_a_private_chase_item_never_reaches_the_vault_through_the_runner(home):
         if path.is_file() and "SECRET-ASK" in path.read_text(encoding="utf-8")
     ]
     assert not leaked, f"a private chase item reached the vault: {leaked}"
+
+
+def test_a_private_chase_item_reaches_state_md_through_the_runner_by_default(home):
+    """#180: house rule 7 no longer withholds from the vault - the runner's
+    projection files a private item exactly as it files a normal one."""
+    log = EventLog.open(home["log"])
+    log.record("carry_forward", sensitivity="private", owner="VP-AI", ask="SECRET-ASK", key="k1")
+
+    run.render(
+        "morning",
+        now=MONDAY,
+        identities=home["identities"],
+        payloads=_payloads(),
+        log=home["log"],
+        write_state=True,
+    )
+
+    state_md = home["vault"] / "DayDAG" / "State.md"
+    assert "SECRET-ASK" in state_md.read_text(encoding="utf-8")
 
 
 # --------------------------------------------------------------------------
