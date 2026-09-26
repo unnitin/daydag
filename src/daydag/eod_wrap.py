@@ -188,6 +188,7 @@ def assemble(
     movement: Sequence[Movement] = (),
     unclaimed: Sequence[Evidence] = (),
     unchecked: Sequence[str] = (),
+    calls: Sequence[Section] = (),
 ) -> Wrap:
     """Build the EOD wrap for ``now``'s local day.
 
@@ -201,6 +202,11 @@ def assemble(
     ``unclaimed`` is board and repo movement no open item claimed
     (`movement.unclaimed`); ``unchecked`` names the evening sources the caller
     could not read, each rendered as its own "couldn't check" line (#167).
+
+    ``calls`` is today's call-notes block, built by `daydag.call_notes`
+    (#168) and placed verbatim between what moved and tomorrow. Built by the
+    caller, not here, because it needs gmail bodies and `Decisions.md`, and
+    this module's contract 6 is that it reads exactly three sources of its own.
     """
     if now.tzinfo is None or now.utcoffset() is None:
         raise WrapError(
@@ -269,6 +275,8 @@ def assemble(
     loose, loose_count = _unclaimed_section(unclaimed, "\n".join(moved_lines))
     if loose is not None:
         sections.append(loose)
+    # -- today's calls: attendance and ranked priorities (#168) ------------
+    sections += list(calls)
 
     # -- tomorrow's first meeting, plus any prep gap -----------------------
     window = recipes.calendar_day(tomorrow)

@@ -77,7 +77,7 @@ Qualifying: 1:1s, steering/pod meetings, anything with Sponsor/CTO/external part
 
 ### 3.3 Meeting-notes ingestion — the self-update loop
 
-**Trigger:** arrival of a Gemini-notes email (from:gemini-notes@google.com), a new Granola/Notion meeting note, or a sweep at 12pm and 5pm PT.
+**Trigger:** arrival of a Gemini-notes email (from:gemini-notes@google.com), a new Granola/Notion meeting note, or a sweep every 30 min 7am-7pm PT weekdays (#168). The sweep is idempotent on the Gmail message id - a note already ingested is never re-reported - and labels each note with his attendance: accepted → attended, declined → not attended, unanswered/tentative → unconfirmed unless the note quotes him speaking. Observations from calls he was not in carry that marker on the line.
 
 **Pipeline per note:**
 1. Parse Summary / Decisions / Next steps (treat as evidence to verify, not gospel — existing house rule).
@@ -97,7 +97,7 @@ Detection sources: thread replies on the original message, mentions of the owner
 
 ### 3.5 EOD wrap — 4:30pm PT
 
-Three lines: what closed today (struck items ready to move to Done), what moved (Workstreams deltas logged), tomorrow's first meeting + any prep gap ("9am w/ Sponsor, no notes from last week's session found - want me to build prep from the steering doc instead?"). Friday's wrap does **not** offer to run weekly-planning — that routine already ran at 1pm (§10), so asking at 4:30pm would be stale by three and a half hours. Instead it reports the outcome: the Workstreams changelog, which of the two planning files landed, and anything still waiting on a paste or a Gmail-draft approval.
+Three lines: what closed today (struck items ready to move to Done), what moved (Workstreams deltas logged), **priorities from today's calls** (#168 - every note read, ranked: assigned to him > touches an open decision > asks to his reports > the rest, each line with the note permalink and a marker when he was not in the call), tomorrow's first meeting + any prep gap ("9am w/ Sponsor, no notes from last week's session found - want me to build prep from the steering doc instead?"). Friday's wrap does **not** offer to run weekly-planning — that routine already ran at 1pm (§10), so asking at 4:30pm would be stale by three and a half hours. Instead it reports the outcome: the Workstreams changelog, which of the two planning files landed, and anything still waiting on a paste or a Gmail-draft approval.
 
 ### 3.6 Sunday week-ahead — Sundays 5:30pm PT, Slack DM to ${SLACK_USER_PRINCIPAL}
 

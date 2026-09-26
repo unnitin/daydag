@@ -59,6 +59,7 @@ artifact is the load-bearing rule; the rest is plumbing.
 | `soak` | The five-day gate's journal: every edit he asks for, and whether a repeat is still outstanding |
 | `ingestion` | SPEC §3.3's classifier: five labels, biased to precision, no write path |
 | `movement` | What the live sources say moved, proposed for confirmation - never a closure, no write path |
+| `call_notes` | The ingest sweep (idempotent on the gmail message id) and the EOD calls section: attendance per note, provenance on every line, ranked priorities |
 
 ## Working on it
 
