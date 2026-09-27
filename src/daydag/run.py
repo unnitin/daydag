@@ -1736,17 +1736,21 @@ def main(argv: list[str] | None = None) -> int:
                 if payloads_path is not None
                 else json.load(sys.stdin)
             )
-            print(
-                render(
-                    loop,
-                    now=now,
-                    identities=identities,
-                    payloads=payloads,
-                    log=log,
-                    write_state=write_state,
-                    selector=selector,
-                )
+            text = render(
+                loop,
+                now=now,
+                identities=identities,
+                payloads=payloads,
+                log=log,
+                write_state=write_state,
+                selector=selector,
             )
+            if text:
+                print(text)
+            else:
+                # Stdout stays empty so a scheduled run posts nothing; a run by
+                # hand still learns why.
+                print(f"{loop}: nothing to post", file=sys.stderr)
     except (RunError, ConfigError) as bad:
         print(f"{bad}", file=sys.stderr)
         return 1
