@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from daydag.state import StateFolder
+from daydag.state import StateFolder, StateNotWritable
 
 FIXTURE = Path(__file__).parent / "fixtures" / "state" / "hand_edited.md"
 
@@ -429,3 +429,71 @@ def test_an_appended_item_reads_back_as_one_item_not_three(folder):
     bodies = read_section(folder.read_state(), "Chase list", top_level=True)
 
     assert bodies == ["vp-ai · the wave 2 rollout date · status open"], bodies
+
+
+# -- the write goes through `vault`: atomic, placeholder-refusing, CAS --------
+
+NEW = [{"key": "NEW-1", "owner": "vp-ai", "ask": "wave 2 scope"}]
+
+
+def test_an_evicted_state_file_is_refused_not_replaced_with_an_empty_one(folder):
+    """iCloud evicts a file to a `.State.md.icloud` sidecar. `exists()` is then
+    false, so the writer started from an empty file and wrote it - which iCloud
+    would sync over the real chase list. The one failure that deletes content
+    the agent thought was absent; refused, and nothing is written."""
+    hand_written = folder.state_path.read_bytes()
+    folder.state_path.unlink()
+    sidecar = folder.state_path.parent / ".State.md.icloud"
+    sidecar.write_bytes(hand_written)
+
+    with pytest.raises(StateNotWritable, match="brctl download"):
+        folder.update_state(chase=NEW)
+
+    assert not folder.state_path.exists(), "an empty State.md was written over the evicted one"
+
+
+def test_a_write_that_fails_leaves_the_file_as_it_was(folder, monkeypatch):
+    """Temp file, fsync, `os.replace`: a crash mid-write leaves the original.
+    `write_text` truncated first, so a failure partway left a partial file."""
+    import os
+
+    before = folder.state_path.read_bytes()
+
+    def crash(*_a, **_k):
+        raise OSError("disk went away")
+
+    monkeypatch.setattr(os, "replace", crash)
+    with pytest.raises(OSError, match="disk went away"):
+        folder.update_state(chase=NEW)
+
+    assert folder.state_path.read_bytes() == before
+    assert not list(folder.root.glob(".daydag-*.tmp")), "a temp file outlived the failed write"
+
+
+def test_a_hand_edit_made_during_the_run_is_surfaced_not_overwritten(folder, monkeypatch):
+    """He edits State.md on his phone while the wrap is assembling. The write
+    is a compare-and-swap against what was read, so his edit survives and the
+    run says it could not write - never the other way round."""
+    from daydag import state
+
+    real_parse = state.StateDoc.parse
+
+    def parse_then_edit(text):
+        doc = real_parse(text)
+        folder.state_path.write_text(text + "- edited on his phone\n", encoding="utf-8")
+        return doc
+
+    monkeypatch.setattr(state.StateDoc, "parse", staticmethod(parse_then_edit))
+    with pytest.raises(StateNotWritable, match="changed"):
+        folder.update_state(chase=NEW)
+
+    assert folder.state_path.read_text(encoding="utf-8").endswith("- edited on his phone\n")
+
+
+def test_a_first_write_creates_the_file(tmp_path):
+    """No file and no sidecar is a first run, not an eviction."""
+    folder = StateFolder(tmp_path / "DayDAG")
+    folder.root.mkdir()
+
+    assert folder.update_state(chase=NEW) == 1
+    assert "wave 2 scope" in folder.read_state()

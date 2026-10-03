@@ -16,7 +16,7 @@ enters the package, because the package never fetches.
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 import pytest
 
@@ -1050,3 +1050,92 @@ def test_the_eod_wrap_gets_movement_from_the_payloads_it_already_fetched(identit
 
     assert "looks moved - confirm" in text, f"the live sources were not read:\n{text}"
     assert "sending to finance now" in text, "the verbatim quote was dropped"
+
+
+# -- a remembered meeting keeps its own `kind` ---------------------------------
+
+
+def test_a_remembered_meeting_keeps_its_kind(identities, tmp_path):
+    """The raw Calendar API puts `kind: "calendar#event"` on every event.
+    Splatting the record into `EventLog.record(kind, ...)` collided with that
+    parameter and raised `TypeError` out of every morning and wrap with a log -
+    the memory tests hand-rolled records with no `kind` and never met it.
+    Stored whole, the value is data the ledger reads on replay; google's own
+    token is not one of `NON_MEETING_KINDS`, so the row stays a meeting."""
+    from daydag.state import EventLog
+
+    log = tmp_path / "events.db"
+    meeting = {**_meeting("Pod Steering", "a@x.com", "b@x.com"), "kind": "calendar#event"}
+
+    run.render(
+        "morning",
+        now=MONDAY_PT,
+        identities=identities,
+        payloads=_payloads(calendar=[meeting]),
+        log=log,
+    )
+
+    (remembered,) = EventLog.open(log).recorded("meeting")
+    assert remembered["kind"] == "calendar#event", "the record is stored whole"
+    replayed = run._remembered(run._latest(EventLog.open(log)), MONDAY_PT)
+    assert [row.summary for row in replayed.open_rows()] == ["Pod Steering"]
+
+
+# -- #112: a note is served under the path it was fetched for -----------------
+
+#: Sunday evening Pacific - when the week-ahead runs.
+SUNDAY_PT = datetime(2026, 9, 14, 1, 0, tzinfo=UTC)
+
+
+def _next_week_note() -> str:
+    from daydag import recipes
+
+    return recipes.weekly_note(date(2026, 9, 14))
+
+
+def test_the_week_ahead_plan_asks_for_next_weeks_note(identities):
+    """The check for next week's plan needs next week's note fetched. The plan
+    only ever asked for this week's, under `vault`."""
+    steps = run.plan("week-ahead", now=SUNDAY_PT, identities=identities).steps
+    asked = [p for s in steps if s.source == "vault_notes" for p in s.detail["paths"]]
+
+    assert _next_week_note() in asked
+
+
+def test_this_weeks_note_is_not_served_as_next_weeks(identities):
+    """#112: `weekly_note(path)` ignored its path and returned the `vault`
+    payload - THIS week's note - so with this week's note written, the
+    week-ahead's "no week-ahead plan" check could never fire. Without next
+    week's note in the payload, the honest answer is that it was not checked."""
+    text = run.render(
+        "week-ahead",
+        now=SUNDAY_PT,
+        identities=identities,
+        payloads=_payloads(vault="# this week\n- 🔴 something open\n"),
+    )
+
+    assert "no week-ahead plan" not in text
+    assert "couldn't check" in text and "week-ahead plan" in text, text
+
+
+def test_a_missing_next_week_note_leads_the_week_ahead(identities):
+    text = run.render(
+        "week-ahead",
+        now=SUNDAY_PT,
+        identities=identities,
+        payloads=_payloads(vault="# this week\n", vault_notes={_next_week_note(): None}),
+    )
+
+    assert "no week-ahead plan" in text, text
+
+
+def test_a_written_next_week_note_is_not_reported_missing(identities):
+    text = run.render(
+        "week-ahead",
+        now=SUNDAY_PT,
+        identities=identities,
+        payloads=_payloads(vault="# this week\n", vault_notes={_next_week_note(): "# next week\n"}),
+    )
+
+    assert "no week-ahead plan" not in text
+    assert "week-ahead plan" not in text, "next week's note was read, nothing to report"

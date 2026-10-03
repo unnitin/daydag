@@ -417,3 +417,59 @@ def test_a_replacement_containing_a_newline_is_refused(note):
         note.plan_line_edit(snapshot, 5, "- [x] one\n- [ ] two")
     with pytest.raises(ValueError, match="newline"):
         note.plan_append(snapshot, "- [ ] one\n- [ ] two")
+
+
+# -- a whole-file rewrite, for a caller that owns its own round trip ----------
+
+
+def test_a_rewrite_is_still_a_compare_and_swap(vault):
+    """`State.md`'s writer renders the whole file from a parse it has already
+    proven byte-for-byte. The rewrite gets the same CAS as a line edit: a
+    change on another device between read and write is refused, not lost."""
+    note = vault.note("DayDAG/State.md")
+    note.path.parent.mkdir(parents=True, exist_ok=True)
+    note.path.write_text("# State\n", encoding="utf-8")
+    snap = note.read()
+    edit = note.plan_rewrite(snap, "# State\n- new\n")
+
+    note.path.write_text("# State\n- from his phone\n", encoding="utf-8")
+    with pytest.raises(ConflictError):
+        note.apply(edit)
+
+    assert note.path.read_text(encoding="utf-8") == "# State\n- from his phone\n"
+
+
+def test_a_rewrite_applies_atomically_when_nothing_moved(vault):
+    note = vault.note("DayDAG/State.md")
+    note.path.parent.mkdir(parents=True, exist_ok=True)
+    note.path.write_text("# State\n", encoding="utf-8")
+
+    note.apply(note.plan_rewrite(note.read(), "# State\n- new\n"))
+
+    assert note.path.read_text(encoding="utf-8") == "# State\n- new\n"
+
+
+def test_create_writes_a_note_that_does_not_exist(vault):
+    note = vault.note("DayDAG/State.md")
+    note.path.parent.mkdir(parents=True, exist_ok=True)
+
+    note.create("# State\n")
+
+    assert note.read().text == "# State\n"
+
+
+def test_create_refuses_a_note_that_exists_or_is_evicted(vault):
+    """`create` is for a first run. An existing note is a conflict, and an
+    evicted one is the content-deleting case contract 3 exists for."""
+    note = vault.note("DayDAG/State.md")
+    note.path.parent.mkdir(parents=True, exist_ok=True)
+    note.path.write_text("# mine\n", encoding="utf-8")
+    with pytest.raises(ConflictError):
+        note.create("# State\n")
+    assert note.path.read_text(encoding="utf-8") == "# mine\n"
+
+    note.path.unlink()
+    (note.path.parent / ".State.md.icloud").write_bytes(b"bplist00")
+    with pytest.raises(NotMaterialisedError):
+        note.create("# State\n")
+    assert not note.path.exists()

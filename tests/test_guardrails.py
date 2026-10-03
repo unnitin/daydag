@@ -429,10 +429,21 @@ def test_a_loop_rewrites_no_vault_file_but_state_md_and_only_with_its_old_text_k
     first. This watches the filesystem calls rather than the resulting text,
     because the corrupting version is the one that writes back
     identical-looking content.
+
+    State.md is written through `vault`'s atomic replace, which never calls
+    `write_text` or `open` on the target - so the spy watches that path too.
+    Every whole-file write in `vault` goes through `_atomic_write`.
     """
+    from daydag import vault
+
     truncated: list[Path] = []
     real_write_text = Path.write_text
     real_open = Path.open
+    real_atomic_write = vault._atomic_write
+
+    def spy_atomic_write(path: Path, data: bytes):
+        truncated.append(Path(path))
+        return real_atomic_write(path, data)
 
     def spy_write_text(self: Path, *args, **kwargs):
         truncated.append(Path(self))
@@ -446,6 +457,7 @@ def test_a_loop_rewrites_no_vault_file_but_state_md_and_only_with_its_old_text_k
     folder = StateFolder.create(tmp_path / "DayDAG")
     monkeypatch.setattr(Path, "write_text", spy_write_text)
     monkeypatch.setattr(Path, "open", spy_open)
+    monkeypatch.setattr(vault, "_atomic_write", spy_atomic_write)
 
     queue = DecisionQueue(folder)
     queue.add("draft nudge to the VP?")

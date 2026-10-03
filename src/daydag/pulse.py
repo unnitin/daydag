@@ -250,6 +250,11 @@ class Mirror:
         #: names neither of them.
         self.label = label or Path(path).name
         self._fetch_failed = False
+        #: What reading landings off this mirror did this run: None (not read),
+        #: READ_OK, or READ_FAILED. Only a read cursor is worth storing - before
+        #: a read it is whatever it started as, which for a `branch:` row is the
+        #: branch NAME, and a dead one stored back fails every run after.
+        self.read: str | None = None
         #: When this mirror last fetched cleanly, from the event log. `None`
         #: means nothing is on record - never "now", which would date a mirror
         #: that has never been read successfully as if it had just been.
@@ -327,6 +332,7 @@ class Mirror:
             items.append(Item(title=subject, permalink=f"{self.path}#{sha[:7]}"))
         items.reverse()
         self.cursor = tip
+        self.read = READ_OK
         return items
 
     def _resolve_ref(self) -> str:
@@ -608,6 +614,10 @@ def mirror_root(identities: Mapping[str, str]) -> Path:
 #: a fresh clone's whole history as "since the last run" would bury the day's
 #: actual state changes under a backlog nobody asked about.
 FIRST_SIGHT = "HEAD"
+
+#: `Mirror.read` outcomes.
+READ_OK = "read"
+READ_FAILED = "failed"
 
 
 class FetchLog(Protocol):
@@ -963,6 +973,7 @@ class Pulse:
                     # line would reintroduce it one layer up.
                     self._unavailable.append(Unavailable(mirror.label, str(misconfigured)))
                 except PulseError:
+                    mirror.read = READ_FAILED
                     # One unreadable mirror is one line, not a dead brief: an
                     # unborn HEAD on a repo with nothing in it yet, or a cursor
                     # that stopped resolving after an upstream force-push, would

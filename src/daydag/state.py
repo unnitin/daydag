@@ -13,6 +13,8 @@ USING IT
     log = EventLog.open(path)               # SQLite, OUTSIDE the vault
     log.record("loop_opened", sensitivity=classify_sensitivity(ask, quote, origin=kind),
                **payload)                 # kind: the Slack conversation type
+    log.record("meeting", event)            # a connector's record, whole - `kind` and all
+    log.record_cursor("org/repo", sha); log.last_cursor("org/repo")
     log.chase_items()
     log.median_days_to_answer()
 
@@ -78,11 +80,12 @@ import sqlite3
 import statistics
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 
 from daydag.payloads import has
+from daydag.vault import NoteSnapshot, VaultError, VaultNote
 from daydag.voice import WARN
 
 #: The sanctioned warning glyph (plain U+26A0, not its emoji-presentation
@@ -868,13 +871,25 @@ class StateFolder:
         (#63, #61). An item with neither ``owner`` nor ``ask`` degrades to a
         named warning line rather than the ``- ?`` it used to render silently.
 
+        The read and the write go through `vault`: an evicted iCloud file is
+        refused rather than read as absent, the write is a compare-and-swap
+        against what was read, and it is atomic.
+
         Raises:
             StateNotWritable: the file could not be reproduced from its own
-                parse. Nothing is written. A shape the parser cannot model is
+                parse, is an iCloud placeholder, or changed on disk while this
+                ran. Nothing is written. A shape the parser cannot model is
                 worth a skipped update and a complaint; it is not worth a
                 best-effort rewrite of the file this method exists to protect.
         """
-        before = self.read_state() if self.state_path.exists() else _EMPTY_STATE
+        note = VaultNote(self.state_path, "DayDAG/State.md")
+        try:
+            snapshot: NoteSnapshot | None = note.read()
+        except FileNotFoundError:
+            snapshot = None
+        except VaultError as refused:
+            raise StateNotWritable(f"{refused} Nothing was written.") from refused
+        before = snapshot.text if snapshot is not None else _EMPTY_STATE
         doc = StateDoc.parse(before)
         if doc.render() != before:
             raise StateNotWritable(
@@ -917,10 +932,15 @@ class StateFolder:
             # A no-op run must not churn the file, the archive, or the iCloud
             # sync that carries both to his other devices.
             return 0
-        if self.state_path.exists():
-            (self.root / "Archive").mkdir(exist_ok=True)
-            (self.root / "Archive" / "State.md.bak").write_text(before, encoding="utf-8")
-        self.state_path.write_text(after, encoding="utf-8")
+        try:
+            if snapshot is None:
+                note.create(after)
+            else:
+                (self.root / "Archive").mkdir(exist_ok=True)
+                (self.root / "Archive" / "State.md.bak").write_text(before, encoding="utf-8")
+                note.apply(note.plan_rewrite(snapshot, after))
+        except VaultError as refused:
+            raise StateNotWritable(f"{refused} Nothing was written.") from refused
         return appended
 
     def read_state(self) -> str:
@@ -1089,6 +1109,15 @@ class SensitivityRequired(Exception):
 #: "privat", True - would pass a None check and then render as visible.
 SENSITIVITIES = frozenset({"private", "normal"})
 
+#: The kind a mirror's read-up-to point is stored under.
+MIRROR_CURSOR = "mirror_cursor"
+
+
+def _encode(value: Any) -> str:
+    """json's fallback for a value it cannot take: an instant as its isoformat,
+    anything else as its `str`."""
+    return value.isoformat() if isinstance(value, (date, datetime)) else str(value)
+
 
 class EventLog:
     """Append-mostly SQLite, outside the vault.
@@ -1112,8 +1141,29 @@ class EventLog:
     def open(cls, path: str | Path) -> EventLog:
         return cls(sqlite3.connect(str(path)))
 
-    def record(self, kind: str, *, sensitivity: str | None = None, **payload: Any) -> None:
+    def record(
+        self,
+        kind: str,
+        payload: Mapping[str, Any] | None = None,
+        *,
+        sensitivity: str | None = None,
+        **fields: Any,
+    ) -> None:
         """Append one event.
+
+        ``payload`` is the record as a mapping, for a caller storing a
+        connector's record whole: a key named `kind` or `sensitivity` INSIDE it
+        is data, not an argument. The raw Calendar API puts `kind` on every
+        event, and splatting one into this signature collided with the
+        parameter and raised out of the morning and the wrap. ``fields`` say
+        the same thing as keywords, for callers that build the row themselves.
+        A key given both ways is refused (`TypeError`), as Python refuses
+        `f(a=1, **{"a": 2})`: letting one win silently is how a record's own
+        value goes missing without a trace.
+
+        The log owns the encoding: a `datetime` or `date` at any depth is
+        stored as its isoformat and anything else json cannot take as its
+        `str`, so a caller storing a record whole pre-walks nothing.
 
         ``sensitivity`` may be omitted for a kind that never reaches the vault -
         a run-log row, a remembered meeting. For a kind in `VAULT_BOUND` it is
@@ -1134,9 +1184,12 @@ class EventLog:
                 f"sensitivity={sensitivity!r} is not one of {sorted(SENSITIVITIES)}; "
                 "the vault gate compares for equality, so a near miss renders as visible"
             )
+        twice = sorted(set(payload or ()) & set(fields))
+        if twice:
+            raise TypeError(f"record() got {twice} both in the payload and as keywords")
         self._db.execute(
             "INSERT INTO events (kind, sensitivity, payload) VALUES (?, ?, ?)",
-            (kind, sensitivity, json.dumps(payload)),
+            (kind, sensitivity, json.dumps({**(payload or {}), **fields}, default=_encode)),
         )
         self._db.commit()
 
@@ -1198,6 +1251,26 @@ class EventLog:
         return rows
 
     # -- mirror freshness ------------------------------------------------
+
+    def record_cursor(self, repo: str, cursor: str) -> None:
+        """Remember where ``repo``'s pulse read up to, so the next run reads on.
+
+        Without this every run starts at first sight and reports a quiet day
+        forever - the cursor was computed, returned, and thrown away (#138).
+        """
+        self.record(MIRROR_CURSOR, repo=repo, cursor=cursor)
+
+    def last_cursor(self, repo: str) -> str | None:
+        """The newest stored cursor for ``repo``, or ``None`` on first sight.
+
+        A row that will not decode is skipped, as `_rows` skips one.
+        """
+        newest: str | None = None
+        for payload in self.recorded(MIRROR_CURSOR):
+            if isinstance(payload, Mapping) and payload.get("repo") == repo:
+                cursor = payload.get("cursor")
+                newest = str(cursor) if cursor else None
+        return newest
 
     def record_fetch(self, repo: str, *, at: datetime) -> None:
         """Note that ``repo``'s mirror fetched cleanly at ``at``.

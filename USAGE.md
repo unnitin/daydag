@@ -38,7 +38,7 @@ That is the whole interface. `SKILL.md` maps the other phrasings ("wrap up",
 | "wrap up" | **runs**, including the Friday planning-outcome section, which never rendered before [#95](https://github.com/unnitin/daydag/issues/95). Exercised against real payloads rather than a live Friday. |
 | "prep me for X" | **works.** Names a meeting or a person, searches 7 days, and asks which one when the name matches several. |
 | "prep tomorrow's calls" / `prep-ahead` | **runs**, new in [#171](https://github.com/unnitin/daydag/issues/171). Evening, with the wrap: preps the next working day's calls that match `## Prep rules` in `DayDAG/Watchlist.md`. Checked against Monday 9/28's real calendar; not yet run end to end. |
-| "ingest", "chase", "what shipped" | **run**, newly wired in [#95](https://github.com/unnitin/daydag/issues/95). `chase` reads `State.md`; `ship` needs a Pulse built from the mirrors. |
+| "ingest", "chase", "what shipped" | **run**, newly wired in [#95](https://github.com/unnitin/daydag/issues/95). `chase` reads `State.md`; `ship` needs a Pulse built from the mirrors: pass `--mirrors` (and `--log`, so the cursors persist). |
 
 All seven loops the skill advertises are now reachable. Two — morning and
 week-ahead — have been checked against real data end to end; the rest have run,
@@ -75,7 +75,10 @@ goes to the log, never the vault.
 
 `--write-state` additionally writes the chase list and notes-gaps back to
 `DayDAG/State.md` in the vault. Hand-edit it freely — it is an input,
-re-read before every loop, and your edits win over derived state.
+re-read before every loop, and your edits win over derived state. The write
+is atomic and a compare-and-swap: an edit you make while a run is assembling
+wins and the run says it could not write, and an iCloud-evicted `State.md` is
+refused rather than replaced.
 
 ## Running the halves by hand
 
@@ -91,7 +94,9 @@ encodings bite, and both fail quietly in the direction of saying *less*:
 
 - **`vault: null`** means the weekly note does not exist. `""` means it exists
   and is empty, and renders nothing at all. Omitting the key means you could
-  not reach the vault.
+  not reach the vault. `vault` is this week's note only; any other note the
+  plan names (next week's, for the week-ahead and the Friday wrap) goes under
+  `vault_notes` keyed by path, `null` for one that does not exist.
 - **`notes_attached`** on a calendar record is the notes-gap signal. Set it
   from `usp=meet_tnfm_calendar` in an attachment's `fileUrl` — not the
   attachment title, which is localized, and not "has an attachment", which
