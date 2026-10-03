@@ -288,6 +288,32 @@ def test_the_cli_accepts_the_log_flag_the_skill_documents(tmp_path, monkeypatch,
     assert (tmp_path / "events.db").exists(), "the run did not remember anything"
 
 
+def test_render_reads_the_payloads_from_a_file_when_given_one(tmp_path, monkeypatch, capsys):
+    """A scheduled run is headless Claude, which may not pipe or redirect into
+    a command - the 2026-09-26 test of `scheduled_loop.sh` got through every
+    fetch and then could not hand `render` its payload on stdin. A file path
+    as an argument needs neither."""
+    env = tmp_path / ".env"
+    env.write_text(
+        f"SLACK_USER_PRINCIPAL=UPRINCIPAL1\nVAULT_ROOT={tmp_path / 'vault'}\n", encoding="utf-8"
+    )
+    (tmp_path / "vault" / "Weekly Notes").mkdir(parents=True)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("sys.stdin", __import__("io").StringIO("not json - must not be read"))
+    payloads = tmp_path / "payloads.json"
+    payloads.write_text('{"calendar": [], "slack": [], "gmail": [], "vault": ""}', encoding="utf-8")
+
+    code = run.main(["render", "morning", "--payloads", str(payloads)])
+
+    assert code == 0, capsys.readouterr().err
+    assert capsys.readouterr().out.strip(), "render printed nothing"
+
+
+def test_payloads_without_a_path_is_refused_rather_than_read_from_stdin(capsys):
+    assert run.main(["render", "morning", "--payloads"]) == 2
+    assert "--payloads" in capsys.readouterr().err
+
+
 def test_the_vault_step_names_the_note_once_not_twice(identities):
     """`recipes.weekly_note` already returns a full connector-relative path -
     the vault prefix included, because the Obsidian connector addresses from

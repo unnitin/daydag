@@ -61,6 +61,7 @@ reimplementing the ledger and the bounds from prose every morning.
 python -m daydag.run plan morning            # what to fetch, already bounded
 #   ... you run those queries over MCP ...
 python -m daydag.run render morning < payloads.json   # the push text
+python -m daydag.run render morning --payloads payloads.json   # same, from a file - use this when headless
 ```
 
 `plan` gives you one step per source. Run each one **exactly as given** - the
