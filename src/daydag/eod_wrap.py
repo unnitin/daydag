@@ -44,6 +44,11 @@ CONTRACTS
        over a 17,703-character file. Everything else it reports comes from a
        `Ledger` or `Pulse` the caller already built and owns; this module
        never queries either directly.
+    7. Live-source evidence is a QUESTION (#134, #167). `looks closed -
+       confirm` and `looks moved - confirm` render `movement` rows as
+       `item: "quote" (permalink) · proposed: status`; `board + repos moved`
+       squashes unclaimed merges and ticket moves to one line per repo or
+       project. None of it ever adds to `closed`, which is his own ticks.
 
 WHY IT EXISTS
     It owns no source and no query, same as `daydag.brief`. Tomorrow's window
@@ -68,11 +73,18 @@ KNOWN LIMIT
     for are NOT built: there is no Workstreams parser and no gmail-draft-status
     source anywhere in this codebase yet, and inventing either would spend
     guardrail 3 on a claim nothing actually sourced.
+
+    "Tomorrow" is the next working day (`recipes.next_working_day`, #170) -
+    Friday and weekend runs preview Monday, and the section is headed by the
+    day's name when it is not literally tomorrow. Only weekends are skipped:
+    a full-day OOO or holiday on that Monday is NOT, because `run.plan` must
+    pick the one day to fetch before any calendar has been read, so there is
+    nothing to know it from. Such a day previews as it is on the calendar.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import Any, Protocol
@@ -89,8 +101,9 @@ from daydag.brief import (
     render_push,
 )
 from daydag.ledger import Ledger
+from daydag.movement import Evidence, Movement
 from daydag.pulse import Pulse
-from daydag.voice import Push, render
+from daydag.voice import Push, clipped, render
 
 __all__ = [
     "Sources",
@@ -105,6 +118,10 @@ _FRIDAY = 4
 #: How far ahead the wrap looks for the planning outcome: the week that
 #: `weekly-planning` writes on Fridays is the one starting the next Monday.
 _NEXT_WEEK = timedelta(days=7)
+
+#: How much of an open item's own text leads a proposal line. The row he wrote
+#: can be a paragraph; the permalink and the vault row carry the rest.
+_ITEM_CAP = 100
 
 
 class WrapError(RuntimeError):
@@ -168,13 +185,28 @@ def assemble(
     sources: Sources,
     ledger: Ledger | None = None,
     pulse: Pulse | None = None,
+    movement: Sequence[Movement] = (),
+    unclaimed: Sequence[Evidence] = (),
+    unchecked: Sequence[str] = (),
+    calls: Sequence[Section] = (),
 ) -> Wrap:
     """Build the EOD wrap for ``now``'s local day.
 
-    ``ledger`` and ``pulse`` are optional because they are *state the caller
-    owns*, not sources: a run with no pulse has no moved block, and that is
+    ``ledger``, ``pulse`` and ``movement`` are all *state the caller owns*
+    rather than sources: a run with no pulse has no moved block, and that is
     silence rather than a failure - the same contract as
-    :func:`daydag.brief.assemble`.
+    :func:`daydag.brief.assemble`. ``movement`` arrives already detected
+    because this module owns no source and `daydag.movement` reads Slack and
+    Gmail, which the wrap's own protocol deliberately does not.
+
+    ``unclaimed`` is board and repo movement no open item claimed
+    (`movement.unclaimed`); ``unchecked`` names the evening sources the caller
+    could not read, each rendered as its own "couldn't check" line (#167).
+
+    ``calls`` is today's call-notes block, built by `daydag.call_notes`
+    (#168) and placed verbatim between what moved and tomorrow. Built by the
+    caller, not here, because it needs gmail bodies and `Decisions.md`, and
+    this module's contract 6 is that it reads exactly three sources of its own.
     """
     if now.tzinfo is None or now.utcoffset() is None:
         raise WrapError(
@@ -183,7 +215,7 @@ def assemble(
             "is silently hours wrong on a UTC runner"
         )
     day = now.astimezone(recipes.PACIFIC).date()
-    tomorrow = day + timedelta(days=1)
+    tomorrow = recipes.next_working_day(day)
     read = Reader()
     sections: list[Section] = []
 
@@ -208,6 +240,22 @@ def assemble(
             )
         )
 
+    # -- what the LIVE sources say moved, proposed for confirmation -------
+    #
+    # The section above is his own bookkeeping, and he does not do it: "i dont
+    # always get the time to move things in obsidian" (2026-09-15). These rows
+    # are the rest of the day, read from calendar, Slack and Gmail - and they
+    # are PROPOSALS. #18's critical rule is that evidence of movement surfaces
+    # for confirmation and never auto-closes, and #134 is that the rule is the
+    # system's rather than the chaser's. Nothing here adds to `closed`.
+    # Filtered on `evidence` HERE, so the count and the lines cannot disagree.
+    # They did: the heading and the header both read `len(proposals)` while the
+    # line tuple dropped evidence-less rows, so one such row rendered
+    # "1 to confirm" above a section that `render_push` then omitted for being
+    # empty. `assemble` is public and takes any Sequence[Movement].
+    proposals = [row for row in movement if isinstance(row, Movement) and row.evidence]
+    sections += _proposal_sections(proposals)
+
     # -- what moved: the pulse's own block, reused verbatim ----------------
     moved_lines: list[str] = []
     if pulse is not None:
@@ -222,6 +270,13 @@ def assemble(
             # failure to read is not a thing that moved.
             count = len(read("the pulse", pulse.items, []))
             sections.append(Section(f"moved ({count})", tuple(moved_lines)))
+
+    # -- board + repo movement no open item claimed (#167) -----------------
+    loose, loose_count = _unclaimed_section(unclaimed, "\n".join(moved_lines))
+    if loose is not None:
+        sections.append(loose)
+    # -- today's calls: attendance and ranked priorities (#168) ------------
+    sections += list(calls)
 
     # -- tomorrow's first meeting, plus any prep gap -----------------------
     window = recipes.calendar_day(tomorrow)
@@ -239,7 +294,7 @@ def assemble(
                 tomorrow_lines.append(
                     f"- {summary}: no note found from last time - want prep built another way? lmk"
                 )
-        sections.append(Section("tomorrow", tuple(tomorrow_lines)))
+        sections.append(Section(_day_heading(day, tomorrow), tuple(tomorrow_lines)))
 
     # -- Friday only: the planning outcome, never an offer to run it -------
     if day.weekday() == _FRIDAY:
@@ -249,15 +304,89 @@ def assemble(
         Push.EOD_WRAP,
         {
             "closed": "?" if "the weekly note" in read.unreachable else len(closed),
-            "moved": "?" if "the pulse" in read.unreachable else len(moved_lines),
+            "moved": "?" if "the pulse" in read.unreachable else len(moved_lines) + loose_count,
+            "confirm": len(proposals),
         },
     )
+    unreachable = [*read.unreachable]
+    unreachable += [str(name) for name in unchecked if str(name) not in unreachable]
     return Wrap(
         day=day,
         header=header,
         sections=tuple(sections),
-        unreachable=tuple(read.unreachable),
+        unreachable=tuple(unreachable),
     )
+
+
+def _day_heading(day: date, ahead: date) -> str:
+    """``"tomorrow"`` when it literally is, else the day by name: ``"monday 9/28"``.
+
+    A Friday wrap previews Monday (#170), and a heading that still said
+    "tomorrow" would read as Saturday.
+    """
+    if ahead == day + timedelta(days=1):
+        return "tomorrow"
+    return f"{ahead.strftime('%A').lower()} {ahead.month}/{ahead.day}"
+
+
+def _line(row: Movement) -> str:
+    """`item: "verbatim evidence" (permalink) · proposed: status` - one row.
+
+    The evidence quoted is the one that earned the label (`movement.detect`
+    orders it first), so the status and the quote beside it agree. `claim`
+    renders the citation, so a linkless row still admits it rather than
+    passing as sourced.
+    """
+    evidence = row.evidence[0]
+    item = clipped(" ".join(row.item.text.split()), _ITEM_CAP, ellipsis="...")
+    return f"{claim(item, evidence.permalink, quote=evidence.quote)} · proposed: {row.proposed}"
+
+
+def _proposal_sections(proposals: Sequence[Movement]) -> list[Section]:
+    """The `looks closed` and `looks moved` sections - questions, never facts.
+
+    The split is `Movement.CLOSING`: he replied on the ask's own thread, or
+    dropped a link where the person he owes it would see it. Everything else
+    - a merge, a ticket that changed column, a meeting that now exists, a
+    mention - is movement. Neither heading ever adds to `closed`: that count
+    is his own ticks and nothing a live source says (#18, #134).
+    """
+    closing = [row for row in proposals if row.proposed in Movement.CLOSING]
+    moving = [row for row in proposals if row.proposed not in Movement.CLOSING]
+    out: list[Section] = []
+    if closing:
+        out.append(Section(f"looks closed - confirm ({len(closing)})", tuple(map(_line, closing))))
+    if moving:
+        out.append(Section(f"looks moved - confirm ({len(moving)})", tuple(map(_line, moving))))
+    return out
+
+
+def _unclaimed_section(
+    unclaimed: Sequence[Evidence], pulse_block: str
+) -> tuple[Section | None, int]:
+    """Board and repo movement no open item claimed - one line per repo or project.
+
+    Squashed to the repo or board, never a commit log (SPEC 3.7 rule 1): the
+    real 2026-09-25 evening had 31 merges across the watched repos, and one
+    line each buried everything else. Each line quotes the first item with
+    its own permalink and counts the rest. Skips anything the pulse block
+    already cites, so a merge the mirrors saw is not printed twice. A merge
+    is still only movement - counted in `moved`, never in `closed`.
+    """
+    groups: dict[tuple[str, str], list[Evidence]] = {}
+    for evidence in unclaimed:
+        if isinstance(evidence, Evidence) and evidence.permalink not in pulse_block:
+            key = (evidence.source, evidence.group or evidence.permalink)
+            groups.setdefault(key, []).append(evidence)
+    if not groups:
+        return None, 0
+    lines = []
+    for (_source, group), items in groups.items():
+        first = items[0]
+        more = f" · +{len(items) - 1} more in {group}" if len(items) > 1 else ""
+        lines.append(claim(f"{first.source}: {first.quote}", first.permalink) + more)
+    total = sum(len(items) for items in groups.values())
+    return Section(f"board + repos moved ({total})", tuple(lines)), total
 
 
 def _friday_outcome(read: Reader, sources: Sources, day: date) -> list[Section]:

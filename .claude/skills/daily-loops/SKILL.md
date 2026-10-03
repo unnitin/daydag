@@ -21,7 +21,8 @@ daydag:
   reads: [slack, gmail, calendar, obsidian, notion, github, jira, drive, databricks]
   consumes: [plan.week-ahead, progress.weekly]
   emits: [evidence.pulse, evidence.slack, evidence.meetings]
-  schedule: "weekdays 06:45, 12:00, 12:15, 16:30; sun 17:30"
+  # ingest: every 30 min 07:00-19:00 PT, idempotent on the gmail message id (#168)
+  schedule: "weekdays 06:45, 12:15, 16:30, ingest every 30m 07:00-19:00; sun 17:30"
   sensitivity: shared
 ---
 
@@ -60,6 +61,7 @@ reimplementing the ledger and the bounds from prose every morning.
 python -m daydag.run plan morning            # what to fetch, already bounded
 #   ... you run those queries over MCP ...
 python -m daydag.run render morning < payloads.json   # the push text
+python -m daydag.run render morning --payloads payloads.json   # same, from a file - use this when headless
 ```
 
 `plan` gives you one step per source. Run each one **exactly as given** - the
@@ -79,8 +81,13 @@ Then write a payloads file keyed by source:
 | source | must carry | what breaks without it |
 |---|---|---|
 | calendar | `id`, `summary`, `start`, `end`, `attendees`, `response_status`, `organizer`, `organizer_is_self`, `notes_attached`, `permalink` (`htmlLink`) | no `end` and the ledger refuses the event - no notes-gap, today or tomorrow. No `permalink` and EVERY line renders "couldn't source this one", because a claim without evidence is tagged rather than trusted |
-| gmail | `subject`, and the mail's own `date` | without a date a note can never attach to its meeting, and ingestion loses it |
+| gmail | `id` (the message id), `subject`, the mail's own `date`, `body` (PLAIN_TEXT `plaintextBody`), `permalink` (`viewUrl`) - one `get_message` per hit, search results alone are metadata | without a date a note can never attach to its meeting. Without the body there are no next steps and no attendance evidence, and the sweep names the note "unplaced" rather than marking it seen. Without the id the sweep cannot dedupe it |
 | slack | `permalink` | a claim with no link is withheld - evidence or silence |
+| slack_sent *(eod)* | `text`, `ts`, `permalink`, `channel`, `channel_name` (e.g. "DM with <name>, <him>"), `thread_ts` for a reply | HIS messages today, fetched as his by the query - that is what licenses `answered` (his reply in the thread an ask came from) and `sent` (a link he dropped where the person he owes it would see it). No `channel_name` and `sent` can never fire; no `thread_ts` and a thread reply cannot be matched to its ask |
+| gmail_sent *(eod)* | `threadId`, `id`, `snippet`, `subject`, `to`, `date`, `permalink` (`viewUrl`) - **one record per SENT message dated today**, not per thread | no `threadId` and his reply on the ask's own thread is invisible: the thread id is the match, not the words |
+| slack_sweep *(eod)* | same fields as `slack_sent`; every watched-channel step and the DM step concatenated into ONE list | channel traffic and DMs to him - `discussed`, never closing. A DM does not @-mention him, so the morning query never saw these |
+| jira *(eod)* | `key`, `webUrl` (or `permalink`), and `summary` / `status.name` / `assignee.displayName` flat or under `fields`; every project's step concatenated into ONE list | no link and the ticket is dropped. Keys are the match - a ticket counts for the item that NAMES it, never on shared words |
+| github *(eod)* | `kind` (the step's own: `merged` / `approved` / `changes_requested` / `issue_closed`), `url`, `number`, `title`, `repository.nameWithOwner`; all four steps in ONE list | no `kind` and the hit is dropped - a merged PR and a closed issue propose different things. Merged is evidence of movement, never closure |
 
 **Shaping the calendar payload**, because google's shape is not the ledger's:
 
@@ -136,6 +143,21 @@ empty", so the brief says nothing at all and the day is silently triaged
 against no plan of record. An absent note is a fact about the week; an
 unreachable vault is a degrade. They must not read the same.
 
+**The evening sweep (`plan eod`, #167).** Besides the morning's steps, the EOD
+plan asks for his own side of the day and for board and repo movement, each
+under its own key: `slack_sent`, `gmail_sent`, `slack_sweep`, `jira`,
+`github`. Every step is bounded - one day, id-scoped Slack at most
+`max_pages` pages, one JQL per project at `maxResults` 15 with five fields
+(three projects at nine fields measured 81,582 chars on 2026-09-25 and
+overflowed), one `gh search` per kind across every watched repo. Run them
+**verbatim**. The wrap renders what they show as questions: `looks closed -
+confirm` (`answered`, `sent`) and `looks moved - confirm` (`merged`,
+`ticket-moved`, `reviewed`, `scheduled`, `discussed`), each line `item:
+"verbatim evidence" (permalink) · proposed: <status>`, plus `board + repos
+moved` for merges and ticket moves no open item names. Nothing auto-closes
+and nothing here adds to `closed`, which stays his own ticks. If `plan` says
+there are no watched repos, leave `github` out.
+
 A source you could not reach: **leave the key out**. That renders one
 "couldn't check X" line and the push still ships. Do not pass an empty list to
 mean "unreachable" - an empty list means the query ran and found nothing, and
@@ -151,11 +173,53 @@ which is the one thing this system does that nothing else does.
 |---|---|---|
 | "run my morning" | morning brief, SPEC §3.1 | since 6pm yesterday |
 | "prep me for <meeting>" | meeting prep, §3.2 | that meeting's last ~4 weeks |
-| "ingest" / a note landed | meeting-note ingestion, §3.3 | since the last sweep |
+| evening, with the wrap / "prep tomorrow's calls" | day-before prep, §3.2 (#171) - `plan prep-ahead`, then `plan prep-ahead --calendar <json> --log <db>` for the reads | the next WORKING day (fri -> mon); notes 8 weeks back |
+| "ingest" / a note landed | meeting-note ingestion, §3.3 - a repeatable sweep, see below | since the last sweep |
 | "chase" / "what's owed to me" / "what's on my plate" | open-loop chaser, §3.4 - `plan chase` names one read per ask; do every one before `render` | the whole chase list, Owed by you, Decisions.md |
 | "wrap up" | EOD wrap, §3.5 | today |
 | "week ahead" | Sunday week-ahead, §3.6 | next 7 days |
 | "what shipped" / `ship` | engineering pulse, §3.7 | since the stored cursor |
+
+### The ingest sweep, and attendance (#168)
+
+`ingest` is safe to run every ~30 minutes, 7am-7pm PT weekdays. It dedupes
+on the Gmail message id against the event log (`note_ingested` rows, outside
+the vault), so a second sweep over the same notes says "nothing new since the
+last sweep". Always pass `--log` - without it nothing is remembered and every
+sweep re-reports everything. A note fetched without its body is listed as
+unplaced and NOT marked seen, so the next sweep that fetches it still reads it.
+
+Nothing fires it on a schedule yet (#25 - a bare cron cannot call an MCP
+connector). Until then, run it from a session: `/loop 30m` over
+`plan ingest` -> fetch -> `render ingest --log ~/.local/state/daydag/events.db --write-state`,
+or a scheduled cloud routine doing the same. Overlapping or repeated runs are
+harmless by construction.
+
+**Every actionable item goes to the chase list (#180).** Assigned to him, touches
+an open decision in `Decisions.md`, or an ask to one of his reports: each is
+recorded in the event log once per (message id, item text), and with
+`--write-state` appended to `State.md`'s chase list through the append-only
+writer - owner, the step's title as the ask, the full step as the verbatim quote,
+note permalink, asked-on, the attendance marker, status open. Only `[Owner]` next
+steps are filed; a prose sentence or a section heading never is. Never a
+rewrite; his edits and strikes win. The DM lists the same steps in the same
+words, and says `filed N to the State.md chase list`. "Everything else" stays in
+the DM. So a missed DM is no longer a missed item. An unplaced note (no body,
+not Gemini-shaped) is named once, not every sweep; the EOD's attendance roll
+names it again if it is still unread.
+
+Every note carries his attendance, read off the calendar row's RSVP
+(`response_status` from the attendee marked `self`):
+accepted -> attended · declined -> not attended · needsAction / tentative ->
+unconfirmed, upgraded to attended when the note's prose quotes him speaking
+("<name> noted that ..."), with the sentence as the reason. Lines from calls he
+was not in say so: `(from DE Demo Prep - you weren't in it)`; an item assigned
+to him from such a call adds `⚠ you may not have heard this one`. The EOD wrap
+carries "priorities from today's calls", ranked: assigned to him > touches an
+open decision in `Decisions.md` > asks to his reports > everything else, every
+line with the note's permalink. Personnel/comp text is quoted like any other
+line, in the DM and in `State.md` (guardrail 3, changed by #180); with
+`state.WITHHOLD_PRIVATE` on, both go back to the pre-#180 minimal quoting.
 
 Match the message format in the SPEC section exactly - the formats were tuned against
 real briefs, and a redesign costs a correction round-trip. Three rules cut across all
@@ -172,14 +236,15 @@ of them:
 
 ## On-demand commands, and which of them the runner can run
 
-The description advertises ten. **Two of them are loops the runner executes; the
-other eight are things you do, following SPEC §3.8.** Asking `daydag.run` for one
+The description advertises ten. **Two of them are loops the runner executes (plus
+`prep-ahead`, which runs on the evening schedule); the other eight are things you do, following SPEC §3.8.** Asking `daydag.run` for one
 of the eight gets a refusal naming the loops, which is correct and not a bug -
 but knowing which is which before you start saves a wasted round-trip.
 
 | Command | How |
 |---|---|
 | `prep <meeting or person>` | `python -m daydag.run plan prep --for "<name or title words>"`, then fetch, then `render prep --for ...`. Searches the next 7 days in his zone. When the name fits several meetings it ASKS - narrow with words from the title (`"ruwen / nitin"`), never pick one for him. Without `--for`, `prep` takes the next qualifying meeting |
+| `prep-ahead` | the day-before prep for the calls his `## Prep rules` (in `DayDAG/Watchlist.md`) name. Two plan stages: `plan prep-ahead` gives the next working day's calendar step; fetch it (keep `attachments` and `description`) and run `plan prep-ahead --calendar cal.json --log <db>` for one read per ingredient per matched call. Put each result under `prep_ahead.<event_id>.<put_under>`, then write up to 5 `points` (`what`, `why_now`, verbatim `quote`, `permalink`) and, only where the recipe says `ideas`, 1-3 `ideas`. A deck you cannot open goes in as `{"url", "error"}` - never summarise what you could not read. Drop notes whose quoted title is a different meeting - gmail's `subject:` matches words. Posts to his DM only. Rows, not code: to prep a new call, he adds a row |
 | `ship <repo>` | `render ship`, with a `Pulse` built from the mirrors. Without one it degrades to a line |
 | `sweep` | you, following SPEC §3.8 - a pending-items pass across Slack/Gmail/Notion/Obsidian, triaged, every item with a permalink. **Before any line is reported open, run `chase` first**: it reads the reply under every ask State.md already carries, and a sweep that re-lists those from their ask text repeats the 2026-09-18 miss |
 | `find <question>` | you - person-scoped Slack (`from:<@ID>`, `sort:timestamp asc`), then Gmail, then read the thread. Answer with quote + link, never from memory |
@@ -192,8 +257,8 @@ but knowing which is which before you start saves a wasted round-trip.
 rather than being conveniences: inside `DayDAG/` only, additive or a proposed
 diff, never a wholesale rewrite. `State.md` is the file he corrects by hand and
 those corrections WIN - so append his instruction, do not re-derive the list
-around it. Personnel, comp and M&A never land there at all (guardrail 3); those
-belong in the event log.
+around it. Personnel, comp and M&A are written there like anything else since #180
+(guardrail 3).
 
 ## The output contract
 
@@ -216,10 +281,14 @@ U+26A0 the vault actually uses, not the emoji-presentation variant.
 2. **Write only inside `DayDAG/`.** The weekly note, `Fact Base/Workstreams.md`, the
    Goals doc and the feedback log each have another sole writer. Propose a block diff
    into `DayDAG/Proposals/`; never edit them, and never rewrite any note wholesale.
-3. **Personnel, comp and M&A go to the DM only**, minimally quoted, and **never** into
-   `DayDAG/State.md` - the vault is plaintext synced to every device he owns. The
-   feedback scan's carry-forward items belong in the event log, nowhere else
-   (SPEC §10.1).
+3. **Personnel, comp and M&A are treated like any other item** - quoted in the DM and
+   written to `DayDAG/State.md` the same way. Changed 2026-09-25 on the principal's
+   explicit decision (#180): "i think we should treat sensitive items the same" /
+   "wire everything consistently for now, we can change later". They still never go
+   into a channel draft or to anyone else (guardrail 1). Every record keeps its
+   sensitivity mark, so this can be tightened again later with one switch,
+   `state.WITHHOLD_PRIVATE`, which gates the vault and the DM together. The feedback scan's carry-forward items are
+   still not fed into DayDAG at all (SPEC §10.1).
 4. **Surface, don't resolve.** Conflicting dates, duplicate slots, defunct invites from
    people who left, unverified "done" claims - flag them and move on.
 5. **No weekend chases.** Sunday lists what is due Mon-Wed so Monday is not a surprise;

@@ -9,9 +9,9 @@ them. And it owns almost nothing: five weekly routines already produce the
 plan, the progress report and the pod update, so DayDAG reads their output
 instead of re-deriving it.
 
-**Status: in development.** All seven loops the skill advertises now run. Two of
+**Status: in development.** All eight loops the skill advertises now run. Two of
 them - the morning brief and the Sunday week-ahead - have been checked end to
-end against live connectors on days verified by hand; the other five run but
+end against live connectors on days verified by hand; the other six run but
 have not, and that gap is where every defect found so far has lived. Nothing
 runs on a schedule. See [USAGE.md](USAGE.md) for the per-loop split and how to
 run one.
@@ -53,11 +53,14 @@ artifact is the load-bearing rule; the rest is plumbing.
 | `week_ahead` | SPEC §3.6's Sunday week-ahead: a read of Friday's plan, assembled into one push |
 | `delivery` | The one autonomous send - the principal's DM - and the threaded prep reply |
 | `prep_selector` | Naming the meeting to prep for, and refusing to guess between two |
+| `prep_ahead` | Day-before prep for the calls his `## Prep rules` name - rows he edits, not code |
 | `people` | Who someone is - ids, title, DM, groups, how often met - with stated facts outranking inferred ones |
 | `run` | The two-phase contract that makes a loop runnable: plan the fetch, assemble the push |
 | `evalset` | The hand-labelled ingestion ground truth, and `score()` — so precision is measured, not asserted |
 | `soak` | The five-day gate's journal: every edit he asks for, and whether a repeat is still outstanding |
 | `ingestion` | SPEC §3.3's classifier: five labels, biased to precision, no write path |
+| `movement` | What the live sources say moved, proposed for confirmation - never a closure, no write path |
+| `call_notes` | The ingest sweep (idempotent on the gmail message id) and the EOD calls section: attendance per note, provenance on every line, ranked priorities; actionable items recorded for the `State.md` chase list (#180) |
 
 ## Working on it
 

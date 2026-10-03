@@ -17,12 +17,18 @@ USING IT
     log.median_days_to_answer()
 
 CONTRACTS
-    1. Anything sensitive goes to the EVENT LOG, never the vault. The vault is
-       plaintext on every device it syncs to.
+    1. Every record carries a sensitivity MARK, and ONE switch decides what
+       the mark does, in the vault and in the DM: `WITHHOLD_PRIVATE`, read
+       only through `withholds_private()`. Since 2026-09-25 (#180, the
+       principal's explicit decision) it is False and a private item is
+       quoted and written to `State.md` exactly like a normal one. Set it
+       True and `_visible` withholds private items from the vault while
+       `call_notes` quotes them minimally in the DM - the rule before #180 -
+       with nothing to re-derive, because the mark was never dropped.
     2. `update_state` runs `chase`, `watch` AND `notes_gaps` through one
-       `_visible` gate before anything is rendered - one filter, so
-       `sensitivity == "private"` cannot be wired to two of the three lists and
-       forgotten on the third. It was once wired to `chase` and not to its twin
+       `_visible` gate before anything is rendered - one filter, so the
+       switch in (1) cannot be wired to two of the three lists and forgotten
+       on the third. It was once wired to `chase` and not to its twin
        `watch`, and a private carry-forward reached a synced file (#63's
        sibling); `notes_gaps` had no sensitivity field to filter on at all
        until `NotesGap` gave it one (#61).
@@ -46,13 +52,15 @@ CONTRACTS
     7. A VAULT-BOUND kind cannot be recorded without saying how sensitive it
        is. `record("loop_opened", ...)` with no `sensitivity`, or with anything
        other than exactly "private" or "normal", raises; the gate in (2)
-       filters what is MARKED private, and a gate that depends on the writer
-       remembering to mark - or spelling the mark the way `_is_private` reads
-       it - is not a gate (#105). `classify_sensitivity` is the answer to
-       pass: private for anything from a DM, or carrying personnel / comp /
-       M&A vocabulary - house rule 7's three categories. Meeting titles reach
-       the vault through `notes_gaps`, not through a recorded kind, so the
-       runner classifies each title at projection time instead.
+       filters what is MARKED private when the switch is on, and a gate that
+       depends on the writer remembering to mark - or spelling the mark the
+       way `_is_private` reads it - is not a gate (#105). Still enforced with
+       the switch off: switching back must find every record already marked.
+       `classify_sensitivity` is the answer to pass: private for anything
+       from a DM, or carrying personnel / comp / M&A vocabulary - house rule
+       7's three categories. Meeting titles reach the vault through
+       `notes_gaps`, not through a recorded kind, so the runner classifies
+       each title at projection time instead.
 
 WHY IT EXISTS
     The folder is markdown a human corrects by hand, and that is the reason
@@ -81,6 +89,31 @@ from daydag.voice import WARN
 #: twin) - `daydag.voice` is the register authority on this; a chase item that
 #: cannot be rendered in full still has to stay inside house voice.
 
+#: THE SWITCH for house rule 7 - the one place it is decided, for the vault
+#: AND the DM. Read it through `withholds_private()`, never directly.
+#:
+#: False (since 2026-09-25, #180): a record marked ``sensitivity: private`` is
+#: quoted in the DM and written to `State.md` exactly like a normal one. The
+#: principal, after discussing the tradeoff: "i think we should treat
+#: sensitive items the same" / "i think wire everything consistently for now,
+#: we can change later".
+#:
+#: True: the rule before #180, both halves. `_visible` withholds private
+#: items from `chase`, `watch` and `notes_gaps`, and `call_notes` goes back
+#: to minimal quoting in the DM (a private line withheld, a step from a
+#: private note shown by title, a private sentence never the attendance
+#: quote). Every record still carries its mark (`classify_sensitivity`,
+#: `SensitivityRequired`), so flipping this needs nothing re-derived.
+WITHHOLD_PRIVATE = False
+
+
+def withholds_private() -> bool:
+    """Whether house rule 7 is on: private items withheld from the vault and
+    minimally quoted in the DM. The ONLY reader of `WITHHOLD_PRIVATE` - read
+    at call time, so a test can flip it - and a guardrail holds it that way."""
+    return WITHHOLD_PRIVATE
+
+
 README = """# DayDAG
 
 Files in this folder are maintained by the DayDAG agent. Correct them freely -
@@ -94,8 +127,9 @@ a hand edit is an event, and it wins over anything the agent derived.
 | `Proposals/` | the agent | proposed diffs awaiting a yes |
 | `Archive/` | the agent | pre-cutover snapshots |
 
-History, metrics, the meeting ledger and anything sensitive live in the event
-log outside this vault, not here.
+History, metrics and the meeting ledger live in the event log outside this
+vault, not here. Sensitive items are marked there and, by the principal's
+2026-09-25 decision, written here like anything else.
 """
 
 #: A pending decision line, e.g. "- [3] draft nudge to VP-Data? no"
@@ -396,7 +430,8 @@ def _is_private(item: Any) -> bool:
 
 
 def _visible(items: Iterable[Any]) -> list[Any]:
-    """Every item in ``items`` that is not private.
+    """Every item in ``items`` the vault may show: all of them while
+    `withholds_private()` is False, the non-private ones when it is True.
 
     `update_state`'s one gate for `chase`, `watch` and `notes_gaps` alike - the
     filter that a private carry-forward once slipped past because `watch` had
@@ -405,6 +440,8 @@ def _visible(items: Iterable[Any]) -> list[Any]:
     same way three times, is what makes "forgotten on the third list" a
     contradiction rather than a recurring incident.
     """
+    if not withholds_private():
+        return list(items)
     return [item for item in items if not _is_private(item)]
 
 
@@ -727,10 +764,12 @@ def _needles_for(item: ChaseItem) -> tuple[str, ...]:
     False and the item is appended on EVERY run: four loops a day, four copies
     a day, unbounded, in the one file this whole change exists to protect.
     """
+    # A producer whose ask is a short title ("Test Plan") names a longer
+    # needle - its own rendered head prefix - since the bare title sits inside
+    # other titles ("Create Test Plan") and a false match drops a real ask.
+    ask = str(item.extra.get("needle") or item.ask)
     return tuple(
-        n
-        for n, floor in ((item.ask, _MIN_ASK), (item.key, _MIN_KEY))
-        if n and len(_flatten(n)) >= floor
+        n for n, floor in ((ask, _MIN_ASK), (item.key, _MIN_KEY)) if n and len(_flatten(n)) >= floor
     )
 
 
@@ -750,6 +789,9 @@ def _render_chase(item: ChaseItem) -> list[str]:
         for part in (
             item.owner or "?",
             item.ask,
+            # Where the item came from, when the producer says - a call note's
+            # attendance marker, "(from X - you weren't in it)" (#180).
+            str(item.extra.get("marker") or ""),
             f"asked-on {item.asked_on}" if item.asked_on else "",
             f"last-activity {item.last_activity}" if item.last_activity else "",
             f"status {item.status}" if item.status else "",
@@ -806,8 +848,9 @@ class StateFolder:
         chase: Iterable[ChaseItem | Mapping[str, Any]] = (),
         watch: Iterable[Mapping[str, Any]] = (),
         notes_gaps: Iterable[str | Mapping[str, Any]] = (),
-    ) -> None:
-        """Append anything derived that is not already in ``State.md``.
+    ) -> int:
+        """Append anything derived that is not already in ``State.md``; return
+        how many items were appended (0 for a no-op run).
 
         Nothing is removed, reordered or reflowed. A run that derived nothing
         writes nothing at all - which is the whole of #130: on 2026-09-14 an
@@ -815,8 +858,8 @@ class StateFolder:
         hand-written chase items and six run-log lines.
 
         ``chase``, ``watch`` and ``notes_gaps`` still pass through ``_visible``
-        first - one filter, applied the same way to all three, so
-        ``sensitivity == "private"`` cannot be wired to two of them and
+        first - one filter, applied the same way to all three, so the
+        `WITHHOLD_PRIVATE` switch cannot be wired to two of them and
         forgotten on the third. Appending rather than replacing must not route
         around the gate a private carry-forward once slipped past.
 
@@ -839,6 +882,7 @@ class StateFolder:
                 "Nothing was written."
             )
 
+        appended = 0
         for item in _visible(_as_chase_item(raw) for raw in chase):
             lines = _render_chase(item)
             # The rendered bullet is the LAST-RESORT needle, for an ask too
@@ -849,6 +893,7 @@ class StateFolder:
             if doc.contains(*(_needles_for(item) or (lines[0],))):
                 continue
             doc.append("Chase list", lines)
+            appended += 1
         for item in _visible(watch):
             what = str(item.get("what", ""))
             # `is_line` and not `contains`: a watch item is a short phrase, and
@@ -858,22 +903,25 @@ class StateFolder:
             if not what or doc.is_line(what, section="Watch items"):
                 continue
             doc.append("Watch items", [f"- {what}", ""])
+            appended += 1
         for gap in _visible(NotesGap.from_value(raw) for raw in notes_gaps):
             # Same as `watch`, and more exposed: a meeting title is routinely
             # `1:1` or `Standup`, which a substring test finds everywhere.
             if not gap.title or doc.is_line(gap.title, section="Notes gaps"):
                 continue
             doc.append("Notes gaps", [f"- {gap.title}", ""])
+            appended += 1
 
         after = doc.render()
         if after == before:
             # A no-op run must not churn the file, the archive, or the iCloud
             # sync that carries both to his other devices.
-            return
+            return 0
         if self.state_path.exists():
             (self.root / "Archive").mkdir(exist_ok=True)
             (self.root / "Archive" / "State.md.bak").write_text(before, encoding="utf-8")
         self.state_path.write_text(after, encoding="utf-8")
+        return appended
 
     def read_state(self) -> str:
         return self.state_path.read_text(encoding="utf-8")
@@ -962,9 +1010,12 @@ class _Event:
 #: explicit, well-formed sensitivity is refused - see contract 7. Meeting
 #: rows are not here: their titles reach `State.md` through the ledger's
 #: `notes_gaps`, and `run._project` classifies each one on the way out.
-VAULT_BOUND = frozenset({"loop_opened", "carry_forward"})
+#: `call_note_item` is `call_notes.CHASED` - an actionable item from a
+#: meeting note (#180).
+VAULT_BOUND = frozenset({"loop_opened", "carry_forward", "call_note_item"})
 
-#: House rule 7's categories, as the words that carry them. A FLOOR, not a
+#: House rule 7's categories, as the words that carry them - the MARK, which
+#: `WITHHOLD_PRIVATE` decides the effect of. A FLOOR, not a
 #: ceiling: matching any of these makes an item private; matching none proves
 #: nothing, which is why a DM origin is decisive on its own - that is where
 #: these conversations actually happen. Extend it, never narrow it.
@@ -1013,6 +1064,9 @@ def classify_sensitivity(*texts: Any, origin: str = "") -> str:
     in his DM. Wrong-way-normal has already synced to every device by the time
     anyone notices. So when in doubt this says private, and a caller who knows
     better says ``"normal"`` explicitly.
+
+    This decides the MARK only. What the mark does in the vault is
+    `WITHHOLD_PRIVATE`'s call - nothing, since #180.
     """
     if str(origin).strip().casefold() in _DM_ORIGINS:
         return "private"
@@ -1194,9 +1248,10 @@ class EventLog:
                 newest = stamp
         return newest
 
-    def chase_items(self) -> list[ChaseItem]:
-        """Chase entries as `ChaseItem` (#63), each tagged with the sensitivity
-        that gates the vault.
+    def chase_items(self, kinds: Iterable[str] = VAULT_BOUND) -> list[ChaseItem]:
+        """Chase entries as `ChaseItem` (#63), each tagged with its sensitivity
+        mark. ``kinds`` narrows to some of `VAULT_BOUND` - `ingest` files only
+        its own (#180).
 
         Was a bare dict merging the sensitivity column in - a payload recorded
         with only `key` rendered as `- ?` in `State.md`, a formatting glitch
@@ -1204,10 +1259,11 @@ class EventLog:
         `ChaseItem.from_payload` is where that agreement now lives, and
         `update_state` is held to the same shape on its side of the seam.
         """
+        wanted = frozenset(kinds) & VAULT_BOUND
         return [
             ChaseItem.from_payload(payload, sensitivity=sensitivity)
             for kind, sensitivity, payload in self._rows()
-            if kind in {"loop_opened", "carry_forward"}
+            if kind in wanted
         ]
 
     def median_days_to_answer(self) -> float:

@@ -78,10 +78,27 @@ def test_decision_ages_to_parked_after_three_pushes(folder):
 
 
 @pytest.mark.guardrail
-def test_sensitive_items_never_reach_the_vault(folder):
-    """weekly-feedback-scan carry-forward lives only in the log (ARCHITECTURE)."""
+def test_a_sensitive_item_reaches_the_vault_like_a_normal_one_and_keeps_its_mark(folder):
+    """Guardrail changed by #180, on the principal's explicit decision of
+    2026-09-25 ("i think we should treat sensitive items the same"). Was
+    `test_sensitive_items_never_reach_the_vault` - which had also gone vacuous:
+    its row carried no `ask`, so it rendered as a warning line either way.
+
+    The item is written; the log still holds the private mark, so switching
+    the rule back finds it already classified."""
     log = EventLog.open(":memory:")
-    log.record("carry_forward", subject="seth", body="growth area", sensitivity="private")
+    log.record("carry_forward", owner="sam", ask="growth area", key="k", sensitivity="private")
+    folder.update_state(chase=log.chase_items())
+
+    assert "growth area" in folder.read_state()
+    assert [item.sensitivity for item in log.chase_items()] == ["private"]
+
+
+@pytest.mark.guardrail
+def test_sensitive_items_never_reach_the_vault_when_rule_7_is_on(folder, withholding):
+    """The pre-#180 rule, under its one switch."""
+    log = EventLog.open(":memory:")
+    log.record("carry_forward", owner="sam", ask="growth area", key="k", sensitivity="private")
     folder.update_state(chase=log.chase_items())
     assert "growth area" not in folder.read_state()
 
@@ -218,8 +235,12 @@ def test_write_state_still_accepts_a_bare_dict_for_chase(folder):
 
 
 @pytest.mark.guardrail
-def test_a_private_chase_item_is_filtered_whether_it_arrives_as_a_dict_or_a_chase_item(folder):
-    """The filter reads `sensitivity` off either shape the same way."""
+def test_a_private_chase_item_is_filtered_whether_it_arrives_as_a_dict_or_a_chase_item(
+    folder, withholding
+):
+    """The filter reads `sensitivity` off either shape the same way. Under the
+    rule-7 switch since #180 - the shape handling is what switching back
+    relies on."""
     folder.update_state(
         chase=[
             ChaseItem(key="a", owner="seth", ask="growth area", sensitivity="private"),
@@ -250,7 +271,7 @@ def test_notes_gap_from_value_reads_a_tagged_dict():
     assert gap.sensitivity == "private"
 
 
-def test_a_private_notes_gap_string_mix_still_renders_the_normal_one(folder):
+def test_a_private_notes_gap_string_mix_still_renders_the_normal_one(folder, withholding):
     folder.update_state(
         notes_gaps=["Pod Steering", {"title": "comp review", "sensitivity": "private"}]
     )
@@ -407,8 +428,11 @@ def test_classify_leaves_ordinary_work_normal():
     assert classify_sensitivity("cutover rehearsal for CDI-596", origin="channel") == "normal"
 
 
-def test_an_item_classified_from_a_comp_quote_never_reaches_the_vault(tmp_path):
-    """End to end: the probe that opened #105, with the classifier in the loop."""
+def test_an_item_classified_from_a_comp_quote_never_reaches_the_vault_when_rule_7_is_on(
+    tmp_path, withholding
+):
+    """End to end: the probe that opened #105, with the classifier in the loop.
+    Under the switch since #180 - the classifier's mark is what it would act on."""
     from daydag.state import EventLog, StateFolder, classify_sensitivity
 
     log = EventLog.open(tmp_path / "events.db")
@@ -473,9 +497,12 @@ def test_classify_catches_inflections_and_the_escaped_ampersand():
         assert classify_sensitivity(text) == "private", text
 
 
-def test_a_sensitive_meeting_title_never_reaches_state_md_as_a_notes_gap(tmp_path):
+def test_a_sensitive_meeting_title_never_reaches_state_md_as_a_notes_gap_when_rule_7_is_on(
+    tmp_path, withholding
+):
     """Meeting rows are not a vault-bound kind - their titles reach the file
-    through `notes_gaps` - so the runner classifies each title on the way out."""
+    through `notes_gaps` - so the runner classifies each title on the way out.
+    Under the switch since #180; by default the title is filed like any other."""
     from datetime import UTC, datetime, timedelta
 
     from daydag import run

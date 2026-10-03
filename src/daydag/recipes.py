@@ -66,6 +66,7 @@ __all__ = [
     "GH_WRITE_VERBS",
     "JIRA_FIELDS",
     "JIRA_MAX_RESULTS_CAP",
+    "JIRA_MOVED_MAX_RESULTS",
     "PACIFIC",
     "VAULT_PREFIX",
     "DayWindow",
@@ -73,22 +74,31 @@ __all__ = [
     "RecipeError",
     "calendar_day",
     "calendar_days",
+    "gh_closed_issues_on",
     "gh_default_branch",
+    "gh_merged_on",
     "gh_open_prs",
     "gh_pr_checks",
     "gh_recent_runs",
+    "gh_reviewed_on",
     "gmail_gemini_notes",
+    "gmail_sent_on",
     "is_user_id",
     "jira_jql",
+    "jira_moved_on",
     "jira_search",
     "meeting_prep",
     "next_week_label",
+    "slack_channel_on",
+    "slack_dms_on",
     "slack_overnight",
     "slack_search",
+    "slack_sent_on",
     "title_from_gemini_subject",
     "vault_path",
     "vault_relative",
     "vault_root",
+    "watched_channels",
     "week_label",
     "week_range",
     "weekly_note",
@@ -214,6 +224,22 @@ def calendar_days(start: date, end: date, *, tz: ZoneInfo = PACIFIC) -> list[Day
         raise RecipeError(f"end {end} is before start {start}")
     span = (end - start).days
     return [calendar_day(start + timedelta(days=offset), tz=tz) for offset in range(span + 1)]
+
+
+def next_working_day(day: date) -> date:
+    """The first Monday-to-Friday date strictly after ``day``.
+
+    What the EOD wrap means by "tomorrow" (#170): a Friday wrap that read
+    Saturday found nothing and said nothing about Monday. Weekends only - a
+    full-day OOO or holiday would need the calendar to answer, and the plan
+    fetches exactly one day before it has seen any events, so it cannot skip
+    a day it has not read. `run.plan` and `eod_wrap` both call this, so the
+    day fetched and the day asked for cannot drift apart.
+    """
+    after = day + timedelta(days=1)
+    while after.weekday() >= 5:  # 5 = Saturday, 6 = Sunday
+        after += timedelta(days=1)
+    return after
 
 
 # ---------------------------------------------------------------------------
@@ -421,6 +447,86 @@ def gmail_gemini_notes(
     if before is not None:
         parts.append(f"before:{(before + _DAY).strftime('%Y/%m/%d')}")
     return " ".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# The evening sweep - what moved today, not what mentioned him (#141, #167)
+# ---------------------------------------------------------------------------
+#
+# The evening loops used to reuse the morning brief's two queries, and neither
+# can carry what the wrap needs: a message in a channel that never @-mentions
+# him, a DM (which does not mention him either), his own reply on a thread.
+# Each of these is ONE DAY and scoped by id, same discipline as the rest of
+# this module. The Jira and GitHub halves live with their own sections below.
+
+
+def slack_sent_on(day: date, *, principal: str, identities: Mapping[str, str] | None = None) -> str:
+    """Everything he posted on ``day``, anywhere - channels, DMs, group DMs.
+
+    His own side of the day is where "answered" and "sent" come from: a reply
+    on the thread an ask came from, a doc dropped in the DM of the person
+    waiting on it.
+    """
+    return slack_search(
+        sender=principal, after=day, before=day, ascending=False, identities=identities
+    )
+
+
+def slack_channel_on(
+    day: date, *, channel: str, identities: Mapping[str, str] | None = None
+) -> str:
+    """One watched channel's traffic on ``day``, whoever wrote it."""
+    return slack_search(
+        channel=channel, after=day, before=day, ascending=False, identities=identities
+    )
+
+
+def slack_dms_on(day: date, *, principal: str, identities: Mapping[str, str] | None = None) -> str:
+    """Messages TO him on ``day`` - run with ``channel_types=im,mpim``.
+
+    ``-from:`` his own id, because his side is :func:`slack_sent_on` and a
+    message fetched by both would count as two pieces of evidence. The
+    conversation type rides alongside the query rather than inside it, because
+    the connector takes it as its own parameter.
+    """
+    user = _slack_id(principal, _USER_ID, identities, "principal")
+    return f"-from:<@{user}> after:{day - _DAY} before:{day + _DAY} sort:timestamp sort_dir:desc"
+
+
+def gmail_sent_on(day: date) -> str:
+    """His sent mail on ``day``.
+
+    ``in:sent``, not ``from:<address>``: the address is personal data in a
+    public repo, and the mailbox already knows whose it is.
+    """
+    return f"in:sent after:{day.strftime('%Y/%m/%d')} before:{(day + _DAY).strftime('%Y/%m/%d')}"
+
+
+#: A watched-channel bullet: the id first, anything after it is his note.
+_CHANNEL_LINE = re.compile(r"^\s*[-*]\s+`?(?P<id>[CG][A-Z0-9]{6,})`?(?:\s|$)")
+_HEADING_LINE = re.compile(r"^\s*#{1,6}\s+(?P<name>.+?)\s*$")
+
+
+def watched_channels(watchlist: str) -> list[str]:
+    """Channel ids from the ``channels`` block of ``Watchlist.md``, in order.
+
+    Pure over the file's text (contract 5). A line that does not lead with an
+    id is his note and is skipped rather than guessed at - a display name here
+    would become a search that silently matches nothing.
+    """
+    out: list[str] = []
+    block = ""
+    for line in str(watchlist or "").splitlines():
+        heading = _HEADING_LINE.match(line)
+        if heading:
+            block = heading["name"].strip().casefold().rstrip(":")
+            continue
+        if block != "channels":
+            continue
+        found = _CHANNEL_LINE.match(line)
+        if found and found["id"] not in out:
+            out.append(found["id"])
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -666,6 +772,36 @@ def jira_search(
     }
 
 
+#: Page cap for the evening's movement query. MEASURED, 2026-09-25: three
+#: projects x nine fields x one day came back at 81,582 characters and
+#: overflowed the connector - ~3,400 chars an issue, because every assignee
+#: ships four avatar URLs whatever `fields` says. Five fields and one project
+#: per call is ~2,500 an issue; fifteen stays well under the size that failed.
+JIRA_MOVED_MAX_RESULTS = 15
+
+#: What the wrap reads off a moved ticket, and nothing else.
+JIRA_MOVED_FIELDS: tuple[str, ...] = ("key", "summary", "status", "assignee", "updated")
+
+
+def jira_moved_on(project: str, day: date) -> dict[str, object]:
+    """Tickets in ONE project whose status or assignee changed on ``day``.
+
+    ``CHANGED DURING`` rather than ``updated``: a comment bumps `updated`, and
+    a comment is activity, not movement (SPEC 3.7 rule 1). One project per
+    call because the three-project form is the one that overflowed.
+    """
+    (key,) = _project_keys([project])
+    during = f'("{day.isoformat()}", "{(day + _DAY).isoformat()}")'
+    return {
+        "jql": (
+            f'project = "{key}" AND (status CHANGED DURING {during} '
+            f"OR assignee CHANGED DURING {during}) ORDER BY updated DESC"
+        ),
+        "fields": list(JIRA_MOVED_FIELDS),
+        "maxResults": JIRA_MOVED_MAX_RESULTS,
+    }
+
+
 # ---------------------------------------------------------------------------
 # GitHub - argv for the `gh` CLI, read-only
 # ---------------------------------------------------------------------------
@@ -805,3 +941,56 @@ def gh_recent_runs(
             raise RecipeError(f"{branch!r} is not a branch name")
         argv += ["--branch", branch]
     return argv
+
+
+#: What the wrap reads off one search hit. `gh search` has no `mergedAt`;
+#: `closedAt` is the merge time for a PR found by `--merged-at`.
+GH_SEARCH_FIELDS: tuple[str, ...] = ("number", "title", "url", "repository", "closedAt", "author")
+
+#: `--review=` values `gh search prs` accepts that mean a review LANDED.
+GH_REVIEW_STATES = frozenset({"approved", "changes_requested"})
+
+
+def _repo_flags(repos: Iterable[object]) -> list[str]:
+    slugs = [_slug(repo) for repo in repos]
+    if not slugs:
+        # `gh search` with no `--repo` searches all of GitHub.
+        raise RecipeError("no repos given; read them from the repos block of DayDAG/Watchlist.md")
+    return [flag for slug in slugs for flag in ("--repo", slug)]
+
+
+def _search(kind: str, filters: list[str], repos: Iterable[object]) -> list[str]:
+    return [
+        "gh",
+        "search",
+        kind,
+        *filters,
+        *_repo_flags(repos),
+        "--limit",
+        _limit(GH_LIMIT_CAP, what="limit"),
+        "--json",
+        ",".join(GH_SEARCH_FIELDS),
+    ]
+
+
+def gh_merged_on(repos: Iterable[object], day: date) -> list[str]:
+    """PRs merged on ``day`` across every watched repo, in one call.
+
+    One search rather than one `gh pr list` per repo: fourteen watched repos
+    is fourteen round-trips for what GitHub answers in one.
+    """
+    return _search("prs", [f"--merged-at={day.isoformat()}"], repos)
+
+
+def gh_reviewed_on(repos: Iterable[object], day: date, *, review: str) -> list[str]:
+    """Open PRs touched on ``day`` whose review decision is ``review``."""
+    if review not in GH_REVIEW_STATES:
+        raise RecipeError(f"{review!r} is not one of {sorted(GH_REVIEW_STATES)}")
+    return _search(
+        "prs", [f"--updated={day.isoformat()}", f"--review={review}", "--state=open"], repos
+    )
+
+
+def gh_closed_issues_on(repos: Iterable[object], day: date) -> list[str]:
+    """Issues closed on ``day`` across every watched repo."""
+    return _search("issues", [f"--closed={day.isoformat()}"], repos)

@@ -12,7 +12,7 @@ A persistent agent for Nitin Srivastava (SVP Data & AI, Create Music Group) that
 
 ## 2. People and org map
 
-Ownership map (from the weekly notes, stable): **VP-AI** → A&R Discovery + AI Platform · **Enablement-Lead** → Agentic Enablement (Kiwi / CreateOS Labs) · **VP-Data** → Data Platform, Ingestion, DevOps, Security. Everything else sits with Nitin directly. **Sponsor** is the executive sponsor/audience (Former-Sponsor departed). **CTO** is newly named (relocating to Vancouver as of early Sep). Cross-teaming partners: **Analytics-Partner** (analytics/data product), **CTO**, **Gov-Lead** (governance/roadmap).
+Ownership map (from the weekly notes, stable): **VP-AI** → A&R Discovery + AI Platform · **Enablement-Lead** → Agentic Enablement (Kiwi / CreateOS Labs) · **VP-Data** → Data Platform, Ingestion, DevOps, Security. Everything else sits with Nitin directly. **Sponsor** is the executive sponsor/audience (Former-Sponsor departed). **CTO** is newly named and is **now in Vancouver** (relocation done; confirmed 9/21/26). **The principal is based in Seattle** - the CMG office is LA, so "in office" and any LA visit means travel (Seattle to LA), and so does the week of Oct 5 when CTO and Sponsor-adjacent leads are in LA. Cross-teaming partners: **Analytics-Partner** (analytics/data product), **CTO**, **Gov-Lead** (governance/roadmap).
 
 **Who people are lives in the people directory, not in this file.** Slack ids,
 addresses, titles, the DM with Nitin, the group DMs they sit in, and how often
@@ -41,7 +41,7 @@ Other frequent names: ML-Lead (lead ML, first-party models), Stakeholder-1, Eng-
 
 ## 3. Canonical identifiers
 
-**Slack workspace:** `create-music.slack.com`. Channels (re-verify in `Fact Base/Internal Links.md` — IDs drift as channels get renamed; `${SLACK_CH_POD_DISCOVERY}` was #ar-tooling-dev-team, now #pod-discovery):
+**Slack workspace:** `create-music.slack.com`. Channels (re-verify in `Fact Base/Internal Links.md` — IDs drift as channels get renamed; `${SLACK_CH_POD_DISCOVERY}` was #ar-tooling-dev-team, now #pod-discovery, and `${SLACK_CH_MIGRATION_POD}` was #migration-pod, now #createos-migration since 9/10/26. The key names what the channel is FOR, so it does not move when the name does; the id is the canonical thing):
 
 | Channel | ID |
 |---|---|
@@ -55,6 +55,7 @@ Other frequent names: ML-Lead (lead ML, first-party models), Stakeholder-1, Eng-
 | #dt-leadership | `${SLACK_CH_DT_LEADERSHIP}` |
 | #dnt-leadership | `${SLACK_CH_DNT_LEADERSHIP}` |
 | #project-dream | `${SLACK_CH_PROJECT_DREAM}` |
+| #createos-migration | `${SLACK_CH_MIGRATION_POD}` |
 | DMs and group DMs | per person, in the directory: `python -m daydag.people show <role>` - `dm` is the 1:1 with Nitin, `groups` the group DMs and channels they are tracked in |
 
 **Obsidian vault (direct filesystem access in Claude Code — no MCP needed):**
@@ -108,7 +109,8 @@ Lowercase openers, casual capitalization. Short direct sentences. Numbered lists
 4. **Match the latest weekly note's actual format**, not any template — the layout evolves (Section A–D → Priorities happened ~0622). The note's own header documents its conventions.
 5. **Surface discrepancies, don't resolve them:** conflicting dates, duplicate meeting slots, defunct invites from departed people, unverified "done" claims.
 6. **Degrade gracefully:** a down connector gets one line ("couldn't check X") — never block or guess.
-7. Personnel/comp/M&A content: Nitin's DM only, minimal quoting.
+7. Personnel/comp/M&A content is **treated like any other content**: quoted in Nitin's DM and written to `DayDAG/State.md` the same way (changed 2026-09-25 on his explicit decision, #180: "i think we should treat sensitive items the same" / "wire everything consistently for now, we can change later"). It still never goes into a channel draft or to anyone else (rule 2). Every record keeps its sensitivity mark (`classify_sensitivity`), so the rule can be tightened again later by flipping one switch, `state.WITHHOLD_PRIVATE`, which restores the old rule in both places at once: out of `State.md`, and minimally quoted in the DM.
+8. **The vault is a lagging indicator - never read it as status.** Obsidian records what he had time to write down, which on a day with seventeen meetings is nothing: *"dont just look at weekly note, actually look at calendar, slack and email to see how much things have moved, i dont always get the time to move things in obsidian"* (2026-09-15). A ticked checkbox is evidence something closed; an unticked one is evidence of nothing. Derive what moved from the live sources, render it as `evidence -> proposed status` with the verbatim quote and permalink, let him confirm, and only then write the vault. **Nothing auto-closes** - a merged PR is not the thing that was asked for and a scheduled meeting is not a held one (#18's critical rule, generalised in #134).
 
 ## 7. Reuse, don't rebuild
 
@@ -121,6 +123,6 @@ The `DayDAG/` vault folder — human-editable markdown the agent re-reads before
 - **Watch items:** running jobs/PR sets Nitin flagged, with source link and check condition
 - **GitHub snapshot cache:** per-repo last-pull JSON (PRs, review ages, board moves) + diff vs prior pull; refreshed 6am/3pm PT weekdays
 
-Watched repos/projects live in `DayDAG/Watchlist.md`; pending decisions in `DayDAG/Decisions.md`. History, metrics, the meeting ledger and anything sensitive go to the SQLite event log at `~/.local/state/` — **outside the vault**, since iCloud corrupts a WAL touched from two devices.
+Watched repos/projects live in `DayDAG/Watchlist.md`; pending decisions in `DayDAG/Decisions.md`. History, metrics and the meeting ledger go to the SQLite event log at `~/.local/state/` — **outside the vault**, since iCloud corrupts a WAL touched from two devices. Sensitive items are recorded there with their mark and, since #180, projected into `State.md` like any others (rule 7).
 
 Open-loop clock default: 2 business days without responsive activity → surface with a pre-drafted nudge. GitHub activity on a referenced PR/ticket counts as responsive; merge auto-closes the loop with a note.

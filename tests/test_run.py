@@ -288,6 +288,32 @@ def test_the_cli_accepts_the_log_flag_the_skill_documents(tmp_path, monkeypatch,
     assert (tmp_path / "events.db").exists(), "the run did not remember anything"
 
 
+def test_render_reads_the_payloads_from_a_file_when_given_one(tmp_path, monkeypatch, capsys):
+    """A scheduled run is headless Claude, which may not pipe or redirect into
+    a command - the 2026-09-26 test of `scheduled_loop.sh` got through every
+    fetch and then could not hand `render` its payload on stdin. A file path
+    as an argument needs neither."""
+    env = tmp_path / ".env"
+    env.write_text(
+        f"SLACK_USER_PRINCIPAL=UPRINCIPAL1\nVAULT_ROOT={tmp_path / 'vault'}\n", encoding="utf-8"
+    )
+    (tmp_path / "vault" / "Weekly Notes").mkdir(parents=True)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("sys.stdin", __import__("io").StringIO("not json - must not be read"))
+    payloads = tmp_path / "payloads.json"
+    payloads.write_text('{"calendar": [], "slack": [], "gmail": [], "vault": ""}', encoding="utf-8")
+
+    code = run.main(["render", "morning", "--payloads", str(payloads)])
+
+    assert code == 0, capsys.readouterr().err
+    assert capsys.readouterr().out.strip(), "render printed nothing"
+
+
+def test_payloads_without_a_path_is_refused_rather_than_read_from_stdin(capsys):
+    assert run.main(["render", "morning", "--payloads"]) == 2
+    assert "--payloads" in capsys.readouterr().err
+
+
 def test_the_vault_step_names_the_note_once_not_twice(identities):
     """`recipes.weekly_note` already returns a full connector-relative path -
     the vault prefix included, because the Obsidian connector addresses from
@@ -336,21 +362,65 @@ def test_the_gmail_step_covers_the_window_the_brief_will_actually_ask_for(identi
 # --------------------------------------------------------------------------
 
 
-def test_the_eod_plan_fetches_tomorrow_not_today(identities):
-    """`eod_wrap` reads exactly one calendar window and it is TOMORROW's.
+def test_the_eod_plan_fetches_today_and_tomorrow_for_its_two_consumers(identities):
+    """Tomorrow for `eod_wrap`, today for `daydag.movement`.
 
     The plan fetched today for every loop, because it never looked at `loop`
     at all - and `_Payloads.calendar` then answered the tomorrow request from
     the today bucket. The wrap printed this morning's 8:15 standup as
     tomorrow's first meeting, and nothing failed.
+
+    Fixed to tomorrow-only, which was right while the wrap was the one
+    consumer. #134 added a second: a room that was asked for and has now
+    happened is evidence a loop moved, and that room is TODAY's. The wrap
+    still sees only tomorrow, because `_Payloads.calendar` filters by window.
+
+    Today is fetched too since #168 - the calls section labels attendance
+    from today's RSVPs - and `_Payloads.calendar` serves each window only its
+    own day, so the fix above still holds (`test_call_notes_run` pins that).
     """
-    (calendar,) = [
-        s
+    days = [
+        s.detail["day"]
         for s in run.plan("eod", now=MONDAY_PT, identities=identities).steps
         if s.source == "calendar"
     ]
 
-    assert calendar.detail["day"] == "2026-09-08", "the wrap previews tomorrow, not today"
+    assert days == ["2026-09-07", "2026-09-08"], (
+        "the wrap previews tomorrow; movement and the calls section read today"
+    )
+
+
+def test_the_friday_eod_plan_fetches_monday_and_the_render_shows_it(identities):
+    """Fri 2026-09-25 ~17:00 PT: the wrap read Saturday and said nothing about
+    Monday 9/28 (#170). Two single-day windows, never a range - today's for the
+    movement detector (#167), the next working day's for the preview. The
+    one-day output bound stands per step.
+    """
+    friday = datetime(2026, 9, 26, 0, 0, tzinfo=UTC)  # Fri 17:00 PT
+    calendars = [
+        s
+        for s in run.plan("eod", now=friday, identities=identities).steps
+        if s.source == "calendar"
+    ]
+
+    days = [s.detail["day"] for s in calendars]
+    assert days == ["2026-09-25", "2026-09-28"], "today, then monday - not saturday"
+
+    payloads = _payloads(
+        calendar=[
+            {
+                "id": "demo1",
+                "summary": "Sprint demo",
+                "start": "2026-09-28T10:30:00-07:00",
+                "end": "2026-09-28T11:30:00-07:00",
+                "attendees": ["a@example.com", "b@example.com"],
+            }
+        ]
+    )
+    text = run.render("eod", now=friday, identities=identities, payloads=payloads)
+
+    assert "monday 9/28" in text, f"the header does not name monday:\n{text}"
+    assert "10:30 Sprint demo" in text, f"monday's first meeting is missing:\n{text}"
 
 
 def test_the_week_ahead_plan_fetches_seven_days_of_next_week(identities):
@@ -535,7 +605,8 @@ def test_ship_asks_for_no_connector_fetch(identities):
 
 
 def test_the_loops_that_ignore_the_calendar_do_not_fetch_it(identities):
-    for loop in ("ingest", "chase", "ship"):
+    # `ingest` reads the calendar since #168 - attendance comes off the RSVP.
+    for loop in ("chase", "ship"):
         sources = {s.source for s in run.plan(loop, now=MONDAY_PT, identities=identities).steps}
         assert "calendar" not in sources, f"{loop} fetches a calendar it never reads"
 
@@ -945,3 +1016,37 @@ def test_a_past_meeting_teaches_the_directory_and_a_future_one_does_not(identiti
     assert directory.resolve("wren@x.com") is not None, "a past meeting taught nothing"
     assert directory.resolve("bo@x.com") is None, "a meeting not yet held was recorded as met"
     assert directory.resolve("principal@x.com") is None, "he was added to his own directory"
+
+
+def test_the_eod_wrap_gets_movement_from_the_payloads_it_already_fetched(identities, tmp_path):
+    """#134, wired. `plan eod` already asks for slack and gmail; the wrap read
+    neither, and reported the day from checkboxes he had not ticked.
+
+    The chase item lives in State.md, the evidence arrives in the Slack
+    payload, and nothing about either mentions the other - which is the point:
+    the vault says nothing moved and the live sources say otherwise.
+    """
+    from daydag.state import StateFolder
+
+    folder = StateFolder.create(tmp_path / "vault" / "DayDAG")
+    # Written by hand, not through the writer: this is the file he corrects,
+    # and `movement` only ever reads it. It also keeps this branch independent
+    # of the append path on #130.
+    folder.state_path.write_text(
+        "# State\n\n## Chase list\n\n- vp-data · fruits metadata list for finance · status open\n",
+        encoding="utf-8",
+    )
+    payloads = _payloads(
+        slack=[
+            {
+                "text": "fruits metadata list is in the workhorse, sending to finance now",
+                "ts": "1789000000.0001",
+                "permalink": "https://example.com/p1",
+            }
+        ]
+    )
+
+    text = run.render("eod", now=MONDAY_PT, identities=identities, payloads=payloads, state=folder)
+
+    assert "looks moved - confirm" in text, f"the live sources were not read:\n{text}"
+    assert "sending to finance now" in text, "the verbatim quote was dropped"

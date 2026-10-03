@@ -131,7 +131,7 @@ The gap: Gemini notes arrive by email with **the meeting title in the body, not 
 So the link is a ledger, and calendar is the driver.
 
 1. **Every qualifying event gets a row** at the start of the day — from the day-by-day calendar pull, keyed on `(event id, instance start)` so recurring 1:1s are distinct rows. Qualifying means **not declined**, ≥2 attendees, not OOO/focus/hold. Requiring *accepted* dropped 61% of real meetings when measured against five days of live calendar (#2) - most invites are never answered.
-2. **Ingestion attaches, it doesn't discover.** Each sweep (12:00, 17:00) tries to match unattached rows against Gemini mail from `gemini-notes@google.com`, the Notion DB, and Granola. Matching is title-first: Gemini's subject is structured (`Notes: "<title>" <date>`), so an exact title match settles it outright. Only when the title matches zero or several rows does it fall back to scoring - arrival inside `[event end - 45 min, event end + the source's window]` · fuzzy title · attendee overlap. The lower bound is negative because meetings finish early and Gemini writes up when they actually end; the upper bound is per-source and wide - 18h for Gemini - because the lag is generation, not delivery (`ledger.ARRIVAL_WINDOW`). High score attaches; **ambiguous surfaces rather than guesses** (invariant 5) — two 1:1s back to back with near-identical titles is the case that breaks naive matching.
+2. **Ingestion attaches, it doesn't discover.** Each sweep (every 30 min through the working day, #168) tries to match unattached rows against Gemini mail from `gemini-notes@google.com`, the Notion DB, and Granola. Matching is title-first: Gemini's subject is structured (`Notes: "<title>" <date>`), so an exact title match settles it outright. Only when the title matches zero or several rows does it fall back to scoring - arrival inside `[event end - 45 min, event end + the source's window]` · fuzzy title · attendee overlap. The lower bound is negative because meetings finish early and Gemini writes up when they actually end; the upper bound is per-source and wide - 18h for Gemini - because the lag is generation, not delivery (`ledger.ARRIVAL_WINDOW`). High score attaches; **ambiguous surfaces rather than guesses** (invariant 5) — two 1:1s back to back with near-identical titles is the case that breaks naive matching.
 3. **A row stays open across sweeps.** Notion lands ~a week late, so an unmatched row is re-checked, not closed. Late arrival backfills and re-runs ingestion for that meeting, which is why the ledger lives in the event log rather than being derived fresh each run.
 4. **Unmatched by the next morning becomes a brief line** — "tue: 3 meetings w/ no notes — X, Y, Z. recorded anywhere?" That is the actual guarantee. Not that every meeting has notes; that a missing one is *visible* the next morning instead of discovered a month later.
 5. **The ledger is also the prep trigger** (§3.2) and the OOO detector — same rows, already pulled.
@@ -178,7 +178,7 @@ Four files rather than one, because they have genuinely different edit patterns 
 
 `README.md` in that folder is not decoration. It is the one thing that stops a future session from inventing a fifth file.
 
-**The sensitive partition lives only in the log.** `weekly-feedback-scan` carries personnel items forward across reviews — structurally identical to a chase loop, but the vault is plaintext synced to every device Nitin owns, and chase entries exist to be surfaced in a brief. Those items never touch the `DayDAG/` folder.
+**Sensitivity is a mark, and one switch decides what it does, in the vault and the DM.** Every record the log projects carries `sensitivity: private | normal`. Since #180 (the principal, 2026-09-25: *"i think we should treat sensitive items the same"* / *"wire everything consistently for now, we can change later"*) `state.WITHHOLD_PRIVATE` is off, and a private item is quoted in the DM and written to `State.md` like a normal one. Turning it back on restores the old rule in both places at once - withheld from the vault, minimally quoted in the DM - with nothing to re-derive. Only `state.withholds_private()` reads the switch, and a guardrail keeps it that way. `weekly-feedback-scan` is separate from this: it writes its own private Drive doc, its registry-level `sensitivity: private` routing is unchanged, and nothing records its carry-forward items in the event log. Wiring them in would now put them in `State.md`, so decide that when it comes up.
 
 ## Invariants
 
@@ -214,7 +214,7 @@ session, which is what makes scheduling a design question rather than a crontab.
 | Time | What | Owner |
 |---|---|---|
 | weekdays 6:40 → 6:45 | pulse → morning brief | DayDAG |
-| weekdays 12:00 / 17:00 | ingestion sweeps | DayDAG |
+| weekdays every 30 min, 07:00-19:00 | ingestion sweep - idempotent on the gmail message id, so frequency costs nothing but fetches (#168) | DayDAG |
 | weekdays 12:15 | open-loop chaser | DayDAG |
 | weekdays 16:25 → 16:30 | pulse → EOD wrap | DayDAG |
 | Fri 08:00 | pod update finalize | existing routine |
