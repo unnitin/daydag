@@ -1,216 +1,301 @@
-# Simplification plan - same capabilities, half the code
+# Simplification plan - same capabilities, less code
 
-Written 2026-09-18 from a full read of `src/daydag/` (25 modules, 12,685 lines)
-and `tests/` (38 files, 16,254 lines, 1,208 tests of which 291 are guardrails).
-Every claim below that says "verified" was checked against the code by hand;
-the rest comes from four module surveys and is cited by file and line so it
-can be re-checked before each PR.
+**Refreshed 2026-10-02 against `main` at `a1497ee`.** First written 2026-09-18,
+built as a twelve-PR stack 09-18 to 09-20, parked 09-20, never merged. This
+revision re-measures every number against today's `main`, re-checks every
+"no caller" and every defect claim, and replaces the stack's plan with one that
+can land. What the first stack did and measured is kept in §9, because it is the
+best evidence for what this plan will do.
 
-The plan is a stack of eight PRs. Each is green on its own, each carries its
-own doc edits, and the stack can stop after any of them and leave the repo
-better than it found it.
+Every figure marked *measured* was produced on 2026-10-02 by the commands in §8
+and reproduces the tag's published numbers exactly (§9), so the columns compare.
 
-## 1. What the read found
+## 0. Why it was parked, and why that still holds
 
-**Half the source is prose.** 5,277 of 12,685 lines are code; 3,979 are
-docstrings and 1,376 are comments (42%). Most of the prose narrates an
-incident that a named test already pins - `run.py:448-467` retells the
-wrong-day calendar story that `test_run.py:382,406` asserts; `state.py:19-56`
-lists seven contracts that `test_state_append.py` and `test_state_store.py`
-each cover. A smaller part holds calibration facts nothing else records
-(the 18h/6h/10d note-arrival windows in `ledger.py:64-78`, the rejected
-sensitivity tokens in `state.py:990-995`). The first kind can be a line and a
-test name; the second belongs in `reference/`.
+> "dont merge simplification, get the new functionality in first, use it then
+> use the experience to cut / simplify" - decision, 2026-09-20
 
-**A third of the modules have no production caller.** Verified by grep over
-`src/` and `scripts/`:
+A plan derived from *reading* the code guesses at what is load-bearing; running
+the new thing tells you. That held: since the park, twelve merges landed on `main`
+(#142, #166, #172, #174, #176-#179, #181, `path/scheduled-loops` and two
+docs branches), and the tree grew by four modules and 3,968 source lines. They are the experience the
+decision asked for, and they change the plan in three ways:
 
-| module | lines | reached by |
+1. **`board.py` is no longer unreached.** `movement` and the eod plan import two
+   small things from it (§1), so D1 is re-opened.
+2. **The new modules re-grew the duplication the stack removed.** `call_notes`,
+   `movement` and `prep_ahead` each brought their own clock, link, token or
+   section helpers, and the two markdown rule sets now each have a new user (§1).
+   That is the strongest argument *for* the consolidation: it is what happens
+   when the shared kernel does not exist yet.
+3. **The stack cannot be rebased.** It folds `run.py` and `eod_wrap.py` into
+   `loops.py`; `main` has since added 927 lines to `run.py` and 147 to
+   `eod_wrap.py`. A rebase conflicts in 18 files and amounts to re-porting every
+   feature merged since. §5 rebuilds instead, using the old branches as
+   reference.
+
+## 1. What the read found (measured on `main`, 2026-10-02)
+
+| | tag (09-17) | `main` today |
 |---|---|---|
-| `board.py` | 974 | its own tests. BUILD.md already says M2-4 "not built" |
-| `vault.py` | 467 | its own tests. The M1-3 spike behind decision #24 |
-| `delivery.py` | 355 | its own tests and `test_guardrails.py`. No message has ever gone through it - the skill has the agent post via MCP by hand |
-| `evalset.py` | 207 | three vocabulary constants (`ingestion.py:84`); the rest is a test helper living in `src/` |
-| `smoke.run()` | ~300 of 579 | nothing. `run.py` builds its smoke-shaped rows by hand and imports only the constants |
-| `runlog` projection half | ~123 | nothing. SPEC §4/§7's "run log to State.md" was never wired; `update_state` has no run-log parameter |
-| `state.DecisionQueue` | ~70 | nothing. `Decisions.md` is written by hand and read by `closure` |
-| `week_ahead` Monday prep queue | ~140 | nothing. `run.py:905` renders the push and discards the object that carries it |
-| `recipes.gh_*` builders | ~110 | nothing in `src/` |
-| `ledger` backfill path, `prep.Schedule`/`due_at`, `people` CLI-only fields | ~150 | tests only |
+| modules | 24 | 28 |
+| source lines | 12,199 | 16,167 |
+| of which code | 5,557 | 7,915 |
+| of which docstrings + comments | 5,199 (43%) | 6,356 (39%) |
+| test lines / files | 15,900 / 37 | 19,839 / 44 |
+| tests / guardrails | - | 1,438 / 308 |
 
-`soak.py` looked dormant to the survey but is not: the journal holds entries
-for 9/15-9/18 and the M2-5 gate is at day 4 of 5. It stays.
+The biggest modules: `run.py` 1,761 · `state.py` 1,277 · `pulse.py` 997 ·
+`recipes.py` 996 · `board.py` 974 · `call_notes.py` 884 · `brief.py` 812 ·
+`movement.py` 793 · `prep_ahead.py` 736.
 
-**Two things the CLI cannot do that the code can.** Verified: `run.main`
-calls `render` with no `pulse` and no `state` (`run.py:1085-1097`), so
-`python -m daydag.run render ship` always prints "couldn't check - no pulse
-was built" and the shipping sections of the morning, wrap and week-ahead
-never render on a real run (#138 describes the symptom). And `State.md` is
-written with a plain `write_text` (`state.py:876`) while the atomic replace,
-iCloud-placeholder refusal and digest check all sit unused in `vault.py`.
+### Code with no production caller
 
-**The same thing is written several times.**
+Re-checked by import and name grep over `src/` and `scripts/`:
 
-- `week_ahead.py:174-218` re-spells six of `brief`'s helpers (`_local`,
-  `_clock`, `_instant`, `_link`, `_day_label`, `_claim`, `_line_from_state`).
-- Three push classes with the same four fields and three error classes with
-  the same meaning (`Brief`/`Wrap`/`WeekAhead`); the weekly-note read, the
-  pulse block and the State.md read each appear three times (`brief.py:622,
-  649, 666` · `eod_wrap.py:191, 212` · `week_ahead.py:438, 479, 542`).
-- The calendar window is computed once in `run._calendar_windows` and then
-  re-derived by every consumer to filter what it was handed (#109, #111).
-- Two watchlist parsers over one file (`pulse.read_watchlist:542-586`,
-  `board.read_board_watchlist:858-908`) and two copies of the monotonic
-  evidence rule with an eight-line comment duplicated verbatim
-  (`pulse.py:936-942` ≡ `board.py:795-801`).
-- One observation row converted five times between `smoke.Result`,
-  `runlog.Run.observe`, `Run.row`, `RunRow.payload` and `RunRow.from_payload`;
-  two `_one_line` wrappers over one `voice.clipped`.
-- Two State.md parsers in one file (`read_section` and `StateDoc`), three
-  link strippers, two event-log decoders with divergent corruption policy,
-  two meeting qualifiers that differ in two cases (#110), and attendees
-  parsed once by the ledger and again by the people directory.
-- `registry.Registry.load` and `manifests._validate_block` police the same
-  six keys.
+| what | lines | reached by, today |
+|---|---|---|
+| `board.py` | 974 | **two thin imports now.** `run._jira_steps` uses `read_board_watchlist` for the Jira project keys; `movement` uses `keys_in`, a one-line delegate to `Pulse._keys`. The remaining ~900 lines (the join, discrepancies, the projects-v2 note) are unreached |
+| `vault.py` | 467 | its own tests. The atomic writer is still unused; `State.md` is written with `write_text` (`state.py:923`) |
+| `delivery.py` | 355 | its own tests and the guardrails. Nothing in `src/` imports it |
+| `smoke.run()` | ~300 of 579 | nothing. The constants and `Result` are used |
+| `state.DecisionQueue` | ~70 | nothing |
+| `week_ahead` Monday prep queue | ~140 | computed into `WeekAhead.monday_preps`, then discarded - `render` calls `.render()` and drops the object |
+| `recipes.gh_open_prs`, `gh_pr_checks`, `gh_default_branch`, `gh_recent_runs` | ~60 | nothing. **Changed:** `gh_merged_on`, `gh_reviewed_on` and `gh_closed_issues_on` are now used by the evening's movement read and stay |
+| `evalset.py` | 207 | three vocabularies for `ingestion`; the rest is a test helper in `src/` |
 
-**The docs overlap and three claims are stale.** README, USAGE, BUILD,
-ARCHITECTURE, SPEC and the skill each carry a module list, a "what works"
-table or the guardrail list. README calls `delivery` "the one autonomous
-send" (nothing calls it); SPEC §4 and §7 say the run log is written to
-State.md (it is not); BUILD says the soak "has not run" while USAGE heads a
-section "The soak (running now)".
+### Defects the stack fixed that are still on `main`
+
+These are bugs, not tidiness, and §5 lands them first and separately.
+
+- **The remembered-meeting `kind` collision (PR 11).** `run._remember` splats
+  each calendar record into `EventLog.record(kind, ...)`. Reproduced today: a
+  record with a `kind` key raises `TypeError: EventLog.record() got multiple
+  values for argument 'kind'` from `render("morning"|"eod", log=...)`.
+  `prep-ahead` is not affected (it remembers only today's meetings and fetches
+  tomorrow). **Latent, not live:** the Google Calendar connector checked today
+  omits `kind`, so it fires only for a source that passes it through - the raw
+  Calendar API does, and the record the stack hit on 09-20 did.
+- **#112, the week-ahead "no plan" check.** `_Payloads.weekly_note(path)`
+  ignores `path` and returns the single `vault` payload, so the check for next
+  week's note reads whatever note was handed in.
+- **#138, `ship` from the CLI.** `run.main` never passes a pulse to `render`,
+  so `python -m daydag.run render ship` always prints "couldn't check - no
+  pulse was built".
+- **`State.md` is written non-atomically** while `vault.py`'s atomic write and
+  iCloud-placeholder refusal sit unused (D2 decided to wire them).
+
+### The same thing, written several times
+
+Carried over from 09-18 and still true, plus what the new modules added (marked
+*new*):
+
+- **Three Watchlist parsers** over one file: `pulse.read_watchlist`,
+  `board.read_board_watchlist`, and *new* `recipes.watched_channels`.
+- **Two markdown rule sets.** `pulse` and `state` each define `_HEADING` and
+  `_BULLET`; `recipes._HEADING_LINE` is a third heading regex. `pulse`'s are
+  applied to stripped lines, so its readers cannot tell a nested bullet from a
+  top-level one; `state.read_section(top_level=True)` can. *New:* `prep_ahead`
+  imports `pulse`'s set and `movement` imports `state`'s, so two modules
+  written the same week read nesting differently.
+- **Two `State.md` section walkers:** `state.read_section` and *new*
+  `movement._blocks`, which re-implements the same section rule.
+- **Time and day formatting, four ways, two visible formats.** `_clock` in
+  `brief`, `week_ahead` (identical), `prep_selector` (tz-aware) and *new*
+  `prep_ahead`; `_day_label` in `brief`, `week_ahead` and *new* `prep_ahead`.
+  The morning shows `1:00` and `fri oct 2`; the day-before prep shows `1pm`
+  and `fri 10/2`. That is a visible inconsistency in his DMs, not just code (D6).
+- `_instant` ×3 (`brief`, `week_ahead`, *new* `call_notes`), `_link` ×3
+  (`brief`, `week_ahead`, *new* `movement`), `_line_from_state` ×2.
+- **Name tokens ×3:** `people` and `prep_selector` share one regex;
+  *new* `call_notes._tokens` splits on whitespace - a different rule for the
+  same question ("is this the same person").
+- **Four push shapes and three error classes:** `Brief`/`BriefError`,
+  `Wrap`/`WrapError`, `WeekAhead`/`WeekAheadError`, *new* `prep_ahead.DayBefore`.
+  `call_notes` and `prep_ahead` already compose from `brief`'s `Section`,
+  `claim` and `render_push` - the kernel exists, it is just named `brief`.
+- The principal's id is shape-checked in three places (`brief`, `delivery`,
+  `prep`); `_one_line` in `runlog` and `smoke`; two State.md parsers in
+  `state.py` (`read_section` and `StateDoc`).
 
 ## 2. What does not change
 
-Every capability that works today keeps working, from the same command, with
-the same output shape. The parity check in §4 is what proves it.
+Every capability that works today keeps working, from the same command, with the
+same output shape. §4 is how that is proven.
 
-| capability | command | after the stack |
+| capability | command | after |
 |---|---|---|
 | morning brief | `run plan/render morning` | same |
-| EOD wrap | `run plan/render eod` | same |
-| Sunday week-ahead | `run plan/render week-ahead` | same, minus a Monday prep queue that never rendered (decision D4) |
+| EOD wrap, incl. movement (#134) | `run plan/render eod` | same |
+| Sunday week-ahead | `run plan/render week-ahead` | same, plus the Monday prep queue it computes today and discards (D4) |
 | prep, named or next | `run plan/render prep [--for]` | same |
-| ingest | `run plan/render ingest` | same |
+| day-before prep, scheduled | `run plan/render prep-ahead`, `scripts/scheduled_loop.sh prep-ahead` | same; the script's prompt is untouched |
+| ingest, incl. call notes (#177, #181) | `run plan/render ingest` | same |
 | chase, with closure reads | `run plan/render chase` | same |
-| ship | `run render ship` | **works from the CLI** once `--mirrors` exists (PR 3); today it always degrades |
-| people directory | `people show/list/add` | same command, argparse |
-| manifests check | `manifests` | same command (preflight depends on it) |
+| ship | `run render ship` | **works from the CLI** (#138); today it always degrades |
+| people directory | `people show/list/add` | same |
+| registry / manifests check | `manifests` | same command (preflight depends on it) |
 | soak journal | `soak shipped/note/folded/report` | same |
 | State.md append-only, byte-for-byte round trip | `--write-state` | same, and the write becomes atomic |
 | one autonomous channel, drafts never sends | structural | same tests, same subjects |
 
-The house rules are untouched: one writer per artifact, evidence or silence,
-surface don't resolve, sensitivity never reaches the vault, the event log
-outside the vault, Jira read-only, bounded queries, id-scoped Slack search.
+House rules untouched: one writer per artifact, evidence or silence, surface
+don't resolve, the event log outside the vault, Jira read-only, bounded queries,
+id-scoped Slack search, sensitivity marks on every record (#180).
 
-## 3. Target shape - 25 modules to 16
+## 3. Target shape - 28 modules to about 21
+
+The 09-20 shape (§9) still holds for the modules it covered. The three new
+modules keep their own files - each is a pure detector or classifier over what
+it is handed, which is the `ingestion` pattern - but compose from the shared
+kernel instead of carrying copies.
 
 | after | from | holds |
 |---|---|---|
-| `config.py` | `config` | `.env` identities, `${VAR}` resolution, timezone, plus `path_from`/`host_from` so three env readers become one |
-| `connectors.py` | `recipes` + `payloads` | what to ask each connector and how to read what comes back. `gh_*` builders gone; `GH_WRITE_VERBS` stays as the tripwire subject |
-| `push.py` | `brief` primitives + `voice` | `Section`, `claim`, `render_push`, `Reader`, red items, overlap clusters, `unsourced_claims`, `clipped`, `WARN`, one `Push`, one `PushError` |
-| `loops.py` | `brief` body + `eod_wrap` + `week_ahead` + `run._chase/_ingest/_prep` | one `Loop` descriptor (windows, needs_ledger, assemble) and the seven bodies sharing prologue helpers |
-| `run.py` | `run` | plan, render, the payload adapter. No loop bodies |
-| `prep.py` | `prep` + `prep_selector` | qualification, selection, the ping. `Schedule`/`due_at` gone until #25 |
-| `closure.py` | `closure` | plan the reads, judge, render. Vault reading moves to `statedoc` |
-| `statedoc.py` | `state` (folder half) + `vault` (atomic write) | `StateDoc`/`Block`/`StateFolder`/`update_state`; one parser, `Block.body()`, `StateDoc.asks()`; the write is atomic and refuses a placeholder |
-| `eventlog.py` | `state` (log half) | `EventLog`, one decoder, `classify_sensitivity`, `record_fetch`/`last_fetch` |
-| `meetings.py` | `ledger` + `people` | rows, one `qualifies(for_week=)`, notes gaps, the directory folded from the same attendee parse |
-| `ingestion.py` | `ingestion` + `evalset` vocabularies | the classifier and its three vocabularies. `load_items`/`score` move to `tests/evalset.py` |
-| `evidence.py` | `pulse` | mirrors, the join, one watchlist parser, one `apply_evidence`. `board` retired until M2-4 wires it |
-| `observe.py` | `smoke` + `runlog` + `soak` | one `Row`, one renderer, the probe table, the run row, the soak journal |
-| `registry.py` | `registry` + `manifests` | one validate step, `main` kept |
-| `delivery.py` | `delivery` | `Transport`, `deliver_push`, `deliver_prep_ping`, `draft` - the shape the guardrails inspect, minus its run-log plumbing |
-| `cli.py` | four `__main__` blocks | one argparse tree; `python -m daydag.run` etc. stay as three-line shims (#117, #126) |
+| `config.py` | `config` | `.env`, `${VAR}` resolution, timezone, `principal_id` (one shape check), `path_from` |
+| `voice.py` | `voice` | the house voice **and the one clock/day formatter** (D6). Kept separate: folding it into `push` is an import cycle (§9) |
+| `markdown.py` | the regexes in `pulse`, `state`, `recipes` + `movement._blocks` | one heading, one bullet, one section walk. Small, and the thing three modules currently disagree about |
+| `recipes.py` | `recipes` + `payloads` | what to ask each connector and how to read the answer; the four dead `gh_*` builders gone |
+| `push.py` | `brief` primitives | `Section`, `claim`, `render_push`, `Reader`, one `Push`, one `PushError`, `_instant`/`_link`/`line_from_state` once |
+| `loops.py` | `brief` body + `eod_wrap` + `week_ahead` + the runner's loop bodies | one `Loop` descriptor; each loop fetches only what it reads |
+| `run.py` | `run` | plan, render, the payload adapter (#112 fixed); `main --mirrors` (#138) |
+| `prep.py` | `prep` + `prep_selector` | qualification, selection, the ping, `Schedule` (#25) |
+| `prep_ahead.py` | `prep_ahead` | the day-before rules and match; renders through `push`, formats through `voice` |
+| `call_notes.py` | `call_notes` | the notes join and sweep; name tokens from `ledger` |
+| `movement.py` | `movement` | the detector; sections from `markdown`, keys from `pulse` |
+| `closure.py` | `closure` | reads the vault through `StateDoc` |
+| `statedoc.py` | `state` (document half) | `StateDoc`/`Block`/`StateFolder`/`update_state`, one parser, writes through `vault` |
+| `eventlog.py` | `state` (log half) | `EventLog`, one decoder, the record stored whole (the `kind` fix) |
+| `vault.py` | `vault` | the one write path: atomic write, placeholder refusal, CAS line edits |
+| `ledger.py` / `people.py` | same | one `judge` behind both qualifiers (#110); one name-token rule |
+| `pulse.py` | `pulse` + `board`'s two live functions | mirrors, the join, the **one** Watchlist parser (repos, projects, channels) |
+| `observe.py` | `smoke` + `runlog` | one `Result` from probe to projection |
+| `registry.py` | `registry` + `manifests` | one validate step |
+| `delivery.py` | `delivery` | the guardrail shape (D3) |
+| `ingestion.py`, `soak.py` | same | `evalset`'s test half moves to `tests/` |
 
-Estimated after: **6,000-7,000 source lines** (code ~4,200, prose ~2,300),
-tests **~11,000 lines / ~950 tests**, guardrails **~270**. The guardrails
-that go are the ones whose subject goes (board's 29, vault's line-splicing
-subset, the duplicated copies in `test_guardrails.py`); every other
-guardrail keeps its test, re-pointed at the new module.
+**Expected size, estimated not counted:** the first stack took the tag from
+12,199 to 10,620 source lines (−13%) without cutting reasoning prose
+(CONTRIBUTING). The same moves on today's tree, plus folding the new
+duplication, should land around **14,000 lines**. The number to watch is not
+the total but that each fact - a bullet, a clock, a person's tokens, a watched
+project - is defined once.
 
 ## 4. How parity is proven
 
-1. **Tag first.** `pre-simplification` on `main` before PR 1 merges, so any
-   retired module is one `git show` away.
-2. **Golden renders.** PR 1 adds `tests/golden/<loop>.txt`: the rendered
-   push for each of the seven loops over the existing fixture payloads
-   (`tests/test_plan_feeds_render.py` already builds payloads from each
-   plan's own keys). PRs 2-5 must reproduce them byte-for-byte, with a
-   whitelist for the one deliberate change per PR (e.g. the ship section
-   appearing once `--mirrors` exists). PR 7 deletes the goldens or keeps
-   them, the user's call.
-3. **Guardrail ledger.** Each PR's description lists guardrail count before
-   and after and names every removed one with the deleted subject it
-   covered. A guardrail whose subject survives is never removed.
-4. **Tripwires re-pointed, not dropped.** `test_guardrails.py` scans
-   `src/daydag/*.py` by name and pins `merges_since_cursor` as its
-   self-check symbol; `test_ingestion.py:419-460` asserts the classifier
-   imports neither the vault nor the store; `test_board.py:258-274` ASTs
-   `board.py`; `test_docstring_examples.py` binds every `USING IT` block.
-   Each rename updates the scanner in the same PR.
-5. **Preflight unchanged.** `scripts/preflight.sh` keeps running the
-   manifests check, the secrets scan, the docs check and the guardrail
-   subset on every push.
+1. **Tag.** `pre-simplification` exists at `e7e1336` (#135). Add
+   `pre-simplification-2` on `main` before the rebuild's first merge.
+2. **Golden renders** for every loop in §2, now including `prep-ahead` and
+   `ship`, captured from today's `main` over the fixture payloads. Each PR must
+   reproduce them byte-for-byte, with a named whitelist for its one deliberate
+   change (the Monday queue appearing; `ship` rendering; D6's format change).
+3. **Guardrail ledger.** Each PR states the guardrail count before and after
+   (308 today) and names every removed one with the subject it covered.
+4. **Tripwires re-pointed, not dropped** - the module-name scanners in
+   `test_guardrails.py`, the classifier-imports-no-vault assertions, the
+   `USING IT` docstring binding.
+5. **Preflight unchanged.**
 
-## 5. The stack
+## 5. The rebuild
 
-Base: `fix/closure-check` (#142), so `closure` is in the tree the stack
-reshapes. Branches are `chore/simplify-NN-<name>` - the `chore/` prefix is
-what gives a stacked PR CI (CONTRIBUTING, "Branches").
+Each PR branches from `main`, is green alone, and merges before the next opens
+- no stack this time. That is CONTRIBUTING's own lesson ("a merged stacked PR
+has not reached `main`") and what made the first stack impossible to land once
+`main` moved. Each row names the old branch to port from.
 
-| PR | branch | change | src lines | risk |
-|---|---|---|---|---|
-| 0 | `chore/simplify-00-plan` | this document | 0 | none |
-| 1 | `chore/simplify-01-retire` | tag `pre-simplification`; delete `board.py`, the `gh_*` builders, the runlog projection half, `DecisionQueue`, the ledger backfill path, `prep.Schedule`/`due_at`, the Monday prep chain, `evalset`'s test-only half (to `tests/`), `people`'s unread fields; add the golden renders; fix the three stale doc claims | −2,300 (−1,500 tests) | low - deletions of unreached code, no behaviour change |
-| 2 | `chore/simplify-02-state` | `state.py` → `statedoc.py` + `eventlog.py`; one parser, one decoder; `vault`'s atomic write and placeholder refusal move into the writer, rest of `vault.py` retired (decision #24 recorded); `StateDoc.asks()` replaces `closure.asks_in`'s block walk; one `line_from_state` | −900 | medium - the round-trip and sensitivity guardrails are the safety net |
-| 3 | `chore/simplify-03-loops` | `push.py` + `loops.py`; `run.py` keeps plan/render only; `prep` absorbs `prep_selector`; `main` gains `--mirrors` so `ship` works; window arithmetic lives once (#109, #111) | −1,000 | medium - `test_plan_feeds_render` parametrises over every loop |
-| 4 | `chore/simplify-04-sources` | `meetings.py` (ledger + people, one qualifier, #110); `evidence.py` (pulse, one watchlist parser, one evidence rule); `connectors.py` (recipes + payloads, `run` adopts `records()`); `config.path_from`/`host_from` | −700 | medium - mirror tests run real `git clone --mirror`; keep them |
-| 5 | `chore/simplify-05-observe` | `observe.py` (smoke + runlog + soak, one `Row`); `registry` absorbs `manifests`; `delivery` trimmed to the guardrail shape; `cli.py` argparse (#117, #126); the ~220 duplicated guardrail lines deleted, scanners re-pointed | −900 (−600 tests) | medium - the module-scoped "no function takes a Draft and a Transport" assertion must move with `draft` |
-| 6 | `chore/simplify-06-prose` | docstring pass: a contract a test pins becomes one line and the test's name; calibration facts to `reference/meeting-ledger.md`, `reference/sensitivity.md`, `reference/state-incidents.md`; connector numbers already in `reference/connector-audit.md` become pointers; `USING IT` blocks kept | −1,600 prose | low - `test_docstring_examples` catches a broken example |
-| 7 | `chore/simplify-07-docs` | README absorbs USAGE; SPEC absorbs BUILD's status table; ARCHITECTURE keeps ownership, invariants and seams; SKILL.md loses the documentation-about-DayDAG its own README says it should not carry; `build_docs.REQUIRED_DOCS` updated | −700 doc lines | low |
+| # | change | reference branch | risk |
+|---|---|---|---|
+| 1 | **Fixes first, no reshaping:** the event log stores a record whole (`kind`); `_Payloads.weekly_note` honours `path` (#112); `main --mirrors` so `ship` renders (#138); `State.md` written through `vault`'s atomic writer | `fix/remembered-kind`, `simplify-09-loops`, `simplify-03-loops`, `simplify-02-state` | low - each is a defect with a failing test first |
+| 2 | Goldens for every loop; tag `pre-simplification-2` | `simplify-01-retire` | none |
+| 3 | Retire unreached code: `board.py` minus its two live functions (moved to `pulse`), four `gh_*` builders, `DecisionQueue`, `smoke.run`, `evalset`'s test half | `simplify-01-retire` | low |
+| 4 | `markdown.py` + one Watchlist parser; `movement` and `prep_ahead` move onto it | new | medium - nesting must be pinned by a test for each reader (D7), not by whichever rule wins |
+| 5 | `state` → `statedoc` + `eventlog` | `simplify-02-state`, `simplify-08-sweep` | medium |
+| 6 | `push` kernel; `voice` owns the one clock/day format (D6); `call_notes` and `prep_ahead` compose from it | `simplify-03-loops` | medium |
+| 7 | `loops.py` fold; the Monday queue renders (D4) | `simplify-09-loops` | medium - largest port, `run.py` changed most since |
+| 8 | sources: one `judge` (#110), one name-token rule incl. `call_notes`, `payloads` into `recipes` | `simplify-04-sources` | medium |
+| 9 | `observe`, `registry` absorbs `manifests`, `cli.py` | `simplify-05-observe` | medium |
+| 10 | tests follow modules | `simplify-10-tests` | low |
+| 11 | prose and docs pass | `simplify-06-prose`, `simplify-07-docs` | low |
 
-Order matters: 1 is pure deletion and the biggest single win, so it goes
-first and alone; 2 before 3 because the loops read the state through the
-new parser; 4 and 5 are independent of each other but both sit on 3's
-`push`/`loops` seam; 6 and 7 are prose and come last so they describe the
-shape that exists.
+PR 1 is worth landing whether or not the rest ever does.
 
-## 6. Decisions needed before PR 1
+The old `chore/simplify-*`, `integration/simplification-to-main` and
+`fix/remembered-kind` branches stay until their PR here merges, then go.
 
-Each has a recommendation. Say the word and the PR follows it; say
-otherwise and the PR follows that.
+## 6. Decisions
 
-- **D1 `board.py`** - retire until M2-4 wires a `sprint` command
-  (recommended: it is unreached, BUILD.md already lists it as not built, and
-  `connectors.jira_search` keeps the bound). Alternative: merge into
-  `evidence.py` now, −450 instead of −974.
-- **D2 `vault.py`** - move the atomic write and placeholder refusal into the
-  State.md writer and retire the line-splicing/CAS half (recommended: it
-  closes a real gap in the live writer and keeps the guardrails that matter).
-  Alternative: keep whole, still unwired.
-- **D3 `delivery.py`** - keep, trimmed to the shape the guardrails inspect
-  (recommended: it is the only executable statement of "one autonomous
-  channel" and the AST tripwire alone is weaker). Alternative: delete with
-  its 25 tests and 8 guardrail sections.
-- **D4 Monday prep queue** - delete (recommended: computed and discarded
-  since it was written). Alternative: wire it into the week-ahead push,
-  which is new behaviour, not simplification.
-- **D5 `BUILD.md` and `USAGE.md`** - fold into README and SPEC (recommended).
-  Alternative: keep both and only fix the stale claims.
+Settled 2026-09-18, still standing: **D2** wire `vault.py` as the one write
+path · **D3** keep `delivery.py`, trimmed to the guardrail shape · **D4** render
+the Monday prep queue · **D5** BUILD and USAGE fold into README.
 
-## 7. What was verified by hand, and what was not
+Open - each changes what gets built. A recommendation for each:
 
-Verified in this session: the code/prose split; every "no caller" claim in
-§1's table; `run.main` passes no pulse or state; the week-ahead object is
-discarded; `smoke.run()` and the runlog projection have no caller;
-`update_state` writes with `write_text` and `vault.py` holds the atomic
-path; `docs/api.md` is gitignored; the soak journal is live.
+- **D0 Resume now, or keep parking?** Recommended: land PR 1 now regardless;
+  start PR 2 onward once the team-practices code (`path/team-practices*`) has
+  either merged or been dropped, so the rebuild ports against a `main` that is
+  not about to move under it again.
+- **D1 `board.py`** (re-opened). Recommended: move `keys_in` (one line) and the
+  Jira project list into `pulse`'s single Watchlist parser, retire the rest
+  until M2-4 wires a `sprint` command. Alternative: keep `board.py` whole.
+- **D6 one time format.** The morning says `1:00` / `fri oct 2`; the day-before
+  prep says `1pm` / `fri 10/2`. Pick one for every push. No recommendation -
+  it is his DM and a voice call, not a code one.
+- **D7 nesting.** `pulse`-style readers flatten a nested bullet into a
+  top-level one; `state` keeps the distinction. Recommended: the one rule set
+  keeps nesting and each reader says whether it wants it - a sub-bullet under a
+  watched repo or a prep rule is a note, not a second entry - pinned by a test
+  in PR 4.
 
-From the surveys, not yet re-checked: the exact line ranges of the
-duplications in §1 (the functions were confirmed, the ranges were not
-re-read), the per-PR line estimates (they are estimates), and the claim
-that `test_guardrails.py` duplicates ~220 lines of module tests. Each PR
-re-checks what it touches.
+## 7. What was verified, and what was not
+
+Verified on 2026-10-02 against `a1497ee`: every row of §1's tables by grep and
+by reading the call site; the `kind` collision reproduced through
+`run.render` for morning and eod, and shown not to affect prep-ahead; the
+current Google Calendar connector's record shape (no `kind`); #112 and #138 by
+reading `run.py`; the 18-file conflict set by `git merge-tree`; the
+measurements by the script in §8, which reproduces the tag's 09-20 figures.
+
+Not verified: the 14,000-line target (an estimate from the first stack's ratio);
+whether every Calendar source the agent might use omits `kind`; the line counts
+for the smaller unreached items (rounded, from reading).
+
+## 8. How to re-measure
+
+Modules exclude `__init__` and `__main__`. Code and prose are split by
+`tokenize`: a line is prose if it carries only a comment or a docstring
+(a string statement on its own), code if it carries any other token.
+
+```sh
+git archive <ref> src tests | tar -x -C /tmp/m && python3 measure.py /tmp/m
+uv run --extra dev pytest -o addopts="" -q --co               # tests
+uv run --extra dev pytest -o addopts="" -q --co -m guardrail  # guardrails
+git merge-tree --write-tree --name-only main <branch>         # conflict set
+```
+
+## 9. What the first stack did, 2026-09-18 to 09-20
+
+Kept as evidence, measured against the `pre-simplification` tag:
+
+| | tag | after PR 7 | after PR 11 |
+|---|---|---|---|
+| modules | 24 | 22 | 20 |
+| source lines | 12,199 | 10,793 | 10,620 |
+| of which code | 5,557 | 5,156 | 5,173 |
+| of which docstrings + comments | 5,199 | 4,321 | 4,116 |
+| test lines | 15,900 | 15,834 | 15,494 |
+
+The source did not halve: the prose pass kept the reasoning, as CONTRIBUTING
+asks, and removed only what was said twice. Every duplication the 09-18 read
+listed became one thing, and `ship` from the CLI and the Monday prep queue
+worked for the first time. Guardrails 244 before and after PR 10; the full
+suite was green on every PR.
+
+Kept against the original plan, each for its ticket: `vault.py` (#16),
+`people.py` as its own module, `prep.Schedule` (#25), the ledger's reingest
+queue (#17), the pre-flight pass in `observe`, `soak.py`, and `voice.py` (in
+`push` it is an import cycle through `statedoc`).
+
+Defects the stack found along the way, three of them still on `main` (§1):
+the `kind` collision, #112, #138; plus #109 and #111 (calendar windows), #110
+(two meeting qualifiers that disagree in two cases), and #155-#157 filed from
+the memory path, of which `main` has since fixed #155 independently.
