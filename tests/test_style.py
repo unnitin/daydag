@@ -31,7 +31,7 @@ Intro prose he may leave or delete.
 
 ## Revenue domain
 
-- CBMG stays out of the pilot tables · · while CBMG is in migration wave 1 · r2 · stated
+- company X stays out of the pilot tables · · while company X is in migration wave 1 · r2 · stated
 - `[Mon]` cells wait for the numbers · · until 2026-10-12 · thread 9 Oct · inferred
 - ~~say "strawman"~~ · he said proposal · always · sticky r1 · stated
 - an old deadline · · until 2026-10-01 · · inferred
@@ -56,7 +56,7 @@ def test_rows_parse_by_shape_not_position():
     # a row with no why still parses, and is not read as having a why of "always"
     assert house[2].why == "" and house[2].holds.kind == "always"
     revenue = [r for r in rules.rules if r.section == "revenue domain"]
-    assert revenue[0].holds == style.Holds("while", "cbmg is in migration wave 1")
+    assert revenue[0].holds == style.Holds("while", "company x is in migration wave 1")
     assert revenue[1].holds == style.Holds("until", until=date(2026, 10, 12))
     assert revenue[1].standing == "inferred"
     assert revenue[2].struck and revenue[2].rule == 'say "strawman"'
@@ -96,10 +96,10 @@ def test_select_scopes_by_project_and_sorts_by_lifetime():
     picked = style.select(style.parse_rules(FILE), project="Revenue domain", today=TODAY)
     applied = {r.rule for r in picked.applied}
     assert 'say "destination", never "target state"' in applied
-    assert "CBMG stays out of the pilot tables" in applied
+    assert "company X stays out of the pilot tables" in applied
     assert "something else entirely" not in applied, "another project's rows stay out"
     assert [r.rule for r in picked.contingent] == [
-        "CBMG stays out of the pilot tables",
+        "company X stays out of the pilot tables",
         "[Mon] cells wait for the numbers",
     ]
     lapsed = {r.rule for r in picked.lapsed}
@@ -187,7 +187,9 @@ def test_render_echoes_conditions_and_lists_lapsed():
     picked = style.select(style.parse_rules(FILE), project="revenue domain", today=TODAY)
     text = style.render(picked)
     assert "house rules (3)" in text and "revenue domain rules (2)" in text
-    assert "- CBMG stays out of the pilot tables - while cbmg is in migration wave 1" in text
+    assert (
+        "- company X stays out of the pilot tables - while company x is in migration wave 1" in text
+    )
     assert "- [Mon] cells wait for the numbers - until 2026-10-12 (inferred)" in text
     assert "lapsed (2) - not applied" in text
     assert '- say "strawman" (struck)' in text

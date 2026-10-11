@@ -42,8 +42,8 @@ WHY IT EXISTS
     skill reads at build time cannot be forgotten, and rows with a checkable
     form (`"A", never "B"`) are enforced at render QA rather than remembered.
 
-    Two fields keep the file honest. Some lessons are not evergreen: "CBMG out
-    of the pilot tables" is true while it is in the first migration wave, and
+    Two fields keep the file honest. Some lessons are not evergreen: "company X
+    stays out of the pilot tables" is true while it is still being migrated, and
     "numbers due Monday" was never a rule at all but a chase-list item. The
     `holds` field records the condition, so the agent can say before a build
     which of its assumptions can expire, and the file never fills with stale
