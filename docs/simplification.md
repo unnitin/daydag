@@ -1,5 +1,15 @@
 # Simplification plan - same capabilities, less code
 
+> **Status, 2026-10-11.** This plan is the record of what was true in September and of
+> the decisions it settled; the stack it describes (#143-#154, #158, #159) is closed. Its
+> four defect fixes landed on `main` on 3 Oct (68464ab). The simplification restarted as a
+> rebuild in small PRs on `main`: #199 retired the code no loop reaches (tag
+> `pre-retirement`; the board join, the decision queue, three dead recipes; the four GitHub
+> recipes were kept for SPEC 3.7 items 2-3). Next, in order: wire those recipes (#145), one
+> markdown reader, one "rows he edits" reader, one set of time helpers, the retire-or-wire
+> decisions D2-D4, the loop table, a stronger prose rule. The stack's base is tagged
+> `pre-simplification` and its branches stay on origin.
+
 **Refreshed 2026-10-02 against `main` at `a1497ee`.** First written 2026-09-18,
 built as a twelve-PR stack 09-18 to 09-20, parked 09-20, never merged. This
 revision re-measures every number against today's `main`, re-checks every
