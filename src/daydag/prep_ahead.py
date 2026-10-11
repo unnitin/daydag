@@ -250,7 +250,7 @@ def parse_rules(text: str | None) -> Rules:
         return Rules(
             seed.rules,
             seeded=True,
-            notes=("no `## Prep rules` in Watchlist.md yet - used the seed rules",),
+            notes=(SEEDED_NOTE,),
         )
     return Rules(tuple(rules), tuple(warnings))
 
@@ -651,6 +651,12 @@ def _points(entry: Mapping[str, Any], title: str = "") -> list[Point]:
     return out[:MAX_POINTS]
 
 
+#: The one note that is not news: with no `## Prep rules` section the seed
+#: rules apply, which is how it has always worked. Every other note - a rule
+#: warning, an unreadable Watchlist, no directory - is why nothing matched.
+SEEDED_NOTE = "no `## Prep rules` in Watchlist.md yet - used the seed rules"
+
+
 @dataclass(frozen=True)
 class DayBefore:
     """Tonight's prep for the next working day."""
@@ -661,6 +667,12 @@ class DayBefore:
     matched: int = 0
 
     def render(self) -> str:
+        if not self.matched and all(note == SEEDED_NOTE for note in self.notes):
+            # Nothing matched and nothing to warn about: say NOTHING. The
+            # scheduled run posts this verbatim, and an empty string is the one
+            # "nothing to post" a headless agent cannot misread. The CLI says so
+            # on stderr for a run by hand.
+            return ""
         if not self.matched:
             header = f"prep: nothing on {_day_label(self.day)} matches a prep rule"
         else:

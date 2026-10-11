@@ -459,10 +459,50 @@ def test_a_matched_meeting_with_no_payload_says_so(identities, log):
     assert "couldn't read" in text
 
 
-def test_no_matches_is_one_line_naming_the_day(identities, log):
+def test_no_matches_renders_nothing_so_a_scheduled_run_has_nothing_to_post(identities, log):
+    """The scheduled run posts render's output verbatim. An empty string is the
+    only "nothing to post" it cannot misread; a sentence saying so was a
+    judgement call left to a headless agent (2026-09-26 hand tests, #182)."""
+    text = _render(identities, log, [_event("DE Standup", "a@x.com", "b@x.com")], {})
+
+    assert text == ""
+
+
+def test_no_matches_still_carries_a_rule_warning(identities, log, tmp_path):
+    """A broken rule is news even on a quiet evening - it is why nothing matched."""
+    folder = tmp_path / "vault" / "DayDAG"
+    folder.mkdir(parents=True)
+    (folder / "Watchlist.md").write_text(
+        "# Watchlist\n\n## Prep rules\n\n- this row makes no sense\n", encoding="utf-8"
+    )
+
     text = _render(identities, log, [_event("DE Standup", "a@x.com", "b@x.com")], {})
 
     assert "nothing on mon 9/28 matches a prep rule" in text
+    assert "prep rule not understood" in text
+
+
+def test_the_cli_says_nothing_to_post_on_stderr_not_stdout(tmp_path, monkeypatch, capsys):
+    """By hand he still sees why the output is empty; the schedule reads stdout."""
+    env = tmp_path / ".env"
+    env.write_text(
+        f"SLACK_USER_PRINCIPAL=UPRINCIPAL1\nEMAIL_PRINCIPAL=principal@x.com\n"
+        f"VAULT_ROOT={tmp_path / 'vault'}\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "vault" / "DayDAG").mkdir(parents=True)
+    (tmp_path / "vault" / "DayDAG" / "Watchlist.md").write_text(
+        "# Watchlist\n\n## Prep rules\n\n- title: Pod Steering · deck\n", encoding="utf-8"
+    )
+    monkeypatch.chdir(tmp_path)
+    payloads = tmp_path / "payloads.json"
+    payloads.write_text('{"calendar": [], "prep_ahead": {}}', encoding="utf-8")
+
+    assert run.main(["render", "prep-ahead", "--payloads", str(payloads)]) == 0
+
+    out, err = capsys.readouterr()
+    assert out == ""
+    assert "nothing to post" in err
 
 
 def test_more_than_five_points_are_capped(identities, log):
