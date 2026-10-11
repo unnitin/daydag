@@ -2,10 +2,12 @@
 name: consulting-slides
 description: "Build or rewrite a slide deck the way BCG, Bain and McKinsey do it: answer first, action titles that read as the argument, one exhibit per slide, sources and page numbers everywhere, green-on-grey Trebuchet look matched to Nitin's slide templates, delivered as a .pptx. Use this whenever Nitin asks for a deck, slides, a presentation, a one-pager for the sponsor or department leadership, a storyline, an executive summary, a ghost deck, a roadmap or timeline slide, or asks to make existing slides 'more BCG', 'more consulting', 'answer first' or 'less verbose', even if he does not say PowerPoint. Also use it to review a deck against consulting standards."
 daydag:
-  # Not orchestrated by DayDAG: invoked by hand, writes only where the user points it
-  # (a project folder such as ~/Documents/dataplatform), never into the vault.
-  writes: []
-  reads: []
+  # Not orchestrated by DayDAG: invoked by hand. Decks go where the user points it
+  # (a project folder such as ~/Documents/dataplatform). The one vault write is
+  # the style rules his feedback teaches, appended as rows he can edit (#196).
+  writes:
+    - vault:DayDAG/Style.md
+  reads: [obsidian]
   sensitivity: shared
 ---
 
@@ -25,7 +27,7 @@ Read the reference that matches the step you are on; they are short:
 | Which chart or table proves which message | `references/charts.md` |
 | Which layout for which message, and the template slide to copy | `references/pattern-library.md` |
 | Generating, rendering, checking and delivering the file | `references/build.md` |
-| Working from his deck, reading his stickies, promoting dated versions | `references/feedback-loop.md` |
+| Working from his deck, reading his stickies, promoting dated versions, what each round keeps | `references/feedback-loop.md` |
 
 ## The process
 
@@ -40,6 +42,10 @@ Read the reference that matches the step you are on; they are short:
    not re-research it. Ask only what the brief cannot be inferred from. Check the live
    sources (Slack, Gmail notes, Notion) for what moved since the page was written, and
    bracket anything still pending as a placeholder with its arrival date (`[Mon]`).
+   Then read what his feedback has already taught, before deciding anything about words
+   or look: `python -m daydag.style show --project "<project>"` prints the house rules and
+   the project's, with the ones that carry a condition marked. Those rules outrank this
+   file's defaults. Name the project the way its section in `DayDAG/Style.md` is named.
 
 2. **Write the storyline before any slide.** Governing thought in one sentence, SCQA
    opening, 3 to 5 MECE key lines, then the dot-dash outline. Share the title sequence
@@ -59,7 +65,10 @@ Read the reference that matches the step you are on; they are short:
    output, one call per slide in deck order, then render with `scripts/render.sh` and look
    at every page. Fix overflow, collisions and drifting titles before showing anything.
    Revisions change only the slides named; the build script is the source, so edit it and
-   rebuild rather than patching the file.
+   rebuild rather than patching the file. Before any handover run
+   `python -m daydag.style check <build.js> --project "<project>"`: it flags the phrases
+   and emoji his rules forbid, and echoes every rule applied on a condition, so the reply
+   can say which assumptions have an expiry.
 
 6. **Deliver** the `.pptx` path, the rendered pages for what changed, and two or three
    things to check by page number. Say what is unverified or estimated.
@@ -68,8 +77,16 @@ Read the reference that matches the step you are on; they are short:
    round: list them, back up his version, apply all of them, rebuild, render, look at every
    page, reply sticky by sticky. When he says "promote", `scripts/promote.sh` turns the draft
    into a dated file. Neither script deletes anything: render output lives in one marked
-   folder, and an old one is moved aside with its path printed. Where a sticky asks for alternatives, build each as its own slide
-   marked option A and B.
+   folder, and an old one is moved aside with its path printed. Where a sticky asks for
+   alternatives, build each as its own slide marked option A and B.
+
+8. **Write through what the round taught.** Sort each sticky into a one-off, which dies
+   with the round, or a rule. A rule is appended as a row he can edit:
+   `python -m daydag.style add "<section>" "<rule> · <why> · <holds> · <source> · inferred"`,
+   where the section is `house` for anything that holds across his work and the project's
+   name for the rest, and `holds` is `always`, `while <fact>` or `until <date>`. A sticky
+   that repeats a rule already in the file is a sign the build skipped step 1, not a new
+   row. Never store a one-off or a due date as a rule; due dates are chase-list items.
 
 ## House rules that override generic advice
 

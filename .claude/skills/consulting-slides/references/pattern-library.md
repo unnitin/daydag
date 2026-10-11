@@ -75,7 +75,7 @@ below are positions in the file (`catalog_template.py` prints them with their ti
 
 ## Patterns built for Nitin's decks (helpers, no template equivalent)
 
-Worked source for all three: `~/Documents/dataplatform/RevenueDomain-<date>.build.js`.
+Worked source for all three: `~/Documents/dataplatform/revenue/RevenueDomain-<date>.build.js`.
 
 | Message | Pattern | Build |
 |---|---|---|
