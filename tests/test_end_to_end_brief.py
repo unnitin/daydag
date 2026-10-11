@@ -223,13 +223,36 @@ def test_a_whole_morning_arrives_as_one_assembled_brief(tmp_path, landings, git_
     assert "perf-conversation" in written
     assert "nightly ingest" in written
 
-    # -- a decision answered by hand survives the loop's own writes --------
-    # (the queue class that rendered these was retired in PR #199; the file
-    # contract - appended to, never regenerated, answered in place - stays)
+    # -- a pending decision is open until he closes it in place -------------
+    # (the queue that rendered and aged decisions was retired in PR #199; what
+    # reads the file today is closure.asks_in, so that is what is driven here)
+    from daydag.closure import asks_in
+
     decisions = folder.decisions_path
-    decisions.write_text(decisions.read_text() + "- [1] close the CDI-596 loop?\n")
-    decisions.write_text(decisions.read_text().replace("[1] close", "[1] no - close"))
-    assert "[1] no - close the CDI-596 loop?" in decisions.read_text(), "a hand edit wins"
+    decisions.write_text(
+        decisions.read_text(encoding="utf-8") + "- close the CDI-596 loop? · status: open\n",
+        encoding="utf-8",
+    )
+    pending = [
+        a
+        for a in asks_in(folder.read_state(), decisions.read_text(encoding="utf-8"))
+        if a.section == "Pending decisions"
+    ]
+    assert [a.text for a in pending] == ["close the CDI-596 loop? · status: open"]
+    assert pending[0].waiting_on == "principal"
+    decisions.write_text(
+        decisions.read_text(encoding="utf-8").replace(
+            "- close the CDI-596 loop? · status: open",
+            "- ~~close the CDI-596 loop?~~ · status: answered",
+        ),
+        encoding="utf-8",
+    )
+    still_open = [
+        a
+        for a in asks_in(folder.read_state(), decisions.read_text(encoding="utf-8"))
+        if a.section == "Pending decisions"
+    ]
+    assert still_open == [], "a hand edit is an event and wins"
 
     # -- and the assembler turns all of it into one message ----------------
     # Every input below is the object an earlier stanza actually produced: the

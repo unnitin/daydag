@@ -51,8 +51,12 @@ WHY IT EXISTS
 
 KNOWN LIMIT
     `check_text` sees only two shapes - a quoted phrase after `never`, and the
-    word emoji beside never. Every other row is read as prose and honoured by
-    judgement. Facts named in a `while` condition are echoed, not verified.
+    word emoji beside never (pictographs only; the house set's check mark and
+    warning sign are not emoji here). Every other row is read as prose and
+    honoured by judgement. Facts named in a `while` condition are echoed, not
+    verified. The markdown regexes and the rows-with-a-seed scaffold are the
+    third copy in the package (prep_ahead, pulse, state); folding them into one
+    reader is the next simplification PR, not this module's job.
 """
 
 from __future__ import annotations
@@ -62,6 +66,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 
+from daydag.vault import ConflictError, VaultNote
 from daydag.voice import WARN
 
 HOUSE = "house"
@@ -94,14 +99,18 @@ _HEADING = re.compile(r"^(?P<hashes>#{1,6})\s+(?P<name>.+?)\s*$")
 _BULLET = re.compile(r"^[-*]\s+(?P<body>.+?)\s*$")
 _FIELDS = re.compile(r"·")
 _HOLDS = re.compile(
-    r"^(?:(?P<always>always)|while\s+(?P<fact>.+)|until\s+(?P<date>\d{4}-\d{2}-\d{2}))$"
+    r"^(?:(?P<always>always)|while\s+(?P<fact>.+)|until\s+(?P<date>\d{4}-\d{2}-\d{2}))$",
+    re.IGNORECASE,
 )
 _STANDING = frozenset({"stated", "inferred"})
 _STRIKE = re.compile(r"~~")
 #: `"A", never "B"` or `never "B"`: B is the phrase to flag.
 _NEVER_PHRASE = re.compile(r"never\s+\"(?P<phrase>[^\"]+)\"", re.IGNORECASE)
 _NEVER_EMOJI = re.compile(r"\bnever\b.*\bemoji\b|\bemoji\b.*\bnever\b", re.IGNORECASE)
-_EMOJI = re.compile("[\U0001f000-\U0001faff☀-➿]")
+#: Pictographs only (the coloured dots live at U+1F534 and U+1F7E0..). The dingbat
+#: block is left out on purpose: the house set keeps the check mark and the warning
+#: sign, and a rule against emoji must not fire on them.
+_EMOJI = re.compile("[\U0001f000-\U0001faff]")
 
 
 @dataclass(frozen=True)
@@ -190,7 +199,7 @@ def _parse_row(section: str, body: str) -> Rule | str:
     rest: list[str] = []
     for entry in fields[1:]:
         lowered = entry.casefold()
-        matched = _HOLDS.match(" ".join(lowered.split()))
+        matched = _HOLDS.match(" ".join(entry.split()))  # his casing is kept in the fact
         if matched:
             if matched["always"]:
                 holds = Holds()
@@ -306,16 +315,24 @@ def append_rows(path: str | Path, section: str, rows: list[str]) -> str:
     """Add ``rows`` as bullets at the end of ``section``, creating what is missing.
 
     Returns the text written. The file is created from the seed when absent and
-    the section is added at the end when absent. Every other byte is kept.
+    the section is added at the end when absent. Every other byte is kept. The
+    read and the write go through `vault.VaultNote`, the same path `State.md`
+    takes: an evicted iCloud placeholder is refused rather than overwritten, the
+    write is atomic, and the snapshot is a compare-and-swap token.
 
     Raises:
         RuntimeError: the file changed between the read and the write. Rerun;
             his edit is on disk and this one is not.
+        vault.NotMaterialisedError: the file is an iCloud stub. Open the folder
+            in Finder (or `brctl download`) and rerun.
     """
     path = Path(path)
+    note = VaultNote(path, path.name)
     try:
-        before = path.read_text(encoding="utf-8")
-    except OSError:
+        snapshot = note.read()
+        before = snapshot.text
+    except FileNotFoundError:
+        snapshot = None
         before = SEED_FILE
     lines = before.splitlines(keepends=True)
     name = section.strip().casefold()
@@ -349,14 +366,14 @@ def append_rows(path: str | Path, section: str, rows: list[str]) -> str:
             bullets = ["\n", *bullets]
         lines[insert:insert] = bullets
     after = "".join(lines)
-    try:
-        current = path.read_text(encoding="utf-8")
-    except OSError:
-        current = SEED_FILE
-    if current != before:
-        raise RuntimeError(f"{path} changed while rows were being added; rerun")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(after, encoding="utf-8")
+    if snapshot is None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        note.create(after)
+    else:
+        try:
+            note.apply(note.plan_rewrite(snapshot, after))
+        except ConflictError as exc:
+            raise RuntimeError(f"{path} changed while rows were being added; rerun") from exc
     return after
 
 
@@ -385,12 +402,12 @@ def render(selection: Selection) -> str:
 
 def _default_path() -> Path | None:
     """`DayDAG/Style.md` under `VAULT_ROOT` from `.env`, or None when unset."""
-    from daydag.config import Identities
+    from daydag.config import ConfigError, Identities
     from daydag.recipes import RecipeError, vault_root
 
     try:
         return vault_root(Identities.from_file(Path(".env"))) / "DayDAG" / "Style.md"
-    except (OSError, RecipeError, KeyError, ValueError):
+    except (OSError, ConfigError, RecipeError, KeyError, ValueError):
         return None
 
 
@@ -405,27 +422,35 @@ def main(argv: list[str] | None = None) -> int:
         "       python -m daydag.style add SECTION ROW [--file PATH]\n"
         "       python -m daydag.style init [--file PATH]"
     )
-    if not args or args[0] not in {"show", "check", "add", "init"}:
+    flags: dict[str, str] = {}
+    rest: list[str] = []
+    i = 0
+    while i < len(args):
+        if args[i] in {"--file", "--project", "--today"}:
+            if i + 1 >= len(args) or args[i + 1].startswith("--"):
+                raise SystemExit(f"{args[i]} needs a value")
+            flags[args[i]] = args[i + 1]
+            i += 2
+            continue
+        rest.append(args[i])
+        i += 1
+
+    if not rest or rest[0] not in {"show", "check", "add", "init"}:
         print(usage)
         return 2
-
-    def opt(name: str) -> str | None:
-        if name not in args:
-            return None
-        after = args[args.index(name) + 1 :]
-        if not after or after[0].startswith("--"):
-            raise SystemExit(f"{name} needs a value")
-        return after[0]
-
-    file_opt = opt("--file")
+    command = rest.pop(0)
+    file_opt = flags.get("--file")
     path = Path(file_opt) if file_opt else _default_path()
     if path is None:
         print(f"{WARN} no --file and VAULT_ROOT is not set in .env")
         return 2
-    project = opt("--project")
-    today_opt = opt("--today")
-    today = date.fromisoformat(today_opt) if today_opt else date.today()
-    command = args[0]
+    project = flags.get("--project")
+    today_opt = flags.get("--today")
+    try:
+        today = date.fromisoformat(today_opt) if today_opt else date.today()
+    except ValueError:
+        print(f"{WARN} --today takes YYYY-MM-DD, got {today_opt!r}")
+        return 2
 
     if command == "init":
         if path.exists():
@@ -437,13 +462,10 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if command == "add":
-        positional = [a for a in args[1:] if not a.startswith("--")]
-        flag_values = {v for v in (file_opt, project, today_opt) if v}
-        positional = [a for a in positional if a not in flag_values]
-        if len(positional) < 2:
+        if len(rest) < 2:
             print(usage)
             return 2
-        section, row = positional[0], positional[1]
+        section, row = rest[0], rest[1]
         parsed = _parse_row(section.casefold(), row)
         if not isinstance(parsed, Rule):
             print(f"{WARN} row not understood, nothing written: {row} ({parsed})")
@@ -457,16 +479,13 @@ def main(argv: list[str] | None = None) -> int:
         print(render(selection))
         return 0
 
-    positional = [
-        a for a in args[1:] if not a.startswith("--") and a not in {file_opt, project, today_opt}
-    ]
-    if not positional:
+    if not rest:
         print(usage)
         return 2
     try:
-        text = Path(positional[0]).read_text(encoding="utf-8")
+        text = Path(rest[0]).read_text(encoding="utf-8")
     except OSError as exc:
-        print(f"{WARN} couldn't read {positional[0]}: {exc}")
+        print(f"{WARN} couldn't read {rest[0]}: {exc}")
         return 2
     findings = check_text(text, selection.applied)
     for line in findings:

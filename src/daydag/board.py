@@ -56,12 +56,12 @@ __all__ = [
 
 
 class BoardError(PulseError):
-    """A board could not be read or a stored snapshot could not be restored.
+    """The watchlist's board blocks could not be read.
 
     Deliberately inside the pulse's own failure family: the board is one
-    source among several a run reads, so an unreadable watchlist or a
-    malformed cached ticket degrades the same way an unfetchable mirror does -
-    one line in the brief, never a dead 6:40am run.
+    source among several a run reads, so an unreadable watchlist degrades the
+    same way an unfetchable mirror does - one line in the brief, never a dead
+    6:40am run.
     """
 
 

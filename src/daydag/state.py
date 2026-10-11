@@ -43,8 +43,10 @@ CONTRACTS
        Nothing re-derives the list now, because nothing can.
     5. `Decisions.md` is APPENDED and never regenerated, so an answer written
        in the margin cannot be overwritten before it is read.
-    6. Rendering a decision counts as ASKING it. That is what lets an
-       unanswered item age out instead of being re-asked forever.
+    6. A decision closes only by his hand: a row under `Pending decisions` is
+       open until it is struck through or carries `status: answered`, which is
+       what `closure.asks_in` honours. (The queue that rendered and aged
+       decisions was retired in PR #199; nothing ages a decision out today.)
     7. A VAULT-BOUND kind cannot be recorded without saying how sensitive it
        is. `record("loop_opened", ...)` with no `sensitivity`, or with anything
        other than exactly "private" or "normal", raises; the gate in (2)
@@ -119,7 +121,7 @@ a hand edit is an event, and it wins over anything the agent derived.
 | File | Who writes it | Cadence |
 |---|---|---|
 | `State.md` | both | appended to, never rewritten. Your edits win; sub-bullets are never reflowed |
-| `Decisions.md` | both | appended, never regenerated. Answer by writing next to a line |
+| `Decisions.md` | both | appended, never regenerated; ~~strike~~ a line or add `status: answered` |
 | `Watchlist.md` | you | config: repos, Jira projects, channels |
 | `Proposals/` | the agent | proposed diffs awaiting a yes |
 | `Archive/` | the agent | pre-cutover snapshots |

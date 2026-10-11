@@ -255,7 +255,7 @@ The back-and-forth needs somewhere to live, or "did I already say no to that?" b
 - **Logged** in the event log: item, asked-on, answered-on, answer. Which is how §8's "how much of what it surfaced was acted on" gets measured at the 4-week check.
 - **Ages out.** An item unanswered across three pushes goes to `parked` with a line saying so, rather than re-asking forever. Silence is an answer; the agent just says out loud that it read it that way.
 
-Status, 2026-10-11: the queue was built as `state.DecisionQueue` and never wired into a loop, so it was retired at tag `pre-retirement` (PR #199). What runs today: `closure.asks_in` reads open decisions out of `Decisions.md` for the chase loop, the file is still append-only and hand-answered, and the aging rule is not implemented. Restore the class from the tag when a loop renders decisions.
+Status, 2026-10-11: the queue was built as `state.DecisionQueue` and never wired into a loop, so it was retired at tag `pre-retirement` (PR #199). What runs today: `closure.asks_in` reads open decisions out of `Decisions.md` for the chase loop; the file is still append-only, and a decision closes when he strikes the line through or adds `status: answered`. Writing `no` beside a line was the retired queue's convention and is not read. The aging rule is not implemented. Restore the class from the tag when a loop renders decisions.
 
 ### Where the conversation happens — and how it becomes two-way
 

@@ -163,8 +163,8 @@ def test_the_module_holds_no_connector_client():
     to go run.
 
     Checked against imported module names, not the whole source text - the
-    module docstring and `board_site`'s own docstring both say "atlassian" in
-    prose, which a plain text search would flag as if it were a client import.
+    module docstring says "atlassian" in prose, which a plain text search
+    would flag as if it were a client import.
     """
     tree = ast.parse(Path(inspect.getfile(board)).read_text(encoding="utf-8"))
     imported: set[str] = set()

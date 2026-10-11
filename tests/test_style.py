@@ -15,6 +15,7 @@ from datetime import date
 import pytest
 
 from daydag import style
+from daydag.vault import NotMaterialisedError, VaultNote
 from daydag.voice import WARN
 
 TODAY = date(2026, 10, 11)
@@ -56,7 +57,7 @@ def test_rows_parse_by_shape_not_position():
     # a row with no why still parses, and is not read as having a why of "always"
     assert house[2].why == "" and house[2].holds.kind == "always"
     revenue = [r for r in rules.rules if r.section == "revenue domain"]
-    assert revenue[0].holds == style.Holds("while", "company x is in migration wave 1")
+    assert revenue[0].holds == style.Holds("while", "company X is in migration wave 1")
     assert revenue[1].holds == style.Holds("until", until=date(2026, 10, 12))
     assert revenue[1].standing == "inferred"
     assert revenue[2].struck and revenue[2].rule == 'say "strawman"'
@@ -161,34 +162,12 @@ def test_append_rows_creates_the_section_and_the_file_when_absent(tmp_path):
     assert text.index("a first row") < text.index("a second row")
 
 
-def test_append_rows_refuses_to_clobber_a_concurrent_edit(tmp_path, monkeypatch):
-    path = tmp_path / "Style.md"
-    path.write_text(FILE, encoding="utf-8")
-    real_read = style.Path.read_text
-    calls = {"n": 0}
-
-    def racy_read(self, *a, **k):
-        calls["n"] += 1
-        text = real_read(self, *a, **k)
-        if calls["n"] == 1:
-            # his edit lands between the read and the write
-            real_write = style.Path.write_text
-            real_write(self, text + "- his new row · · always · · stated\n", encoding="utf-8")
-        return text
-
-    monkeypatch.setattr(style.Path, "read_text", racy_read)
-    with pytest.raises(RuntimeError, match="changed while rows were being added"):
-        style.append_rows(path, "house", ["mine · · always · · inferred"])
-    assert "his new row" in path.read_text(encoding="utf-8")
-    assert "mine" not in path.read_text(encoding="utf-8")
-
-
 def test_render_echoes_conditions_and_lists_lapsed():
     picked = style.select(style.parse_rules(FILE), project="revenue domain", today=TODAY)
     text = style.render(picked)
     assert "house rules (3)" in text and "revenue domain rules (2)" in text
     assert (
-        "- company X stays out of the pilot tables - while company x is in migration wave 1" in text
+        "- company X stays out of the pilot tables - while company X is in migration wave 1" in text
     )
     assert "- [Mon] cells wait for the numbers - until 2026-10-12 (inferred)" in text
     assert "lapsed (2) - not applied" in text
@@ -239,3 +218,82 @@ def test_the_cli_shows_checks_and_adds(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "revenue domain rules (1)" in out and "end to end" in out
     assert style.main([]) == 2
+
+
+def test_append_rows_refuses_to_clobber_a_concurrent_edit(tmp_path, monkeypatch):
+    """The snapshot is the compare-and-swap token: his edit between the read and
+    the write wins, and the agent's row is not written over it."""
+    path = tmp_path / "Style.md"
+    path.write_text(FILE, encoding="utf-8")
+    real_read = VaultNote.read
+
+    def read_then_he_edits(self):
+        snapshot = real_read(self)
+        path.write_text(
+            path.read_text(encoding="utf-8") + "- his new row · · always · · stated\n",
+            encoding="utf-8",
+        )
+        return snapshot
+
+    monkeypatch.setattr(VaultNote, "read", read_then_he_edits)
+    with pytest.raises(RuntimeError, match="changed while rows were being added"):
+        style.append_rows(path, "house", ["mine · · always · · inferred"])
+    text = path.read_text(encoding="utf-8")
+    assert "his new row" in text and "mine" not in text
+
+
+def test_append_rows_refuses_an_icloud_placeholder(tmp_path):
+    """An evicted file is a stub, not his rules; writing stub plus one row over
+    the real file is the loss `vault.NotMaterialisedError` exists to prevent."""
+    (tmp_path / ".Style.md.icloud").write_bytes(b"placeholder")
+    with pytest.raises(NotMaterialisedError):
+        style.append_rows(tmp_path / "Style.md", "house", ["a row · · always · · inferred"])
+    assert not (tmp_path / "Style.md").exists()
+
+
+def test_append_rows_writes_atomically_through_the_vault(tmp_path, monkeypatch):
+    from daydag import vault
+
+    path = tmp_path / "Style.md"
+    path.write_text(FILE, encoding="utf-8")
+    seen: list[str] = []
+    real = vault._atomic_write
+
+    def spy(p, data):
+        seen.append(str(p))
+        return real(p, data)
+
+    monkeypatch.setattr(vault, "_atomic_write", spy)
+    style.append_rows(path, "house", ["a row · · always · · inferred"])
+    assert seen == [str(path)], "the write did not go through the vault's atomic replace"
+
+
+def test_a_condition_keeps_his_casing_and_matches_any_casing_of_the_keyword():
+    rules = style.parse_rules("## House\n\n- r · · WHILE Company X migrates · · stated\n")
+    (rule,) = rules.rules
+    assert rule.holds == style.Holds("while", "Company X migrates")
+    always = style.parse_rules("## House\n\n- r · · Always · · stated\n").rules[0]
+    assert always.holds.kind == "always"
+
+
+def test_the_house_glyphs_are_not_emoji_but_a_coloured_dot_is():
+    rules = style.parse_rules("## House\n\n- never emoji on slides · · always · · stated\n")
+    assert style.check_text("status: ✓ live ⚠ watch ⭐", rules.rules) == []
+    assert len(style.check_text("status: 🟢 live", rules.rules)) == 1
+
+
+def test_the_cli_takes_flags_anywhere_and_refuses_a_bad_date(tmp_path, capsys):
+    path = tmp_path / "Style.md"
+    row = 'say "end to end" · · always · r3 · inferred'
+    # the natural habit after `show --project X`: the section repeats the flag's value
+    assert (
+        style.main(
+            ["add", "revenue domain", row, "--project", "revenue domain", "--file", str(path)]
+        )
+        == 0
+    )
+    assert row in path.read_text(encoding="utf-8")
+    assert style.main(["--file", str(path), "show", "--project", "revenue domain"]) == 0
+    assert "end to end" in capsys.readouterr().out
+    assert style.main(["show", "--today", "10/11/2026", "--file", str(path)]) == 2
+    assert "YYYY-MM-DD" in capsys.readouterr().out

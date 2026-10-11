@@ -15,8 +15,10 @@ CONTRACTS
        and exceeded the output limit - measured, not a hunch.
     2. Jira always names `fields` explicitly and bounds `maxResults`. Never
        `*all`: a 14-day 4-project query with unbounded fields returned 125,231
-       chars. `JIRA_MAX_RESULTS_CAP` and `GH_LIMIT_CAP` are the caps, and
-       `smoke` builds its reported bounds FROM them.
+       chars. `JIRA_MAX_RESULTS_CAP` and `GH_LIMIT_CAP` are the caps: the
+       Jira one bounds `jira_moved_on`'s page (asserted at import, below), the
+       GitHub one every `gh search`, and `smoke` builds its reported bounds
+       FROM them.
     3. Slack is addressed by ID, never display name. `from:@someone` does not
        fail, it silently matches nothing.
     4. Gmail matches the SUBJECT: `Notes: "<title>" <date>`, plus the
@@ -624,11 +626,10 @@ def meeting_prep(day: date) -> str:
 #: because `*all` ships every custom field on every issue: that is what turned
 #: a 14-day, 4-project query into 125,231 characters (#2 audit).
 #:
-#: ``resolutiondate`` and ``labels`` were added for the board reader (#12):
-#: the first is what lets ``closed_unannounced`` tell a close from a mention
-#: that merely predates it, the second is the "newly blocked" signal. Grown
-#: here rather than requested ad hoc by that module - a second, shorter field
-#: list for the same board is exactly the drift this module exists to prevent.
+#: ``resolutiondate`` and ``labels`` were added for the board join (#12), which
+#: is retired at tag `pre-retirement`. The list stays because `smoke` builds its
+#: reported Jira bound from it and the evening test pins `JIRA_MOVED_FIELDS` as
+#: a subset of it; `jira_moved_on` itself sends the five fields it reads.
 JIRA_FIELDS: tuple[str, ...] = (
     "key",
     "summary",
@@ -672,6 +673,9 @@ def _project_keys(projects: Iterable[str]) -> list[str]:
 #: ships four avatar URLs whatever `fields` says. Five fields and one project
 #: per call is ~2,500 an issue; fifteen stays well under the size that failed.
 JIRA_MOVED_MAX_RESULTS = 15
+# The one Jira read left must sit under the cap `smoke` reports, or the bound
+# it prints is a lie; `jira_search`, which enforced the cap, is retired.
+assert JIRA_MOVED_MAX_RESULTS <= JIRA_MAX_RESULTS_CAP
 
 #: What the wrap reads off a moved ticket, and nothing else.
 JIRA_MOVED_FIELDS: tuple[str, ...] = ("key", "summary", "status", "assignee", "updated")

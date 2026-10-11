@@ -69,11 +69,11 @@ TRIPWIRES (no implementation exists - these fail when one lands unguarded)
       package can reach a connector on its own
 
 GAPS - not covered here, and not pretended to be
-    1. (retired with `DecisionQueue`, PR #199) an answer was read only as a whole word at one
-       end of the line (tested below). A hand edit may land at either end, so a
-       decision whose text *begins or ends* with a bare "yes"/"no" still
-       self-answers. Removing that last case means fixing where an answer is
-       allowed to be written, which is a decision rather than a patch.
+    1. Decisions. The queue that read a "yes"/"no" beside a line retired with
+       `DecisionQueue` (PR #199). Today `closure.asks_in` closes a decision only
+       on a strike-through or `status: answered`, so a decision whose text ends
+       in a bare "no" no longer self-answers; `tests/test_closure.py` pins that
+       reader and nothing here tests decisions.
     2. Guardrail 4 (discrepancies surfaced, never auto-resolved) is covered for
        the ledger's ambiguous-note case in `tests/test_ledger.py`; there is no
        general discrepancy surface to test yet.

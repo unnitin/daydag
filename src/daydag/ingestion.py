@@ -1,12 +1,15 @@
 """The meeting-note ingestion classifier (SPEC 3.3) - five labels, bias to precision.
 
 USING IT
-    from daydag.ingestion import classify_items, as_predictions
-    from evalset import load_items, score    # tests/evalset.py, beside the fixtures
+    from daydag.ingestion import classify, classify_items, as_predictions
 
-    batch = classify_items(load_items())     # list[Classification], item order preserved
-    result = score(as_predictions(batch))    # per-label precision/recall
+    classify(item)                           # one of LABELS, or None = unplaced
+    batch = classify_items(items)            # list[Classification], item order preserved
+    as_predictions(batch)                    # {item_id: label}, unplaced dropped
     [c.item_id for c in batch if c.label is None]   # unplaced - surface, don't guess
+
+    The scorer and the fixture loaders live in `tests/evalset.py`, beside the
+    data they read, and run under pytest (`tests/test_ingestion.py`).
 
 CONTRACTS - break one and the guarantee is gone
     1. ``classify`` returns one of :data:`LABELS`, or ``None``.
@@ -83,6 +86,10 @@ from typing import Any
 
 __all__ = [
     "CREATION_LANGUAGE",
+    "DECISION_MARKERS",
+    "LABELS",
+    "MODALITIES",
+    "OWNER_FORMS",
     "Classification",
     "as_predictions",
     "classify",
