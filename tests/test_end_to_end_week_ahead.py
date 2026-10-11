@@ -8,7 +8,7 @@ tests the assembler honestly in isolation, with fakes standing in for the
 event log, the ledger and the pulse. This walks the seams with the real
 objects instead:
 
-    a real event log      -> State.md, private items withheld     -> carrying in
+    a real event log      -> State.md, private items too (#180)   -> carrying in
     a real weekly note     -> brief.red_items, cited by path#line  -> carrying in
     a real git mirror      -> pulse                                -> shipping
     real calendar events   -> a real Ledger -> prep.prep_worthy    -> monday_preps,
@@ -109,7 +109,7 @@ def test_a_sunday_evening_arrives_as_one_assembled_week_ahead(tmp_path, git_env)
     pulse = Pulse(mirrors=[Mirror.attach(repo, cursor=baseline)])
     assert [item.title for item in pulse.items()] == ["CDI-596 cutover rehearsal"]
 
-    # -- a real event log -> State.md, private items withheld ---------------
+    # -- a real event log -> State.md, private items written too (#180) -----
     folder = StateFolder.create(tmp_path / "DayDAG")
     log = EventLog.open(tmp_path / "events.db")
     log.record(
@@ -132,7 +132,7 @@ def test_a_sunday_evening_arrives_as_one_assembled_week_ahead(tmp_path, git_env)
         chase=log.chase_items(),
         watch=[{"what": "10k e2e run"}],
     )
-    assert "perf-conversation" not in folder.read_state(), "fixture must be meaningful"
+    assert "perf-conversation" in folder.read_state(), "fixture must be meaningful"
 
     # -- real calendar events -> a real ledger -> prep's own qualification --
     connectors = Connectors(
@@ -179,9 +179,9 @@ def test_a_sunday_evening_arrives_as_one_assembled_week_ahead(tmp_path, git_env)
     assert f"{CLOSING_WEEK_NOTE}#L2" in text
     assert "pod update" not in text, "a ticked item is closed and must not come back"
 
-    # the chase loop reached the push, and the private carry-forward did not
+    # the chase loop reached the push, private carry-forward included (#180)
     assert "cutover rehearsal" in text
-    assert "perf-conversation" not in text
+    assert "perf-conversation" in text
 
     # the standup never made it to Monday's prep queue; the steering did
     assert "DE Standup" in text, "still shows up as a real Monday meeting"

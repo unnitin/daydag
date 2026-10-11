@@ -24,6 +24,10 @@ CONTRACTS
        module inferring it from a title and a time window. Matching still runs,
        because the gap list is not the only consumer - ingestion wants the note
        itself - but a declared row is never reported as missing.
+    5. The LATEST snapshot of an instance wins (#169). `seed_day` replaces a
+       row with a newer snapshot of the same `(event_id, start)` and removes
+       it on a later decline or `status: cancelled`. Callers replay snapshots
+       oldest first; `run._remembered` does.
 
 WHY IT EXISTS
     The gap this closes is an absence, not a presence. Gemini mail puts the
@@ -67,6 +71,17 @@ ARRIVAL_WINDOW = {
     "notion": timedelta(days=10),
 }
 DEFAULT_ARRIVAL_WINDOW = timedelta(hours=6)
+
+#: How far back a remembered meeting is replayed as a possible notes gap: the
+#: slowest source's lag plus a day (#125). Past it no source can still produce
+#: the note, so the gap can only be closed by hand - the runner surfaces it
+#: once as "gave up" and stops replaying it, rather than repeating the same
+#: line at day +30 and +90. Derived, so widening a window widens this with it.
+REPLAY_HORIZON = max(ARRIVAL_WINDOW.values()) + timedelta(days=1)
+
+#: Google's mark on a removed instance, and the mark the runner writes when an
+#: event vanishes from a day it re-fetched. Either way the row goes.
+CANCELLED = "cancelled"
 
 #: How far BEFORE a meeting's scheduled end its notes may still arrive. A
 #: meeting that runs short ends when it ends, and Gemini sends notes then.
@@ -285,9 +300,21 @@ class Ledger:
     # -- calendar drives -------------------------------------------------
 
     def seed_day(self, events: Iterable[dict[str, Any]]) -> None:
-        """Create a row per qualifying event. Idempotent per instance."""
+        """Apply calendar snapshots in order: the LATEST one of an instance wins.
+
+        A qualifying event creates or replaces its row, keeping any note
+        already attached. A declined, cancelled or otherwise non-qualifying
+        snapshot REMOVES the row an earlier snapshot seeded. Idempotent per
+        instance.
+
+        It was `setdefault` - first snapshot wins - and on 2026-09-25 that kept
+        four morning rows the evening calendar contradicted: three invites
+        declined that afternoon and one removed from the calendar, all
+        reported as meetings with no notes (#169).
+        """
         for event in events:
-            if not qualifies(event):
+            if event.get("status") == CANCELLED or not qualifies(event):
+                self._retract(event)
                 continue
             # The one place an attendee is parsed. Everything downstream reads
             # `attendees` as bare addresses and `attendee_names` beside them.
@@ -307,7 +334,18 @@ class Ledger:
                 attendee_names=[name for _, name in parts],
                 notes_declared=_declares_note(event),
             )
-            self._rows.setdefault(row.key, row)
+            earlier = self._rows.get(row.key)
+            if earlier is not None:
+                row.note, row.day_closed = earlier.note, earlier.day_closed
+            self._rows[row.key] = row
+
+    def _retract(self, event: Mapping[str, Any]) -> None:
+        try:
+            self._rows.pop((event.get("id"), event.get("start")), None)  # type: ignore[arg-type]
+        except TypeError:
+            # An unhashable `start` - google's all-day `{"date": ...}` - was
+            # never a row, so there is nothing to remove.
+            pass
 
     def close_day(self) -> None:
         """Mark open rows as belonging to a finished day.

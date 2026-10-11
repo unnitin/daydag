@@ -28,7 +28,13 @@ COVERED (behavioural - real code, real assertions)
     - every reported item carries a resolvable permalink, and an item with no
       permalink is refused at construction rather than rendered unsourced
     - repo evidence marks movement and may only add a flag, never close a loop
-    - sensitive items reach no file in the vault, via chase or watch
+    - sensitive items are written to `State.md` like normal ones and to no
+      other vault file, keeping their private mark in the event log - a
+      DELIBERATE rule change (#180, the principal's decision of 2026-09-25);
+      the pre-#180 "reach no file in the vault" rule is still pinned, under
+      its one switch `state.WITHHOLD_PRIVATE`, which also restores minimal
+      quoting in the DM; an AST check holds it to a single reader,
+      `state.withholds_private()`
     - a pending decision never reads its own text as an answer
     - `sensitivity: private` is un-routable to any shared surface
     - the registry's one-writer check fires regardless of declaration order
@@ -43,7 +49,8 @@ COVERED (behavioural - real code, real assertions)
     - the vault write path joins only literal names onto the folder root
     - `notes_gaps` carries the same sensitivity channel `chase` and `watch` do,
       via `NotesGap`, so a meeting whose own title is sensitive is withheld the
-      same way a private chase or watch item is (was GAP 3, #61)
+      same way a private chase or watch item is when the rule-7 switch is on
+      (was GAP 3, #61)
     - `daydag.delivery.deliver_push` and `deliver_prep_ping` have no
       destination parameter at all - the resolved principal id is the only
       channel a send can ever name (#10, full coverage in `tests/test_delivery.py`)
@@ -62,11 +69,11 @@ TRIPWIRES (no implementation exists - these fail when one lands unguarded)
       package can reach a connector on its own
 
 GAPS - not covered here, and not pretended to be
-    1. `DecisionQueue.answer_for` reads an answer only as a whole word at one
-       end of the line (tested below). A hand edit may land at either end, so a
-       decision whose text *begins or ends* with a bare "yes"/"no" still
-       self-answers. Removing that last case means fixing where an answer is
-       allowed to be written, which is a decision rather than a patch.
+    1. Decisions. The queue that read a "yes"/"no" beside a line retired with
+       `DecisionQueue` (PR #199). Today `closure.asks_in` closes a decision only
+       on a strike-through or `status: answered`, so a decision whose text ends
+       in a bare "no" no longer self-answers; `tests/test_closure.py` pins that
+       reader and nothing here tests decisions.
     2. Guardrail 4 (discrepancies surfaced, never auto-resolved) is covered for
        the ledger's ambiguous-note case in `tests/test_ledger.py`; there is no
        general discrepancy surface to test yet.
@@ -95,7 +102,7 @@ import pytest
 from daydag import delivery
 from daydag.pulse import Item, Mirror, Pulse
 from daydag.registry import PRIVATE_SURFACES, Registry, RegistryError
-from daydag.state import DecisionQueue, EventLog, NotesGap, StateFolder
+from daydag.state import EventLog, NotesGap, StateFolder
 from daydag.voice import Push
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -387,28 +394,6 @@ def test_create_never_overwrites_an_existing_vault_file(tmp_path: Path):
 
 
 @pytest.mark.guardrail
-def test_decisions_grow_by_append_only(folder: StateFolder):
-    """BEHAVIOURAL. An answer written in the margin must survive the next loop.
-
-    Byte-prefix equality, not "the old line is still in there": a regenerated
-    file can contain the same text and still have dropped a hand edit.
-    """
-    queue = DecisionQueue(folder)
-    queue.add("draft nudge to the VP?")
-    folder.decisions_path.write_text(
-        folder.decisions_path.read_text(encoding="utf-8") + "  <- answered in the margin: no\n",
-        encoding="utf-8",
-    )
-    before = folder.decisions_path.read_bytes()
-
-    queue.add("close the compute loop?")
-
-    after = folder.decisions_path.read_bytes()
-    assert after.startswith(before), "Decisions.md was rewritten rather than appended to"
-    assert b"answered in the margin" in after
-
-
-@pytest.mark.guardrail
 def test_a_loop_rewrites_no_vault_file_but_state_md_and_only_with_its_old_text_kept(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
@@ -422,10 +407,21 @@ def test_a_loop_rewrites_no_vault_file_but_state_md_and_only_with_its_old_text_k
     first. This watches the filesystem calls rather than the resulting text,
     because the corrupting version is the one that writes back
     identical-looking content.
+
+    State.md is written through `vault`'s atomic replace, which never calls
+    `write_text` or `open` on the target - so the spy watches that path too.
+    Every whole-file write in `vault` goes through `_atomic_write`.
     """
+    from daydag import vault
+
     truncated: list[Path] = []
     real_write_text = Path.write_text
     real_open = Path.open
+    real_atomic_write = vault._atomic_write
+
+    def spy_atomic_write(path: Path, data: bytes):
+        truncated.append(Path(path))
+        return real_atomic_write(path, data)
 
     def spy_write_text(self: Path, *args, **kwargs):
         truncated.append(Path(self))
@@ -437,12 +433,15 @@ def test_a_loop_rewrites_no_vault_file_but_state_md_and_only_with_its_old_text_k
         return real_open(self, mode, *args, **kwargs)
 
     folder = StateFolder.create(tmp_path / "DayDAG")
+    # a pending decision he could answer in place, written before the spies go on
+    folder.decisions_path.write_text(
+        folder.decisions_path.read_text(encoding="utf-8") + "- [1] draft nudge to the VP?\n",
+        encoding="utf-8",
+    )
     monkeypatch.setattr(Path, "write_text", spy_write_text)
     monkeypatch.setattr(Path, "open", spy_open)
+    monkeypatch.setattr(vault, "_atomic_write", spy_atomic_write)
 
-    queue = DecisionQueue(folder)
-    queue.add("draft nudge to the VP?")
-    queue.render()
     folder.update_state(
         chase=[{"owner": "vp-data", "ask": "compute consolidation"}],
         watch=[{"what": "nightly ingest job"}],
@@ -571,48 +570,6 @@ def test_repo_evidence_may_only_add_a_flag_never_close_a_loop(pr_state: str, sta
     assert all(updated[key] == value for key, value in loop.items())
 
 
-@pytest.mark.guardrail
-@pytest.mark.parametrize(
-    "text",
-    [
-        "should we not consolidate compute?",
-        "do it now?",
-        "nothing has moved on the ingest job - chase it?",
-        "draft a note to the parked workstream owners?",
-        "does the yesterday backfill need re-running?",
-    ],
-)
-def test_a_decision_never_answers_itself(folder: StateFolder, text: str):
-    """BEHAVIOURAL. The same rule as loops: nothing closes without real evidence.
-
-    A decision read as answered is dropped from the next push, so the principal
-    never sees it and the agent records an answer nobody wrote. Substring
-    matching made "not", "now" and "nothing" all read as a "no", and "parked"
-    mid-sentence read as an answer - the words most likely to appear in a
-    question about whether to do something.
-    """
-    queue = DecisionQueue(folder)
-    item = queue.add(text)
-
-    assert queue.answer_for(item) is None, f"{text!r} answered itself"
-    assert queue.status(item) == "open"
-    assert text in queue.render(), "an unanswered decision was dropped from the push"
-
-
-@pytest.mark.guardrail
-@pytest.mark.parametrize("answer", ["yes", "no", "parked", "snooze"])
-def test_a_real_answer_is_still_read(folder: StateFolder, answer: str):
-    """BEHAVIOURAL. The guard above must not deafen the queue to a hand edit."""
-    queue = DecisionQueue(folder)
-    item = queue.add("draft nudge to the VP?")
-    folder.decisions_path.write_text(
-        folder.decisions_path.read_text(encoding="utf-8").rstrip("\n") + f" {answer}\n",
-        encoding="utf-8",
-    )
-    assert queue.answer_for(item) == answer
-    assert queue.status(item) == "answered"
-
-
 # Write-SHAPED constructs only. The bare nouns `^assignee$` and `^comment$` were
 # here first and fired on `JIRA_FIELDS = (..., "assignee", ...)` - a field list
 # for a READ query - and on "comment" in a set of GitHub PR activity verbs.
@@ -674,17 +631,58 @@ FEEDBACK_MANIFEST = {
 }
 
 
-@pytest.mark.guardrail
-def test_no_private_item_reaches_any_file_in_the_vault(folder: StateFolder):
-    """BEHAVIOURAL. The vault is plaintext on every device the principal owns.
+def _files_holding(folder: StateFolder, marker: str) -> list[Path]:
+    return [
+        path.relative_to(folder.root)
+        for path in folder.root.rglob("*")
+        if path.is_file() and marker in path.read_text(encoding="utf-8")
+    ]
 
-    Walks the whole folder rather than checking State.md, because the guarantee
-    is about the folder: a private item that lands in Watchlist or a Proposal
-    has leaked just as completely.
+
+@pytest.mark.guardrail
+def test_a_private_item_reaches_state_md_like_a_normal_one_and_no_other_vault_file(
+    folder: StateFolder,
+):
+    """BEHAVIOURAL. GUARDRAIL CHANGED by #180 - a deliberate rule change, not a
+    weakened test. Was `test_no_private_item_reaches_any_file_in_the_vault`.
+
+    The principal, 2026-09-25, after discussing the tradeoff: "i think we
+    should treat sensitive items the same" / "i think wire everything
+    consistently for now, we can change later". So a private chase or watch
+    item is written to `State.md` exactly as a normal one is. What still
+    holds: it lands in `State.md` and in no other vault file, and the event
+    log keeps its private mark, so the rule can be switched back
+    (`state.WITHHOLD_PRIVATE`, pinned below) with nothing to re-derive.
     """
     marker = "growth-area-carry-forward"
     log = EventLog.open(":memory:")
-    log.record("carry_forward", subject="a report", body=marker, sensitivity="private")
+    log.record("carry_forward", owner="sam", ask=marker, key="k", sensitivity="private")
+    log.record(
+        "loop_opened", sensitivity="normal", key="DATA-812", ask="compute consolidation", day=0
+    )
+
+    folder.update_state(
+        chase=log.chase_items(),
+        watch=[{"what": f"{marker} watch", "sensitivity": "private"}, {"what": "nightly job"}],
+    )
+
+    assert _files_holding(folder, marker) == [Path("State.md")]
+    written = folder.read_state()
+    assert f"{marker} watch" in written
+    assert "compute consolidation" in written and "nightly job" in written
+    assert [i.sensitivity for i in log.chase_items() if i.ask == marker] == ["private"]
+
+
+@pytest.mark.guardrail
+def test_switching_rule_7_back_withholds_private_items_from_every_vault_file(
+    folder: StateFolder, withholding
+):
+    """BEHAVIOURAL. The pre-#180 guarantee, under its one switch: chase, watch
+    and notes_gaps alike, and in every file of the folder - a private item in
+    Watchlist or a Proposal would have leaked just as completely."""
+    marker = "growth-area-carry-forward"
+    log = EventLog.open(":memory:")
+    log.record("carry_forward", owner="sam", ask=marker, key="k", sensitivity="private")
     log.record(
         "loop_opened", sensitivity="normal", key="DATA-812", ask="compute consolidation", day=0
     )
@@ -692,50 +690,60 @@ def test_no_private_item_reaches_any_file_in_the_vault(folder: StateFolder):
     folder.update_state(
         chase=log.chase_items(),
         watch=[{"what": marker, "sensitivity": "private"}, {"what": "nightly ingest job"}],
+        notes_gaps=[{"title": marker, "sensitivity": "private"}, "Pod Steering"],
     )
 
-    leaked = [
-        path.relative_to(folder.root)
-        for path in folder.root.rglob("*")
-        if path.is_file() and marker in path.read_text(encoding="utf-8")
-    ]
-    assert not leaked, f"private content reached the vault: {leaked}"
+    assert not _files_holding(folder, marker), "private content reached the vault"
     assert "compute consolidation" in folder.read_state(), "the filter ate the normal items too"
     assert "nightly ingest job" in folder.read_state()
+    assert "Pod Steering" in folder.read_state()
 
 
 @pytest.mark.guardrail
-def test_a_sensitive_meeting_title_never_reaches_the_vault_as_a_notes_gap(folder: StateFolder):
-    """BEHAVIOURAL. Was GAP 3 (#61): `notes_gaps` had no sensitivity channel.
+def test_the_rule_7_switch_is_read_in_exactly_one_place():
+    """BEHAVIOURAL (AST). "One flag, one obvious place" (#180, #181): the
+    switch is defined in `daydag.state` and read only by
+    `state.withholds_private()`. The vault gate (`_visible`) and the DM's
+    minimal quoting (`call_notes`) both ask that function, so one flag
+    tightens both and neither can grow a private copy of the rule."""
+    readers: list[str] = []
+    askers: set[str] = set()
+    for path in PACKAGE.rglob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.FunctionDef):
+                continue
+            for inner in ast.walk(node):
+                name = getattr(inner, "id", None) or getattr(inner, "attr", None)
+                if name == "WITHHOLD_PRIVATE":
+                    readers.append(f"{path.name}:{node.name}")
+                if name == "withholds_private" and node.name != "withholds_private":
+                    askers.add(path.name)
+    assert sorted(set(readers)) == ["state.py:withholds_private"], readers
+    assert {"state.py", "call_notes.py"} <= askers, askers
 
-    A meeting whose own TITLE is the sensitive fact - a comp conversation, an
-    exit interview - could not be withheld, because `notes_gaps` was a list of
-    bare strings with nothing to tag "private" onto; the caller had to
-    pre-filter, and every other list in this file is filtered right here
-    because a caller cannot be trusted to remember. `NotesGap` gives it the
-    same shape `chase` and `watch` already had, so `update_state` closes the
-    gap structurally instead of asking `notes_gaps`' one caller to.
 
-    Walks the whole folder, like its `chase`/`watch` sibling above: the
-    guarantee is about the vault, not about one section of one file.
-    """
+@pytest.mark.guardrail
+def test_a_sensitive_meeting_title_is_filed_as_a_notes_gap_like_any_other(folder: StateFolder):
+    """BEHAVIOURAL. GUARDRAIL CHANGED by #180 (see above). Was
+    `test_a_sensitive_meeting_title_never_reaches_the_vault_as_a_notes_gap`.
+
+    `NotesGap` still carries the title's sensitivity (#61, was GAP 3), so the
+    switch can withhold it again; by default the title is written."""
     marker = "exit interview follow-up"
     folder.update_state(notes_gaps=[{"title": marker, "sensitivity": "private"}, "Pod Steering"])
 
-    leaked = [
-        path.relative_to(folder.root)
-        for path in folder.root.rglob("*")
-        if path.is_file() and marker in path.read_text(encoding="utf-8")
-    ]
-    assert not leaked, f"a sensitive meeting title reached the vault: {leaked}"
-    assert "Pod Steering" in folder.read_state(), "the filter ate the normal gap too"
+    assert _files_holding(folder, marker) == [Path("State.md")]
+    assert "Pod Steering" in folder.read_state()
 
 
 @pytest.mark.guardrail
 def test_a_sensitive_notes_gap_is_withheld_whichever_shape_it_arrives_in(
-    folder: StateFolder,
+    folder: StateFolder, withholding
 ):
-    """The same guarantee, given the module's OWN type rather than a dict.
+    """The mark must survive coercion, given the module's OWN type rather than
+    a dict - under the rule-7 switch since #180, because that is the only
+    time the mark decides anything.
 
     `NotesGap.from_value` took a Mapping or "anything else". A `NotesGap` is
     not a Mapping - it carries a `get()` but does not subclass one - so it fell
@@ -751,11 +759,7 @@ def test_a_sensitive_notes_gap_is_withheld_whichever_shape_it_arrives_in(
     marker = "exit interview follow-up"
     folder.update_state(notes_gaps=[NotesGap(title=marker, sensitivity="private")])
 
-    leaked = [
-        path.relative_to(folder.root)
-        for path in folder.root.rglob("*")
-        if path.is_file() and marker in path.read_text(encoding="utf-8")
-    ]
+    leaked = _files_holding(folder, marker)
     assert not leaked, f"a private NotesGap reached the vault: {leaked}"
 
 

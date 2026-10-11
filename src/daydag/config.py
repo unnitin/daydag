@@ -137,7 +137,12 @@ class Identities(Mapping[str, str]):
             if not line or line.startswith("#") or "=" not in line:
                 continue
             key, _, value = line.partition("=")
-            values[key.strip()] = value.strip()
+            value = value.strip()
+            # A matching pair of quotes is shell syntax, not part of the value -
+            # a path with spaces must be quoted for the file to source cleanly.
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+                value = value[1:-1]
+            values[key.strip()] = value
         return cls(values, path)
 
     def get(self, key: str, default: Any = None) -> Any:

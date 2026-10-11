@@ -1,7 +1,7 @@
 # Skills for "Data Engineering - How we work" - design and execution plans
 
 Written 2026-09-20 from the doc Nitin posted to #team_data_engineering
-(`${SLACK_CH_TEAM_DATA_ENGINEERING}`, thread ts `1789784388.620269`) on
+(`${SLACK_CH_TEAM_DATA_ENGINEERING}`, thread ts kept out of the repo) on
 2026-09-18, the doc itself (`${GDOC_HOW_WE_WORK}`), its three replies, and a read of `CreateMusicGroup/cmg-sdp-transform` today: 300
 merged PRs back to 2026-06-10, 20 open PRs, the repo's hooks, workflows,
 template, CODEOWNERS, orchestration and docs. Every number below comes from that
@@ -303,7 +303,7 @@ when non-empty; on demand `owners`.
 production ownership - for sprint planning tue
 41 groups in run_all (23 bronze · 16 silver · 2 gold) + 3 other orchestrations + 6 standalone jobs
 🔴 0 have a named owner - T0 not landed; the doc calls each one a bug
-run_all (989282945893313) and run_all_prod (733795701981754) still run outside the bundle
+run_all (job id …) and run_all_prod (job id …) still run outside the bundle
 failures last 24h: silver_luminate_daily 2 runs (run ids …) - couldn't check acks, not in ${SLACK_CH_PIPELINE_ALERTS}
 ```
 

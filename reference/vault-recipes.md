@@ -101,7 +101,7 @@ Then 16 `## Block name` sections, each five bold-key bullets:
 
 Parse: `^- \*\*(Status|Owner|Last moved|Open decision|Sources):\*\* (.*)$`. The `updated:` frontmatter field must be bumped on any write.
 
-Sources cite three id types the agent should learn to emit: Slack channel + id (`#migration-pod (${SLACK_CH_MIGRATION_POD})`), Gmail message id (`19ede39ddc10eecb`), and wiki-links to weekly notes.
+Sources cite three id types the agent should learn to emit: Slack channel + id (`#createos-migration (${SLACK_CH_MIGRATION_POD})`; the channel was renamed from #migration-pod on 9/10/26 and the key did not move with it, because it names the function), Gmail message id (`19ede39ddc10eecb`), and wiki-links to weekly notes.
 
 ## Harvested from Internal Links.md
 

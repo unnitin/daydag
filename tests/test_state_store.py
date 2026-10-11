@@ -9,7 +9,7 @@ from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 
-from daydag.state import ChaseItem, DecisionQueue, EventLog, NotesGap, StateFolder
+from daydag.state import ChaseItem, EventLog, NotesGap, StateFolder
 
 #: A fixed offset, so an offset other than UTC is exercised without pulling in
 #: a tz database or depending on the machine's own zone.
@@ -50,38 +50,28 @@ def test_state_is_added_to_each_loop_never_regenerated(folder):
     assert "jon" in folder.read_state()
 
 
-def test_decisions_are_appended_never_regenerated(folder):
-    """An answer written in the margin must survive the next loop."""
-    q = DecisionQueue(folder)
-    first = q.add("draft nudge to seth?")
-    q.add("close the compute loop?")
-    assert first in q.render(), "an earlier decision was dropped on append"
+@pytest.mark.guardrail
+def test_a_sensitive_item_reaches_the_vault_like_a_normal_one_and_keeps_its_mark(folder):
+    """Guardrail changed by #180, on the principal's explicit decision of
+    2026-09-25 ("i think we should treat sensitive items the same"). Was
+    `test_sensitive_items_never_reach_the_vault` - which had also gone vacuous:
+    its row carried no `ask`, so it rendered as a warning line either way.
 
+    The item is written; the log still holds the private mark, so switching
+    the rule back finds it already classified."""
+    log = EventLog.open(":memory:")
+    log.record("carry_forward", owner="sam", ask="growth area", key="k", sensitivity="private")
+    folder.update_state(chase=log.chase_items())
 
-def test_a_hand_edit_wins_over_derived_state(folder):
-    """ARCHITECTURE: 'A hand edit is itself an event, and wins over derived state.'"""
-    q = DecisionQueue(folder)
-    item = q.add("draft nudge to seth?")
-    folder.decisions_path.write_text(
-        folder.decisions_path.read_text().replace(f"[{item}]", f"[{item}] no")
-    )
-    assert q.answer_for(item) == "no"
-
-
-def test_decision_ages_to_parked_after_three_pushes(folder):
-    """Silence is an answer; the agent says out loud that it read it that way."""
-    q = DecisionQueue(folder)
-    item = q.add("draft nudge to seth?")
-    for _ in range(3):
-        q.render()
-    assert q.status(item) == "parked"
+    assert "growth area" in folder.read_state()
+    assert [item.sensitivity for item in log.chase_items()] == ["private"]
 
 
 @pytest.mark.guardrail
-def test_sensitive_items_never_reach_the_vault(folder):
-    """weekly-feedback-scan carry-forward lives only in the log (ARCHITECTURE)."""
+def test_sensitive_items_never_reach_the_vault_when_rule_7_is_on(folder, withholding):
+    """The pre-#180 rule, under its one switch."""
     log = EventLog.open(":memory:")
-    log.record("carry_forward", subject="seth", body="growth area", sensitivity="private")
+    log.record("carry_forward", owner="sam", ask="growth area", key="k", sensitivity="private")
     folder.update_state(chase=log.chase_items())
     assert "growth area" not in folder.read_state()
 
@@ -218,8 +208,12 @@ def test_write_state_still_accepts_a_bare_dict_for_chase(folder):
 
 
 @pytest.mark.guardrail
-def test_a_private_chase_item_is_filtered_whether_it_arrives_as_a_dict_or_a_chase_item(folder):
-    """The filter reads `sensitivity` off either shape the same way."""
+def test_a_private_chase_item_is_filtered_whether_it_arrives_as_a_dict_or_a_chase_item(
+    folder, withholding
+):
+    """The filter reads `sensitivity` off either shape the same way. Under the
+    rule-7 switch since #180 - the shape handling is what switching back
+    relies on."""
     folder.update_state(
         chase=[
             ChaseItem(key="a", owner="seth", ask="growth area", sensitivity="private"),
@@ -250,7 +244,7 @@ def test_notes_gap_from_value_reads_a_tagged_dict():
     assert gap.sensitivity == "private"
 
 
-def test_a_private_notes_gap_string_mix_still_renders_the_normal_one(folder):
+def test_a_private_notes_gap_string_mix_still_renders_the_normal_one(folder, withholding):
     folder.update_state(
         notes_gaps=["Pod Steering", {"title": "comp review", "sensitivity": "private"}]
     )
@@ -407,8 +401,11 @@ def test_classify_leaves_ordinary_work_normal():
     assert classify_sensitivity("cutover rehearsal for CDI-596", origin="channel") == "normal"
 
 
-def test_an_item_classified_from_a_comp_quote_never_reaches_the_vault(tmp_path):
-    """End to end: the probe that opened #105, with the classifier in the loop."""
+def test_an_item_classified_from_a_comp_quote_never_reaches_the_vault_when_rule_7_is_on(
+    tmp_path, withholding
+):
+    """End to end: the probe that opened #105, with the classifier in the loop.
+    Under the switch since #180 - the classifier's mark is what it would act on."""
     from daydag.state import EventLog, StateFolder, classify_sensitivity
 
     log = EventLog.open(tmp_path / "events.db")
@@ -473,9 +470,12 @@ def test_classify_catches_inflections_and_the_escaped_ampersand():
         assert classify_sensitivity(text) == "private", text
 
 
-def test_a_sensitive_meeting_title_never_reaches_state_md_as_a_notes_gap(tmp_path):
+def test_a_sensitive_meeting_title_never_reaches_state_md_as_a_notes_gap_when_rule_7_is_on(
+    tmp_path, withholding
+):
     """Meeting rows are not a vault-bound kind - their titles reach the file
-    through `notes_gaps` - so the runner classifies each title on the way out."""
+    through `notes_gaps` - so the runner classifies each title on the way out.
+    Under the switch since #180; by default the title is filed like any other."""
     from datetime import UTC, datetime, timedelta
 
     from daydag import run
@@ -509,3 +509,49 @@ def test_a_sensitive_meeting_title_never_reaches_state_md_as_a_notes_gap(tmp_pat
     text = folder.state_path.read_text()
     assert "Pod steering" in text
     assert "Exit interview" not in text
+
+
+# -- a record stored whole ----------------------------------------------------
+
+
+def test_a_record_stored_whole_may_carry_the_logs_own_parameter_names():
+    """A caller storing a connector's record hands it over as a mapping, so a
+    key named `kind` or `sensitivity` in the RECORD is data, never an argument.
+    The raw Calendar API puts `kind: "calendar#event"` on every event, and
+    `run._remember` splatted records into this signature and raised."""
+    log = EventLog.open(":memory:")
+    log.record("meeting", {"id": "e1", "kind": "calendar#event", "sensitivity": "n/a"})
+    log.record("meeting", {"id": "e2"}, summary="keywords still work beside it")
+
+    assert log.recorded("meeting") == [
+        {"id": "e1", "kind": "calendar#event", "sensitivity": "n/a"},
+        {"id": "e2", "summary": "keywords still work beside it"},
+    ]
+
+
+def test_a_key_given_both_in_the_payload_and_as_a_keyword_is_refused():
+    """Letting one win silently is how a record's own value goes missing
+    without a trace. Refused, as Python refuses `f(a=1, **{"a": 2})`; nothing
+    is written."""
+    log = EventLog.open(":memory:")
+
+    with pytest.raises(TypeError, match="summary"):
+        log.record("meeting", {"id": "e1", "summary": "from google"}, summary="from the caller")
+
+    assert log.recorded("meeting") == []
+
+
+def test_an_instant_at_any_depth_is_stored_as_its_isoformat():
+    """The log owns its encoding: a caller storing a record whole pre-walks
+    nothing. Google nests the instant as `{"dateTime": ...}`, one level below
+    where a caller's own walk would stop."""
+    log = EventLog.open(":memory:")
+    when = datetime(2026, 9, 7, 15, 0, tzinfo=UTC)
+
+    log.record("meeting", {"id": "e1", "start": {"dateTime": when}, "day": when.date()})
+    log.record("meeting", {"id": "e2", "odd": {1, 2}})
+
+    assert log.recorded("meeting") == [
+        {"id": "e1", "start": {"dateTime": "2026-09-07T15:00:00+00:00"}, "day": "2026-09-07"},
+        {"id": "e2", "odd": "{1, 2}"},
+    ]

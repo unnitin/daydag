@@ -9,6 +9,7 @@ All planning work is orchestrated from this repo. Four skills were copied **verb
 | `weekly-planning` | forward-looking: week-ahead plan + per-meeting talking points + Workstreams write-back | Cowork skills-plugin (live) |
 | `weekly-progress-reporting` | backward-looking: Goals & Progress doc + highlights email | Cowork skills-plugin (live) |
 | `weekly-feedback-scan` | private weekly VP feedback log for VP-AI & VP-Data → Drive | Cowork skills-plugin (live) |
+| `consulting-slides` | BCG-style decks and slides as `.pptx`: storyline, anatomy, charts, pattern library, a pptxgenjs helper library, the sticky feedback loop, and the style rules it writes through to `DayDAG/Style.md`; not orchestrated by DayDAG | this repo, 2026-10-10 |
 
 ## Every skill here carries a `daydag:` manifest
 

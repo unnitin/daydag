@@ -4,10 +4,10 @@ USING IT
     calendar_day(day)                       # ONE day. Never a week - see 1
     slack_overnight(now, mentioning=principal, identities=ids, since_hour=17)
     gmail_gemini_notes(after=day, before=day)   # from:GEMINI_SENDER + label
-    jira_jql(["PROJ"], updated_within_days=14)  # bounded fields and results
-    gh_open_prs(repo)
-    gh_pr_checks(repo, 42)
-    gh_recent_runs(repo, branch="main")
+    jira_moved_on("PROJ", day)                 # one project, one day, five fields
+    gh_merged_on(repos, day)                   # one `gh search` across every watched repo
+    gh_open_prs(repo)                          # review state and the CI rollup, one repo
+    gh_recent_runs(repo, branch="dev")         # CI health on the watchlist's branch
     vault_path(ids, "Weekly Notes", weekly_note(day))
     week_range(day), week_label(day), next_week_label(day)
     title_from_gemini_subject(subject)
@@ -17,8 +17,10 @@ CONTRACTS
        and exceeded the output limit - measured, not a hunch.
     2. Jira always names `fields` explicitly and bounds `maxResults`. Never
        `*all`: a 14-day 4-project query with unbounded fields returned 125,231
-       chars. `JIRA_MAX_RESULTS_CAP` and `GH_LIMIT_CAP` are the caps, and
-       `smoke` builds its reported bounds FROM them.
+       chars. `JIRA_MAX_RESULTS_CAP` and `GH_LIMIT_CAP` are the caps: the
+       Jira one bounds `jira_moved_on`'s page (asserted at import, below), the
+       GitHub one every `gh search`, and `smoke` builds its reported bounds
+       FROM them.
     3. Slack is addressed by ID, never display name. `from:@someone` does not
        fail, it silently matches nothing.
     4. Gmail matches the SUBJECT: `Notes: "<title>" <date>`, plus the
@@ -66,6 +68,7 @@ __all__ = [
     "GH_WRITE_VERBS",
     "JIRA_FIELDS",
     "JIRA_MAX_RESULTS_CAP",
+    "JIRA_MOVED_MAX_RESULTS",
     "PACIFIC",
     "VAULT_PREFIX",
     "DayWindow",
@@ -73,26 +76,32 @@ __all__ = [
     "RecipeError",
     "calendar_day",
     "calendar_days",
+    "gh_closed_issues_on",
     "gh_default_branch",
+    "gh_merged_on",
     "gh_open_prs",
     "gh_pr_checks",
     "gh_recent_runs",
+    "gh_reviewed_on",
     "gmail_gemini_notes",
+    "gmail_sent_on",
     "is_user_id",
-    "jira_jql",
-    "jira_search",
+    "jira_moved_on",
     "meeting_prep",
     "next_week_label",
+    "slack_channel_on",
+    "slack_dms_on",
     "slack_overnight",
     "slack_search",
+    "slack_sent_on",
     "title_from_gemini_subject",
     "vault_path",
     "vault_relative",
     "vault_root",
+    "watched_channels",
     "week_label",
     "week_range",
     "weekly_note",
-    "workstreams_paths",
 ]
 
 
@@ -126,17 +135,6 @@ def _resolve(value: str, identities: Mapping[str, str] | None, *, what: str) -> 
     regex live in config - there were two regexes for one concept before.
     """
     return resolve_reference(value, identities, what=what, error=RecipeError)
-
-
-#: A JQL ORDER BY is one field plus an optional direction. It was the only input
-#: concatenated straight into the query while keys and statuses were validated.
-_ORDER_BY = re.compile(r"^[A-Za-z][A-Za-z0-9_]*(\s+(ASC|DESC))?$", re.IGNORECASE)
-
-
-def _safe_order_by(order_by: str) -> str:
-    if not isinstance(order_by, str) or not _ORDER_BY.match(order_by.strip()):
-        raise RecipeError(f"{order_by!r} is not a field name plus an optional ASC/DESC")
-    return order_by.strip()
 
 
 def _as_day(value: object, *, what: str) -> date:
@@ -214,6 +212,22 @@ def calendar_days(start: date, end: date, *, tz: ZoneInfo = PACIFIC) -> list[Day
         raise RecipeError(f"end {end} is before start {start}")
     span = (end - start).days
     return [calendar_day(start + timedelta(days=offset), tz=tz) for offset in range(span + 1)]
+
+
+def next_working_day(day: date) -> date:
+    """The first Monday-to-Friday date strictly after ``day``.
+
+    What the EOD wrap means by "tomorrow" (#170): a Friday wrap that read
+    Saturday found nothing and said nothing about Monday. Weekends only - a
+    full-day OOO or holiday would need the calendar to answer, and the plan
+    fetches exactly one day before it has seen any events, so it cannot skip
+    a day it has not read. `run.plan` and `eod_wrap` both call this, so the
+    day fetched and the day asked for cannot drift apart.
+    """
+    after = day + timedelta(days=1)
+    while after.weekday() >= 5:  # 5 = Saturday, 6 = Sunday
+        after += timedelta(days=1)
+    return after
 
 
 # ---------------------------------------------------------------------------
@@ -424,6 +438,86 @@ def gmail_gemini_notes(
 
 
 # ---------------------------------------------------------------------------
+# The evening sweep - what moved today, not what mentioned him (#141, #167)
+# ---------------------------------------------------------------------------
+#
+# The evening loops used to reuse the morning brief's two queries, and neither
+# can carry what the wrap needs: a message in a channel that never @-mentions
+# him, a DM (which does not mention him either), his own reply on a thread.
+# Each of these is ONE DAY and scoped by id, same discipline as the rest of
+# this module. The Jira and GitHub halves live with their own sections below.
+
+
+def slack_sent_on(day: date, *, principal: str, identities: Mapping[str, str] | None = None) -> str:
+    """Everything he posted on ``day``, anywhere - channels, DMs, group DMs.
+
+    His own side of the day is where "answered" and "sent" come from: a reply
+    on the thread an ask came from, a doc dropped in the DM of the person
+    waiting on it.
+    """
+    return slack_search(
+        sender=principal, after=day, before=day, ascending=False, identities=identities
+    )
+
+
+def slack_channel_on(
+    day: date, *, channel: str, identities: Mapping[str, str] | None = None
+) -> str:
+    """One watched channel's traffic on ``day``, whoever wrote it."""
+    return slack_search(
+        channel=channel, after=day, before=day, ascending=False, identities=identities
+    )
+
+
+def slack_dms_on(day: date, *, principal: str, identities: Mapping[str, str] | None = None) -> str:
+    """Messages TO him on ``day`` - run with ``channel_types=im,mpim``.
+
+    ``-from:`` his own id, because his side is :func:`slack_sent_on` and a
+    message fetched by both would count as two pieces of evidence. The
+    conversation type rides alongside the query rather than inside it, because
+    the connector takes it as its own parameter.
+    """
+    user = _slack_id(principal, _USER_ID, identities, "principal")
+    return f"-from:<@{user}> after:{day - _DAY} before:{day + _DAY} sort:timestamp sort_dir:desc"
+
+
+def gmail_sent_on(day: date) -> str:
+    """His sent mail on ``day``.
+
+    ``in:sent``, not ``from:<address>``: the address is personal data in a
+    public repo, and the mailbox already knows whose it is.
+    """
+    return f"in:sent after:{day.strftime('%Y/%m/%d')} before:{(day + _DAY).strftime('%Y/%m/%d')}"
+
+
+#: A watched-channel bullet: the id first, anything after it is his note.
+_CHANNEL_LINE = re.compile(r"^\s*[-*]\s+`?(?P<id>[CG][A-Z0-9]{6,})`?(?:\s|$)")
+_HEADING_LINE = re.compile(r"^\s*#{1,6}\s+(?P<name>.+?)\s*$")
+
+
+def watched_channels(watchlist: str) -> list[str]:
+    """Channel ids from the ``channels`` block of ``Watchlist.md``, in order.
+
+    Pure over the file's text (contract 5). A line that does not lead with an
+    id is his note and is skipped rather than guessed at - a display name here
+    would become a search that silently matches nothing.
+    """
+    out: list[str] = []
+    block = ""
+    for line in str(watchlist or "").splitlines():
+        heading = _HEADING_LINE.match(line)
+        if heading:
+            block = heading["name"].strip().casefold().rstrip(":")
+            continue
+        if block != "channels":
+            continue
+        found = _CHANNEL_LINE.match(line)
+        if found and found["id"] not in out:
+            out.append(found["id"])
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Obsidian vault - the prefix, and the decoy that exists without it
 # ---------------------------------------------------------------------------
 
@@ -452,7 +546,7 @@ def vault_relative(*parts: str) -> str:
     if not cleaned:
         raise RecipeError("no path given")
     # Strip the prefix whether it arrives as its own segment or joined onto the
-    # front of the first one. weekly_note() and workstreams_paths() return the
+    # front of the first one. weekly_note() and meeting_prep() return the
     # joined form, so feeding their output back in doubled the prefix and put
     # the write in a sibling folder that only looks right.
     first = cleaned[0]
@@ -530,19 +624,6 @@ def meeting_prep(day: date) -> str:
     return vault_relative(MEETING_PREP, f"{week_label(day)}.md")
 
 
-def workstreams_paths() -> tuple[str, str]:
-    """Where Workstreams.md may be, in the order to look.
-
-    Custody transfers from `weekly-planning` to DayDAG at the cut (#37) and the
-    file moves with it, so both locations are live states of the same system.
-    DayDAG first: after the cut that is the real one and the old path may linger.
-    """
-    return (
-        vault_relative(DAYDAG, "Workstreams.md"),
-        vault_relative(FACT_BASE, "Workstreams.md"),
-    )
-
-
 # ---------------------------------------------------------------------------
 # Jira - bounded, because the unbounded form has already overflowed
 # ---------------------------------------------------------------------------
@@ -551,11 +632,10 @@ def workstreams_paths() -> tuple[str, str]:
 #: because `*all` ships every custom field on every issue: that is what turned
 #: a 14-day, 4-project query into 125,231 characters (#2 audit).
 #:
-#: ``resolutiondate`` and ``labels`` were added for the board reader (#12):
-#: the first is what lets ``closed_unannounced`` tell a close from a mention
-#: that merely predates it, the second is the "newly blocked" signal. Grown
-#: here rather than requested ad hoc by that module - a second, shorter field
-#: list for the same board is exactly the drift this module exists to prevent.
+#: ``resolutiondate`` and ``labels`` were added for the board join (#12), which
+#: is retired at tag `pre-retirement`. The list stays because `smoke` builds its
+#: reported Jira bound from it and the evening test pins `JIRA_MOVED_FIELDS` as
+#: a subset of it; `jira_moved_on` itself sends the five fields it reads.
 JIRA_FIELDS: tuple[str, ...] = (
     "key",
     "summary",
@@ -571,9 +651,6 @@ JIRA_FIELDS: tuple[str, ...] = (
 #: Page size ceiling. The connector's limit is on response *size*, which no
 #: count can guarantee - but 100 issues of 7 fields stays comfortably inside it.
 JIRA_MAX_RESULTS_CAP = 100
-JIRA_DEFAULT_MAX_RESULTS = 50
-JIRA_DEFAULT_WINDOW_DAYS = 7
-
 #: Atlassian project keys: 2-10 uppercase alphanumerics starting with a letter.
 #: A Jira project key. Public because `board` parses the same keys out of
 #: the watchlist and a second copy is how the two drift - which they had.
@@ -596,73 +673,36 @@ def _project_keys(projects: Iterable[str]) -> list[str]:
     return keys
 
 
-def jira_jql(
-    projects: Iterable[str],
-    *,
-    updated_within_days: int = JIRA_DEFAULT_WINDOW_DAYS,
-    statuses: Sequence[str] | None = None,
-    order_by: str = "updated DESC",
-) -> str:
-    """The data team's board state as JQL.
+#: Page cap for the evening's movement query. MEASURED, 2026-09-25: three
+#: projects x nine fields x one day came back at 81,582 characters and
+#: overflowed the connector - ~3,400 chars an issue, because every assignee
+#: ships four avatar URLs whatever `fields` says. Five fields and one project
+#: per call is ~2,500 an issue; fifteen stays well under the size that failed.
+JIRA_MOVED_MAX_RESULTS = 15
+# The one Jira read left must sit under the cap `smoke` reports, or the bound
+# it prints is a lie; `jira_search`, which enforced the cap, is retired.
+assert JIRA_MOVED_MAX_RESULTS <= JIRA_MAX_RESULTS_CAP
 
-    The window defaults to a week rather than the fortnight that overflowed, and
-    it is a relative ``-Nd`` so a saved query does not silently age.
+#: What the wrap reads off a moved ticket, and nothing else.
+JIRA_MOVED_FIELDS: tuple[str, ...] = ("key", "summary", "status", "assignee", "updated")
+
+
+def jira_moved_on(project: str, day: date) -> dict[str, object]:
+    """Tickets in ONE project whose status or assignee changed on ``day``.
+
+    ``CHANGED DURING`` rather than ``updated``: a comment bumps `updated`, and
+    a comment is activity, not movement (SPEC 3.7 rule 1). One project per
+    call because the three-project form is the one that overflowed.
     """
-    if updated_within_days < 1:
-        raise RecipeError("updated_within_days must be at least 1")
-    keys = ", ".join(f'"{key}"' for key in _project_keys(projects))
-    clauses = [f"project in ({keys})", f"updated >= -{updated_within_days}d"]
-    if statuses:
-        quoted = ", ".join(f'"{_no_quotes(status, what="status")}"' for status in statuses)
-        clauses.append(f"status in ({quoted})")
-    return f"{' AND '.join(clauses)} ORDER BY {_safe_order_by(order_by)}"
-
-
-def _as_field_tuple(fields: object) -> tuple[str, ...]:
-    """Field selections, refusing a bare string.
-
-    A `str` is iterable, so `fields="key,summary"` silently became one field per
-    character. The wildcard guard then matched `"*all"` letter by letter and
-    looked like it was working.
-    """
-    if isinstance(fields, str):
-        raise RecipeError("fields must be a sequence of names, not a single string")
-    return tuple(fields)
-
-
-def jira_search(
-    projects: Iterable[str],
-    *,
-    updated_within_days: int = JIRA_DEFAULT_WINDOW_DAYS,
-    statuses: Sequence[str] | None = None,
-    fields: Sequence[str] = JIRA_FIELDS,
-    max_results: int = JIRA_DEFAULT_MAX_RESULTS,
-    page: int = 0,
-) -> dict[str, object]:
-    """Search parameters for one page of board state.
-
-    Paged rather than widened: the connector's failure mode is an output
-    overflow, and an overflow is not a truncated answer, it is no answer at all.
-    A caller that needs more asks for ``page=1``.
-    """
-    requested = [str(field).strip() for field in fields]
-    wildcards = [field for field in requested if field.startswith("*")]
-    if wildcards:
-        raise RecipeError(
-            f"{wildcards} asks for every field. That is what returned 125,231 chars "
-            "and overflowed the connector; name the fields you need."
-        )
-    if not requested:
-        raise RecipeError("no fields given")
-    if not 1 <= max_results <= JIRA_MAX_RESULTS_CAP:
-        raise RecipeError(f"maxResults must be 1-{JIRA_MAX_RESULTS_CAP}, got {max_results}")
-    if page < 0:
-        raise RecipeError("page must not be negative")
+    (key,) = _project_keys([project])
+    during = f'("{day.isoformat()}", "{(day + _DAY).isoformat()}")'
     return {
-        "jql": jira_jql(projects, updated_within_days=updated_within_days, statuses=statuses),
-        "fields": ",".join(requested),
-        "maxResults": max_results,
-        "startAt": page * max_results,
+        "jql": (
+            f'project = "{key}" AND (status CHANGED DURING {during} '
+            f"OR assignee CHANGED DURING {during}) ORDER BY updated DESC"
+        ),
+        "fields": list(JIRA_MOVED_FIELDS),
+        "maxResults": JIRA_MOVED_MAX_RESULTS,
     }
 
 
@@ -690,6 +730,29 @@ GH_WRITE_VERBS = frozenset(
     }
 )
 
+GH_LIMIT_CAP = 100
+_SLUG = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+
+def _slug(repo: object) -> str:
+    """``owner/name`` from a :class:`daydag.pulse.WatchedRepo` or a plain string.
+
+    Duck-typed on ``.slug`` rather than imported: the pulse owns ``WatchedRepo``
+    on its own path, and a shared module reaching into a path-owned one is the
+    coupling CONTRIBUTING's branch table exists to prevent.
+    """
+    slug = getattr(repo, "slug", repo)
+    if not isinstance(slug, str) or not _SLUG.match(slug):
+        raise RecipeError(f"{repo!r} is not an owner/name repo slug")
+    return slug
+
+
+def _limit(value: int, *, what: str) -> str:
+    if not isinstance(value, int) or isinstance(value, bool) or not 1 <= value <= GH_LIMIT_CAP:
+        raise RecipeError(f"{what} must be 1-{GH_LIMIT_CAP}, got {value!r}")
+    return str(value)
+
+
 #: What the pulse reads off an open PR. `statusCheckRollup` is the CI half.
 GH_PR_FIELDS: tuple[str, ...] = (
     "number",
@@ -714,33 +777,13 @@ GH_RUN_FIELDS: tuple[str, ...] = (
     "url",
 )
 
-GH_LIMIT_CAP = 100
 GH_DEFAULT_PR_LIMIT = 50
+
 GH_DEFAULT_RUN_LIMIT = 20
 
-_SLUG = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$")
 #: Git ref characters. Leading `-` excluded by the character class, so a branch
 #: cannot arrive at `gh` as a flag.
 _BRANCH = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]*$")
-
-
-def _slug(repo: object) -> str:
-    """``owner/name`` from a :class:`daydag.pulse.WatchedRepo` or a plain string.
-
-    Duck-typed on ``.slug`` rather than imported: the pulse owns ``WatchedRepo``
-    on its own path, and a shared module reaching into a path-owned one is the
-    coupling CONTRIBUTING's branch table exists to prevent.
-    """
-    slug = getattr(repo, "slug", repo)
-    if not isinstance(slug, str) or not _SLUG.match(slug):
-        raise RecipeError(f"{repo!r} is not an owner/name repo slug")
-    return slug
-
-
-def _limit(value: int, *, what: str) -> str:
-    if not isinstance(value, int) or isinstance(value, bool) or not 1 <= value <= GH_LIMIT_CAP:
-        raise RecipeError(f"{what} must be 1-{GH_LIMIT_CAP}, got {value!r}")
-    return str(value)
 
 
 def gh_open_prs(repo: object, *, limit: int = GH_DEFAULT_PR_LIMIT) -> list[str]:
@@ -805,3 +848,56 @@ def gh_recent_runs(
             raise RecipeError(f"{branch!r} is not a branch name")
         argv += ["--branch", branch]
     return argv
+
+
+#: What the wrap reads off one search hit. `gh search` has no `mergedAt`;
+#: `closedAt` is the merge time for a PR found by `--merged-at`.
+GH_SEARCH_FIELDS: tuple[str, ...] = ("number", "title", "url", "repository", "closedAt", "author")
+
+#: `--review=` values `gh search prs` accepts that mean a review LANDED.
+GH_REVIEW_STATES = frozenset({"approved", "changes_requested"})
+
+
+def _repo_flags(repos: Iterable[object]) -> list[str]:
+    slugs = [_slug(repo) for repo in repos]
+    if not slugs:
+        # `gh search` with no `--repo` searches all of GitHub.
+        raise RecipeError("no repos given; read them from the repos block of DayDAG/Watchlist.md")
+    return [flag for slug in slugs for flag in ("--repo", slug)]
+
+
+def _search(kind: str, filters: list[str], repos: Iterable[object]) -> list[str]:
+    return [
+        "gh",
+        "search",
+        kind,
+        *filters,
+        *_repo_flags(repos),
+        "--limit",
+        _limit(GH_LIMIT_CAP, what="limit"),
+        "--json",
+        ",".join(GH_SEARCH_FIELDS),
+    ]
+
+
+def gh_merged_on(repos: Iterable[object], day: date) -> list[str]:
+    """PRs merged on ``day`` across every watched repo, in one call.
+
+    One search rather than one `gh pr list` per repo: fourteen watched repos
+    is fourteen round-trips for what GitHub answers in one.
+    """
+    return _search("prs", [f"--merged-at={day.isoformat()}"], repos)
+
+
+def gh_reviewed_on(repos: Iterable[object], day: date, *, review: str) -> list[str]:
+    """Open PRs touched on ``day`` whose review decision is ``review``."""
+    if review not in GH_REVIEW_STATES:
+        raise RecipeError(f"{review!r} is not one of {sorted(GH_REVIEW_STATES)}")
+    return _search(
+        "prs", [f"--updated={day.isoformat()}", f"--review={review}", "--state=open"], repos
+    )
+
+
+def gh_closed_issues_on(repos: Iterable[object], day: date) -> list[str]:
+    """Issues closed on ``day`` across every watched repo."""
+    return _search("issues", [f"--closed={day.isoformat()}"], repos)

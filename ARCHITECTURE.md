@@ -122,7 +122,7 @@ Two mechanical notes worth writing down before someone rediscovers them:
 - **Projects v2 is GraphQL-only.** The REST API does not expose the new project boards at all. Column moves come from `ProjectV2ItemFieldValue` on the org project — `gh project item-list --owner CreateMusicGroup --format json` wraps it. The old REST `/projects` endpoints are the deprecated classic boards and will return nothing useful.
 - **The Atlassian connector is authorised** (the #2 connector audit's follow-up) with a read-only token — `read:jira-work` plus Confluence read, no write scope at all. `board.py` (#12) is the reader; when the token itself is missing or expired, the Jira half of the board delta is still a "couldn't check" line, not a blocker.
 
-The two flags the board delta exists to catch stay as spec'd: *a ticket he believes exists but was never made*, and *a ticket closed with nobody saying so*.
+The two flags the board delta exists to catch stay as spec'd: *a ticket he believes exists but was never made*, and *a ticket closed with nobody saying so*. The join and snapshot diff that computed them (`board.py`, #12) were never called by a loop and were retired on 2026-10-11 at tag `pre-retirement` (PR #199); today the eod plan reads what moved per project through `recipes.jira_moved_on` and `movement` proposes it as evidence. Restore from the tag when a loop needs the join.
 
 ### Calendar ↔ Gemini — the meeting ledger
 
@@ -131,7 +131,7 @@ The gap: Gemini notes arrive by email with **the meeting title in the body, not 
 So the link is a ledger, and calendar is the driver.
 
 1. **Every qualifying event gets a row** at the start of the day — from the day-by-day calendar pull, keyed on `(event id, instance start)` so recurring 1:1s are distinct rows. Qualifying means **not declined**, ≥2 attendees, not OOO/focus/hold. Requiring *accepted* dropped 61% of real meetings when measured against five days of live calendar (#2) - most invites are never answered.
-2. **Ingestion attaches, it doesn't discover.** Each sweep (12:00, 17:00) tries to match unattached rows against Gemini mail from `gemini-notes@google.com`, the Notion DB, and Granola. Matching is title-first: Gemini's subject is structured (`Notes: "<title>" <date>`), so an exact title match settles it outright. Only when the title matches zero or several rows does it fall back to scoring - arrival inside `[event end - 45 min, event end + the source's window]` · fuzzy title · attendee overlap. The lower bound is negative because meetings finish early and Gemini writes up when they actually end; the upper bound is per-source and wide - 18h for Gemini - because the lag is generation, not delivery (`ledger.ARRIVAL_WINDOW`). High score attaches; **ambiguous surfaces rather than guesses** (invariant 5) — two 1:1s back to back with near-identical titles is the case that breaks naive matching.
+2. **Ingestion attaches, it doesn't discover.** Each sweep (every 30 min through the working day, #168) tries to match unattached rows against Gemini mail from `gemini-notes@google.com`, the Notion DB, and Granola. Matching is title-first: Gemini's subject is structured (`Notes: "<title>" <date>`), so an exact title match settles it outright. Only when the title matches zero or several rows does it fall back to scoring - arrival inside `[event end - 45 min, event end + the source's window]` · fuzzy title · attendee overlap. The lower bound is negative because meetings finish early and Gemini writes up when they actually end; the upper bound is per-source and wide - 18h for Gemini - because the lag is generation, not delivery (`ledger.ARRIVAL_WINDOW`). High score attaches; **ambiguous surfaces rather than guesses** (invariant 5) — two 1:1s back to back with near-identical titles is the case that breaks naive matching.
 3. **A row stays open across sweeps.** Notion lands ~a week late, so an unmatched row is re-checked, not closed. Late arrival backfills and re-runs ingestion for that meeting, which is why the ledger lives in the event log rather than being derived fresh each run.
 4. **Unmatched by the next morning becomes a brief line** — "tue: 3 meetings w/ no notes — X, Y, Z. recorded anywhere?" That is the actual guarantee. Not that every meeting has notes; that a missing one is *visible* the next morning instead of discovered a month later.
 5. **The ledger is also the prep trigger** (§3.2) and the OOO detector — same rows, already pulled.
@@ -162,6 +162,7 @@ Create Music Group/
     State.md           # chase list · watch items · snoozes · open notes-gaps  (agent-written, hand-correctable)
     Decisions.md       # pending decisions; Nitin answers in place              (both write it)
     Watchlist.md       # repos · Jira projects · GH Projects · channels          (config; Nitin's, agent proposes)
+    Style.md           # what feedback taught, one rule per row with scope and lifetime (Nitin's; agent appends `inferred` rows)
     Proposals/         # proposed diffs awaiting a yes, one file each            (agent-written, deleted on apply)
     Archive/           # pre-cutover snapshots of anything DayDAG took custody of
   Fact Base/           # unchanged — Nitin's, plus Workstreams (see custody, below)
@@ -178,7 +179,7 @@ Four files rather than one, because they have genuinely different edit patterns 
 
 `README.md` in that folder is not decoration. It is the one thing that stops a future session from inventing a fifth file.
 
-**The sensitive partition lives only in the log.** `weekly-feedback-scan` carries personnel items forward across reviews — structurally identical to a chase loop, but the vault is plaintext synced to every device Nitin owns, and chase entries exist to be surfaced in a brief. Those items never touch the `DayDAG/` folder.
+**Sensitivity is a mark, and one switch decides what it does, in the vault and the DM.** Every record the log projects carries `sensitivity: private | normal`. Since #180 (the principal, 2026-09-25: *"i think we should treat sensitive items the same"* / *"wire everything consistently for now, we can change later"*) `state.WITHHOLD_PRIVATE` is off, and a private item is quoted in the DM and written to `State.md` like a normal one. Turning it back on restores the old rule in both places at once - withheld from the vault, minimally quoted in the DM - with nothing to re-derive. Only `state.withholds_private()` reads the switch, and a guardrail keeps it that way. `weekly-feedback-scan` is separate from this: it writes its own private Drive doc, its registry-level `sensitivity: private` routing is unchanged, and nothing records its carry-forward items in the event log. Wiring them in would now put them in `State.md`, so decide that when it comes up.
 
 ## Invariants
 
@@ -214,7 +215,7 @@ session, which is what makes scheduling a design question rather than a crontab.
 | Time | What | Owner |
 |---|---|---|
 | weekdays 6:40 → 6:45 | pulse → morning brief | DayDAG |
-| weekdays 12:00 / 17:00 | ingestion sweeps | DayDAG |
+| weekdays every 30 min, 07:00-19:00 | ingestion sweep - idempotent on the gmail message id, so frequency costs nothing but fetches (#168) | DayDAG |
 | weekdays 12:15 | open-loop chaser | DayDAG |
 | weekdays 16:25 → 16:30 | pulse → EOD wrap | DayDAG |
 | Fri 08:00 | pod update finalize | existing routine |
@@ -253,6 +254,8 @@ The back-and-forth needs somewhere to live, or "did I already say no to that?" b
 - **Held** in `DayDAG/Decisions.md` — a file DayDAG appends to and never regenerates, so an answer can't be overwritten before it's read. Nitin answers by writing `no` next to a line in Obsidian and the next loop picks it up. That is the escape hatch when he doesn't want a conversation.
 - **Logged** in the event log: item, asked-on, answered-on, answer. Which is how §8's "how much of what it surfaced was acted on" gets measured at the 4-week check.
 - **Ages out.** An item unanswered across three pushes goes to `parked` with a line saying so, rather than re-asking forever. Silence is an answer; the agent just says out loud that it read it that way.
+
+Status, 2026-10-11: the queue was built as `state.DecisionQueue` and never wired into a loop, so it was retired at tag `pre-retirement` (PR #199). What runs today: `closure.asks_in` reads open decisions out of `Decisions.md` for the chase loop; the file is still append-only, and a decision closes when he strikes the line through or adds `status: answered`. Writing `no` beside a line was the retired queue's convention and is not read. The aging rule is not implemented. Restore the class from the tag when a loop renders decisions.
 
 ### Where the conversation happens — and how it becomes two-way
 

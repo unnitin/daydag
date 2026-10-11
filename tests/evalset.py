@@ -1,5 +1,9 @@
 """The ingestion eval set: the labelled ground truth ingestion is scored against.
 
+Lives beside the fixtures it reads (moved out of `src/daydag` in PR #199). The
+vocabularies the classifier itself needs stay in `daydag.ingestion` and are
+re-exported here so the eval tests import one name.
+
 Built before the classifier (issue #14 before #15) so precision and recall are
 measured rather than asserted. The fixtures under ``tests/fixtures/ingestion/``
 are the frozen data; nothing here touches the network.
@@ -22,16 +26,23 @@ import json
 from pathlib import Path
 from typing import Any
 
-FIXTURES = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "ingestion"
+from daydag.ingestion import DECISION_MARKERS, LABELS, MODALITIES, OWNER_FORMS
 
-#: The five categories of SPEC section 3.3 step 2. Exactly one per item.
-LABELS = (
-    "principal_commitment",
-    "assigned_ask",
-    "decision",
-    "new_workstream",
-    "noise",
-)
+__all__ = [
+    "DATE_FORMS",
+    "DECISION_MARKERS",
+    "HARD_CASES",
+    "LABELS",
+    "MEETING_KINDS",
+    "MODALITIES",
+    "OWNER_FORMS",
+    "ROLE_TOKENS",
+    "load_items",
+    "load_notes",
+    "score",
+]
+
+FIXTURES = Path(__file__).resolve().parent / "fixtures" / "ingestion"
 
 #: The four cases issue #14 names, deliberately over-sampled. Each is a way the
 #: obvious rule gets it wrong: the owner is someone else, the decision did not
@@ -45,46 +56,8 @@ HARD_CASES = frozenset(
     }
 )
 
-#: How the note names an owner. `the_group` is Gemini's literal `[The group]`,
-#: and it is common enough that treating it as "no owner, therefore not an ask"
-#: would discard a large share of the real asks.
-OWNER_FORMS = frozenset(
-    {"principal", "named_person", "named_people", "first_name_only", "the_group", "none"}
-)
-
-#: Gemini writes everything in the third person, so the first-person signal
-#: SPEC section 3.3 illustrates with "I'll intro Daniel to CTO" never appears.
-#: Modality is what is left to separate a commitment from a description.
-MODALITIES = frozenset(
-    {
-        "imperative",
-        "past_declarative",
-        "present_declarative",
-        "future_will",
-        "progressive",
-        "hedged",
-    }
-)
-
 DATE_FORMS = frozenset(
     {"weekday", "relative_day", "relative_week", "quarter", "absolute", "end_of_period", None}
-)
-
-#: The verbs that mark a decision in the prose. There is no `Decisions` section
-#: to read - see reference/ingestion-eval.md.
-DECISION_MARKERS = frozenset(
-    {
-        "decided",
-        "agreed",
-        "consensus",
-        "established",
-        "adopted",
-        "resolved",
-        "finalized",
-        "prioritized",
-        "confirmed",
-        None,
-    }
 )
 
 MEETING_KINDS = frozenset(
