@@ -33,9 +33,9 @@ loop is cheap for him and exact for you; follow it rather than inventing a revie
 5. Reply with what changed, sticky by sticky, in two or three lines each, plus anything you
    could not settle from the sources. Do not restate the slides.
 6. "Promote the draft to dated version": `bash scripts/promote.sh <deck>-draft.pptx`
-   renames the deck and its build script to `<deck>-<YYYY-MM-DD>` and removes the pages
-   folder and PDF. The next round's stickies land on the dated file; promote again to the
-   next date.
+   renames the deck and its build script to `<deck>-<YYYY-MM-DD>` and moves the render
+   folder aside (nothing is deleted; the script prints where it went). The next round's
+   stickies land on the dated file; promote again and the date is replaced.
 
 ## What his stickies have taught, generalised
 
@@ -66,7 +66,8 @@ loop is cheap for him and exact for you; follow it rather than inventing a revie
 
 - Adding a subtitle moves the body down a quarter inch; every box placed from `body.y`
   shifts, and the lowest band falls off the slide. Re-check the bottom after any title change.
-- A tinted panel with only `text` needs at least 0.8 in of height (padding takes 0.5).
+- A tinted panel with an eyebrow needs about 0.9 in before its text has room; a strip under
+  0.8 in switches to thin padding and fits one line of `text` or `claim`, nothing more.
 - Value labels on bars need the full remaining width, and long bars leave none: shorten the
   label or set `max` above the largest value so the bar stops short.
 - LibreOffice previews substitute Trebuchet with a wider face: a line that just fits in the

@@ -37,8 +37,11 @@ def slide_paths(z: zipfile.ZipFile) -> list[str]:
 def shapes(xml: str):
     for sp in re.findall(r"<p:sp>.*?</p:sp>", xml, flags=re.S):
         name = re.search(r'<p:cNvPr [^>]*name="([^"]*)"', sp)
+        # the fill lives in <p:spPr> (PowerPoint may give it attributes); a search that
+        # runs past it picks up text colours instead
+        sppr = re.search(r"<p:spPr[^>]*>(.*?)</p:spPr>", sp, flags=re.S)
         fill = re.search(
-            r"<p:spPr>.*?<a:solidFill><a:srgbClr val=\"([0-9A-Fa-f]{6})\"", sp, flags=re.S
+            r'<a:solidFill><a:srgbClr val="([0-9A-Fa-f]{6})"', sppr.group(1) if sppr else ""
         )
         off = re.search(r'<a:off x="(\d+)" y="(\d+)"', sp)
         paras = []

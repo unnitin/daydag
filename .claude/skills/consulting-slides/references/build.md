@@ -11,7 +11,8 @@ tables, chevrons, quarter timelines, hub diagrams, stage flows, bar charts, quot
 steps and the executive summary; a footer with source and page number on every slide.
 
 Prerequisites (once per machine): `npm install -g pptxgenjs sharp react-icons react react-dom`
-and `export NODE_PATH="$(npm root -g)"` in the shell that runs the build.
+and `export NODE_PATH="$(npm root -g)"` in the shell that runs the build; LibreOffice and
+poppler (`pdftoppm`) for the render step.
 
 Workflow:
 
@@ -31,18 +32,19 @@ let s = deck.content({ title: 'Analysts chase numbers more than twice as often a
 deck.barsH(s, { items: [{ label: 'Wrong number', value: 27, hi: true }, { label: 'Pull request', value: 19, hi: true }, { label: 'Analysis', value: 20 }] });
 deck.takeaway(s, 'By replies the ratio is 3.1 to 1.');
 
-deck.nextSteps(deck.content({ title: 'One decision from Will, one action from each department' }),
+deck.nextSteps(deck.content({ title: 'One decision from the sponsor, one action from each department' }),
                [{ who: 'Finance', action: 'Confirm the data books as the revenue spec', when: 'Oct' }]);
 
 deck.save('deck.pptx');
 ```
 
-   Every helper takes the slide returned by `content()` or `leftPanel()` and lays out
-   inside the body zone; pass `{ box: { x, y, w, h } }` to override. Read the top of
-   `bcg_style.js` for the full option list of each helper.
+   Components take the slide returned by `content()` or `panel()` and lay out inside
+   the body zone; pass `{ box: { x, y, w, h } }` to override. Read the top of
+   `bcg_style.js` for each helper's options and the few that take `x, y, w` instead.
 3. Build: `NODE_PATH="$(npm root -g)" node build.js`.
-4. Render and look: `bash <skill>/scripts/render.sh deck.pptx` writes `deck.pdf` and
-   `deck-pages/page-NN.jpg` (LibreOffice then pdftoppm). Open every page. Fix overflow,
+4. Render and look: `bash <skill>/scripts/render.sh deck.pptx` writes `deck-pages/` next
+   to the deck, holding `deck.pdf` and `page-NN.jpg` (LibreOffice then pdftoppm) and a
+   marker file naming the script that made it. Open every page. Fix overflow,
    collisions, drifting titles, fonts under 8 pt, missing sources and page numbers; then
    rebuild and re-render only what changed.
 5. Validate the package with the pptx skill's `scripts/office/validate.py deck.pptx` so
@@ -52,14 +54,16 @@ deck.save('deck.pptx');
    and picture count; `pattern-library.md` maps messages to slide numbers.
 7. Feedback rounds: `python3 <skill>/scripts/stickies.py <deck>.pptx` lists his yellow
    stickies with slide and position; `bash <skill>/scripts/promote.sh <deck>-draft.pptx`
-   renames deck and script to the dated version and clears the render files. Details and
-   the lessons behind them in `feedback-loop.md`.
+   renames deck and script to the dated version and moves the render folder aside. Neither
+   script deletes: a render folder is only moved, and only when it carries the marker, so
+   a same-named folder of his is never touched. Details in `feedback-loop.md`.
 
 Helper options added from use: `chevrons(..., { textSize })` for the text under each step;
 `bulletList(..., { iconData })` puts a line icon before the box title; a `boxPanel` shorter
 than 0.8 in switches to thin padding so a one-line strip still fits. Anything the helpers
-lack is one `deck.pres.ShapeType` call (arrow bands, pointer triangles): `ST.rightArrow`,
-`ST.leftArrow`, `ST.downArrow`, `ST.triangle`, `ST.roundRect`.
+lack is one `deck.pres.ShapeType` call (arrow bands, pointer triangles): with
+`const ST = deck.pres.ShapeType`, `ST.rightArrow`, `ST.leftArrow`, `ST.downArrow`,
+`ST.triangle`, `ST.roundRect`.
 
 Gotchas that bite in layout: a `subtitle` on `content()` moves `body.y` down 0.25 in, so
 every box placed from it shifts and the lowest band can fall off the slide; re-check the

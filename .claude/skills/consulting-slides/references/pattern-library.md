@@ -22,7 +22,7 @@ below are positions in the file (`catalog_template.py` prints them with their ti
 | Executive summary | SCQA rows, or numbered key lines with one line of support each | build: `execSummary` (no template equivalent; K21/K24 "at the end you will have" is the closest) |
 | Section divider | Full-bleed green gradient, white title lower left | S5, S9, S22, G3 |
 | Next steps | Numbered steps with owner and date; or a photo divider with 3 to 5 steps | S76, S86, K53 (numbered list), build: `nextSteps` |
-| Decision required | Left panel "the decision", right table of asks by owner | build: `decisionAndAsks` |
+| Decision required | Left panel "the decision", right table of asks by owner | build: `boxPanel` (dark) in the left column of `twoCols`, `nextSteps` or `table` in the right |
 
 ## One idea, structured text
 
@@ -58,7 +58,7 @@ below are positions in the file (`catalog_template.py` prints them with their ti
 | Milestones so far | Rail with circles and years, text beneath | K38, K81, S103, S127 |
 | Roadmap by workstream | Gantt: lanes, months, grey bars, green diamonds, "today" shaded | S41, S129, S131, G13, G16 |
 | Phases of work | Chevrons with durations and bullets beneath | K37, K80, S121 |
-| Quarter plan with status | Lanes by deliverable, quarter columns, status pills (built, in progress, planned) | build: `quarterTimeline` |
+| Quarter plan with status | Lanes by deliverable, quarter columns, status pills (built, in progress, planned) | build: `timelineQuarters` |
 | Speed to launch | Curved rail with dated events | K40, S124 |
 
 ## Frameworks and systems
@@ -71,7 +71,7 @@ below are positions in the file (`catalog_template.py` prints them with their ti
 | Hub: one key, many joins | Centre circle with satellites | build: `hub`; S102 is the closest template |
 | Layers / stages | Three stage cards with arrows (bronze, silver, gold; input, process, output) | S11, S150 to S153, build: `stages` |
 | Options to choose from | Three option cards with a verdict row | S154 to S157, K48 |
-| Risks with owners | Cards or a table: risk, why it matters, owner, mitigation | build: `riskCards`; K94 for the dense variant |
+| Risks with owners | Cards or a table: risk, why it matters, owner, mitigation | build: `cards` (eyebrow = owner, foot = mitigation) or `table`; K94 for the dense variant |
 
 ## Patterns built for Nitin's decks (helpers, no template equivalent)
 

@@ -7,12 +7,16 @@
  *   const deck = createDeck({ title, author });
  *   deck.cover({ title, subtitle, meta, audience });
  *   const s = deck.content({ title, subtitle, source, tracker });   // -> { slide, body }
- *   deck.columns(s, [{ label, text }], { cols: 3 });
+ *   deck.columns(s, [{ label, text }]);                          // one column per item
  *   await deck.save('out.pptx');
  *
- * Geometry is in inches on a 13.333 x 7.5 canvas; type sizes in points. Every helper takes
+ * Geometry is in inches on a 13.333 x 7.5 canvas; type sizes in points. Components take
  * `s` (from content() or panel()) and an options object; pass `box: { x, y, w, h }` to
- * place a component somewhere other than the whole body. Helpers that draw icons need
+ * place one somewhere other than the whole body. Exceptions: `takeaway` is placed by
+ * `y` and `height` at the foot of the body; `callout`, `rule` and `icon` take `x, y, w`;
+ * `twoCols(s, leftFrac, gap)` is positional and returns the two boxes. Text heights are
+ * clamped at 0.1 in, so a box too small for its content clips rather than writing an
+ * invalid file. Helpers that draw icons need
  * icon data from `await deck.icons(['FiDatabase', ...])` (react-icons Feather set, rendered
  * to PNG through sharp); everything else is synchronous.
  *
@@ -41,10 +45,14 @@ function box(x, y, w, h) { return { x, y, w, h }; }
 function sub(b, dx, dy, dw, dh) { return box(b.x + dx, b.y + dy, b.w + (dw || 0), b.h + (dh || 0)); }
 function textOpts(o) {
   // one fresh object per call: pptxgenjs mutates option objects in place
-  return Object.assign({
+  const r = Object.assign({
     fontFace: FONT, fontSize: S.body, color: C.ink, margin: 0, isTextBox: true,
     valign: 'top', align: 'left', lineSpacingMultiple: 1.1,
   }, o || {});
+  // a negative extent is schema-invalid and makes PowerPoint repair the file
+  if (typeof r.h === 'number' && !(r.h >= 0.1)) r.h = 0.1;
+  if (typeof r.w === 'number' && !(r.w >= 0.1)) r.w = 0.1;
+  return r;
 }
 function noLine(color) { return { color: color, width: 0 }; }
 
@@ -140,7 +148,7 @@ function createDeck(meta) {
     } else {
       bodyTop = Z.body.y - 0.25;
     }
-    if (o.tracker) slide.addText(o.tracker, textOpts({ x: 9.3, y: 0.15, w: 3.55, h: 0.3, fontSize: S.small, color: C.grey, align: 'right' }));
+    if (o.tracker) slide.addText(o.tracker, textOpts({ x: 9.3, y: 0.15, w: o.sticker ? 1.85 : 3.55, h: 0.3, fontSize: S.small, color: C.grey, align: 'right' }));
     if (o.sticker) {
       slide.addShape(pres.ShapeType.rect, { x: 11.3, y: 0.0, w: 1.55, h: 0.32, fill: { color: C.green2 }, line: noLine(C.green2) });
       slide.addText(o.sticker, textOpts({ x: 11.3, y: 0.0, w: 1.55, h: 0.32, fontSize: S.small, color: C.white, align: 'center', valign: 'middle' }));
@@ -158,16 +166,14 @@ function createDeck(meta) {
     slide.addShape(pres.ShapeType.homePlate, { x: 0, y: 0, w: pw, h: 7.5, fill: { color: C.green }, line: noLine(C.green) });
     if (o.eyebrow) slide.addText(o.eyebrow, textOpts({ x: 0.5, y: 0.5, w: pw - 1.2, h: 0.4, fontSize: S.label, color: C.lime, charSpacing: 2 }));
     slide.addText(o.panelTitle, textOpts({ x: 0.5, y: 1.0, w: pw - 1.3, h: 2.2, fontSize: 24, color: C.white, lineSpacingMultiple: 1.05 }));
-    if (o.panelText) slide.addText(o.panelText, textOpts({ x: 0.5, y: 3.3, w: pw - 1.3, h: 3.0, fontSize: S.body, color: C.white }));
+    if (o.panelText) slide.addText(o.panelText, textOpts({ x: 0.5, y: 3.3, w: pw - 1.3, h: 1.8, fontSize: S.body, color: C.white }));   // the wedge narrows below y 5.1
     if (o.title) slide.addText(o.title, textOpts({ x: pw + 0.3, y: Z.title.y, w: 12.83 - pw - 0.3, h: Z.title.h, fontSize: S.title, color: C.green, valign: 'middle' }));
-    footer(slide, Object.assign({}, o, { note: o.note, source: o.source }));
     if (o.source || o.note) {
-      // footer sits over the wedge; redraw it right of the panel
-      slide.addShape(pres.ShapeType.rect, { x: 0, y: Z.footer.y - 0.15, w: pw, h: 0.5, fill: { color: C.green }, line: noLine(C.green) });
+      // the footer starts right of the wedge, not at the margin
       const runs = [];
       if (o.note) runs.push({ text: o.note, options: { breakLine: !!o.source } });
       if (o.source) runs.push({ text: o.source });
-      slide.addText(runs, textOpts({ x: pw + 0.3, y: Z.footer.y - 0.15, w: 7.6, h: 0.5, fontSize: S.footnote, color: C.grey, valign: 'bottom' }));
+      slide.addText(runs, textOpts({ x: pw + 0.3, y: Z.footer.y - 0.15, w: 12.83 - pw - 0.3, h: 0.5, fontSize: S.footnote, color: C.grey, valign: 'bottom' }));
     }
     if (o.notes) slide.addNotes(o.notes);
     const top = o.title ? Z.body.y - 0.25 : 0.7;
@@ -191,7 +197,8 @@ function createDeck(meta) {
 
   // ----- components -----
   function text(s, o) {
-    s.slide.addText(o.text, textOpts(Object.assign({ x: o.box.x, y: o.box.y, w: o.box.w, h: o.box.h }, o)));
+    const b = o.box || s.body;
+    s.slide.addText(o.text, textOpts(Object.assign({ x: b.x, y: b.y, w: b.w, h: b.h }, o)));
   }
   function rule(s, o) {
     s.slide.addShape(pres.ShapeType.line, { x: o.x, y: o.y, w: o.w, h: 0, line: { color: o.color || C.rule, width: o.width || 0.75 } });
@@ -210,10 +217,10 @@ function createDeck(meta) {
       const y = b.y + i * rh;
       rule(s, { x: b.x, y: y, w: b.w, color: C.rule });
       if (r.glyph) s.slide.addText(r.glyph, textOpts({ x: b.x, y: y + 0.12, w: glyphW, h: rh - 0.2, fontSize: 20, valign: 'top' }));
-      s.slide.addText(r.label.toUpperCase(), textOpts({ x: b.x + glyphW, y: y + 0.14, w: labelW, h: 0.4, fontSize: S.small, color: r.accent ? C.green : C.grey, charSpacing: 1.5, bold: true }));
+      s.slide.addText((r.label || '').toUpperCase(), textOpts({ x: b.x + glyphW, y: y + 0.14, w: labelW, h: 0.4, fontSize: S.small, color: r.accent ? C.green : C.grey, charSpacing: 1.5, bold: true }));
       const tx = b.x + glyphW + labelW + 0.2; const tw = b.w - glyphW - labelW - 0.2;
       s.slide.addText(r.claim, textOpts({ x: tx, y: y + 0.1, w: tw, h: 0.5, fontSize: o.claimSize || 15, bold: true, color: r.accent ? C.green : C.ink }));
-      if (r.support) s.slide.addText(r.support, textOpts({ x: tx, y: y + 0.58, w: tw, h: rh - 0.62, fontSize: S.body - 1, color: C.grey }));
+      if (r.support) s.slide.addText(r.support, textOpts({ x: tx, y: y + 0.58, w: tw, h: Math.max(0.1, rh - 0.62), fontSize: S.body - 1, color: C.grey }));
     });
     rule(s, { x: b.x, y: b.y + b.h, w: b.w, color: C.rule });
   }
@@ -285,7 +292,7 @@ function createDeck(meta) {
     const rows = [];
     if (o.header) rows.push(o.header.map((h, j) => ({ text: h, options: { bold: true, color: C.green, fill: { color: C.tint }, align: (o.align && o.align[j]) || 'left', valign: 'middle' } })));
     o.rows.forEach(r => rows.push(r.map((cell, j) => {
-      const c = typeof cell === 'object' ? cell : { text: cell };
+      const c = cell && typeof cell === 'object' ? cell : { text: cell };
       return { text: String(c.text == null ? '' : c.text), options: Object.assign({ color: C.ink, align: (o.align && o.align[j]) || 'left', valign: 'top', bold: j === 0 && o.boldFirst !== false }, c.options || {}) };
     })));
     s.slide.addTable(rows, { x: b.x, y: b.y, w: b.w, colW: o.colW, fontFace: FONT, fontSize: fs, color: C.ink, border: hair, margin: o.cellMargin == null ? 0.06 : o.cellMargin, rowH: o.rowH, autoPage: false, valign: 'top' });
@@ -321,7 +328,7 @@ function createDeck(meta) {
       s.slide.addText(ln.name, textOpts({ x: b.x, y: y + 0.08, w: laneW - 0.1, h: 0.3, fontSize: S.body - 1, bold: true, color: C.ink }));
       if (ln.sub) s.slide.addText(ln.sub, textOpts({ x: b.x, y: y + 0.36, w: laneW - 0.1, h: 0.3, fontSize: S.small, color: C.grey }));
       const groups = {};
-      ln.items.forEach(it => { (groups[it.col] = groups[it.col] || []).push(it); });
+      (ln.items || []).forEach(it => { (groups[it.col] = groups[it.col] || []).push(it); });
       Object.keys(groups).forEach(col => {
         const its = groups[col]; const ph = 0.3; const stack = its.length;
         const total = stack * ph + (stack - 1) * 0.06; let py = y + (lh - total) / 2;
@@ -345,7 +352,7 @@ function createDeck(meta) {
 
   // a tinted box with a title, a claim and bullets (the decision panel, a takeaway panel)
   function boxPanel(s, o) {
-    const b = o.box; const dark = o.dark;
+    const b = o.box || s.body; const dark = o.dark;
     s.slide.addShape(pres.ShapeType.rect, { x: b.x, y: b.y, w: b.w, h: b.h, fill: { color: dark ? C.green : (o.fill || C.greenTint) }, line: noLine(dark ? C.green : (o.fill || C.greenTint)) });
     const pad = b.h < 0.8 ? 0.1 : 0.25; let y = b.y + pad;   // a short strip keeps room for its one line of text
     if (o.eyebrow) { s.slide.addText(o.eyebrow.toUpperCase(), textOpts({ x: b.x + pad, y, w: b.w - 2 * pad, h: 0.3, fontSize: S.small, bold: true, color: dark ? C.lime : C.green, charSpacing: 1.2 })); y += 0.35; }
@@ -371,7 +378,7 @@ function createDeck(meta) {
   }
 
   function bigNumber(s, o) {
-    const b = o.box;
+    const b = o.box || s.body;
     s.slide.addText(o.value, textOpts({ x: b.x, y: b.y, w: b.w, h: o.valueH || 0.9, fontSize: o.size || S.kpi, bold: true, color: o.color || C.green, valign: 'bottom' }));
     if (o.label) s.slide.addText(o.label, textOpts({ x: b.x, y: b.y + (o.valueH || 0.9) + 0.05, w: b.w, h: b.h - (o.valueH || 0.9) - 0.05, fontSize: S.body - 1, color: C.grey }));
   }
@@ -379,13 +386,15 @@ function createDeck(meta) {
   // horizontal bars drawn as shapes: direct labels, one highlight colour, no chart chrome
   function barsH(s, o) {
     const b = o.box || s.body; const items = o.items; const labelW = o.labelW || 2.4; const valW = 0.7;
-    const max = o.max || Math.max.apply(null, items.map(i => i.value));
-    const bh = o.barH || 0.38; const gap = o.gap == null ? 0.22 : o.gap;
+    const max = Math.max(o.max || 0, ...items.map(i => i.value), 1e-9);   // all zeros draw the minimum bar, never NaN
+    let bh = o.barH || 0.38; let gap = o.gap == null ? 0.22 : o.gap;
+    const need = items.length * (bh + gap) - gap;
+    if (need > b.h) { const k = b.h / need; bh *= k; gap *= k; }            // more rows than the box holds: shrink the pitch
     const trackW = b.w - labelW - valW - 0.3;
     items.forEach((it, i) => {
       const y = b.y + i * (bh + gap);
       s.slide.addText(it.label, textOpts({ x: b.x, y, w: labelW - 0.15, h: bh, fontSize: S.body - 1, color: C.ink, valign: 'middle', align: o.labelAlign || 'left' }));
-      const w = Math.max(0.05, trackW * (it.value / max));
+      const w = Math.max(0.05, trackW * Math.min(1, it.value / max));     // a value past an explicit max stops at the track end
       const col = it.color || (it.hi ? C.green : C.rule);
       s.slide.addShape(pres.ShapeType.rect, { x: b.x + labelW, y, w, h: bh, fill: { color: col }, line: noLine(col) });
       const vx = b.x + labelW + w + 0.1; const vw = Math.max(1.0, b.x + b.w - vx);
@@ -442,7 +451,7 @@ function createDeck(meta) {
       s.slide.addShape(pres.ShapeType.rect, { x, y: b.y, w: cw, h: b.h, fill: { color: C.white }, line: { color: it.accent ? C.green : C.rule, width: it.accent ? 1.5 : 0.75 } });
       const pad = 0.22; let y = b.y + pad;
       if (it.glyph) { s.slide.addText(it.glyph, textOpts({ x: x + pad, y: y - 0.05, w: 0.6, h: 0.5, fontSize: 22 })); }
-      s.slide.addText(it.eyebrow.toUpperCase(), textOpts({ x: x + pad + (it.glyph ? 0.6 : 0), y: y + 0.08, w: cw - 2 * pad, h: 0.3, fontSize: S.small, bold: true, color: it.eyebrowColor || C.grey, charSpacing: 1.2 }));
+      if (it.eyebrow) s.slide.addText(it.eyebrow.toUpperCase(), textOpts({ x: x + pad + (it.glyph ? 0.6 : 0), y: y + 0.08, w: cw - 2 * pad, h: 0.3, fontSize: S.small, bold: true, color: it.eyebrowColor || C.grey, charSpacing: 1.2 }));
       y += 0.6;
       s.slide.addText(it.title, textOpts({ x: x + pad, y, w: cw - 2 * pad, h: 0.75, fontSize: 14, bold: true, color: C.green }));
       y += 0.85;

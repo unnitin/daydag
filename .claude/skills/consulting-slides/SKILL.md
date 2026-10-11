@@ -1,6 +1,6 @@
 ---
 name: consulting-slides
-description: "Build or rewrite a slide deck the way BCG, Bain and McKinsey do it: answer first, action titles that read as the argument, one exhibit per slide, sources and page numbers everywhere, green-on-grey Trebuchet look matched to Nitin's slide templates, delivered as a .pptx. Use this whenever Nitin asks for a deck, slides, a presentation, a one-pager for Will or department leadership, a storyline, an executive summary, a ghost deck, a roadmap or timeline slide, or asks to make existing slides 'more BCG', 'more consulting', 'answer first' or 'less verbose', even if he does not say PowerPoint. Also use it to review a deck against consulting standards."
+description: "Build or rewrite a slide deck the way BCG, Bain and McKinsey do it: answer first, action titles that read as the argument, one exhibit per slide, sources and page numbers everywhere, green-on-grey Trebuchet look matched to Nitin's slide templates, delivered as a .pptx. Use this whenever Nitin asks for a deck, slides, a presentation, a one-pager for the sponsor or department leadership, a storyline, an executive summary, a ghost deck, a roadmap or timeline slide, or asks to make existing slides 'more BCG', 'more consulting', 'answer first' or 'less verbose', even if he does not say PowerPoint. Also use it to review a deck against consulting standards."
 daydag:
   # Not orchestrated by DayDAG: invoked by hand, writes only where the user points it
   # (a project folder such as ~/Documents/dataplatform), never into the vault.
@@ -67,7 +67,8 @@ Read the reference that matches the step you are on; they are short:
 7. **Iterate through stickies.** He answers with yellow text boxes on the slides. Each
    round: list them, back up his version, apply all of them, rebuild, render, look at every
    page, reply sticky by sticky. When he says "promote", `scripts/promote.sh` turns the draft
-   into a dated file. Where a sticky asks for alternatives, build each as its own slide
+   into a dated file. Neither script deletes anything: render output lives in one marked
+   folder, and an old one is moved aside with its path printed. Where a sticky asks for alternatives, build each as its own slide
    marked option A and B.
 
 ## House rules that override generic advice
