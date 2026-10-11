@@ -61,6 +61,7 @@ artifact is the load-bearing rule; the rest is plumbing.
 | `ingestion` | SPEC §3.3's classifier: five labels, biased to precision, no write path |
 | `movement` | What the live sources say moved, proposed for confirmation - never a closure, no write path |
 | `call_notes` | The ingest sweep (idempotent on the gmail message id) and the EOD calls section: attendance per note, provenance on every line, ranked priorities; actionable items recorded for the `State.md` chase list (#180) |
+| `style` | What his feedback taught, as rows he edits in `DayDAG/Style.md`: scope by section, lifetime by `holds`, the checkable ones enforced at build |
 
 ## Working on it
 
