@@ -81,7 +81,7 @@ slack in any text box that is nearly full.
 
 ## Route B: copy and fill a template slide
 
-When a template in `~/Documents/personal/slide_templates/` already has the exact layout
+When a template in `${SLIDE_TEMPLATES_DIR}` already has the exact layout
 (a Gantt, a heatmap, a map), copy that deck, keep only the slides you need, and replace
 the text. Use the pptx skill: `thumbnail.py` to pick slides (needs Python 3.10+; make a
 venv with `defusedxml` and `pillow`), unpack, edit `<p:sldIdLst>` to keep the slides,
@@ -94,8 +94,8 @@ one or two complex exhibits, not for a 25-slide deck.
 
 ## Delivering
 
-- Save under the project folder the user names (for the data platform work,
-  `~/Documents/dataplatform/`). Never into the templates folder.
+- Save under `${DECKS_DIR}/<project>/` (both from `.env`), or the folder the user names.
+  Never into the templates folder.
 - Hand back the `.pptx` path and the rendered page images for the slides changed in this
   pass, with the one or two things to check named by page number.
 - Fonts: the deck names Trebuchet MS, which ships with Office. If it is ever opened on a

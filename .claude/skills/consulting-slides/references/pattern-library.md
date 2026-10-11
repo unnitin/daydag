@@ -1,12 +1,12 @@
 # Pattern library: which slide shape for which message
 
 Pick the pattern from the message, then build it (see `build.md`) or copy it from one of
-Nitin's three template decks in `~/Documents/personal/slide_templates/`:
+Nitin's three template decks in `${SLIDE_TEMPLATES_DIR}` (from `.env`):
 
 - **K** = `Slide examples_Killer slides_Final.pptx` (101 slides, filled examples with real
   action titles; the best reference for what a finished slide looks like)
 - **S** = `Sample killer slides 2020 selection.pptx` (159 slides, layout patterns with
-  placeholder text; a renamed copy also sits at `~/Documents/dataplatform/RevenueDomain.pptx`)
+  placeholder text; he also keeps a renamed copy as a working deck)
 - **G** = `German PP Templates.pptx` (151 slides, data-heavy tables, charts, comparisons,
   lists; 2016)
 
@@ -75,7 +75,8 @@ below are positions in the file (`catalog_template.py` prints them with their ti
 
 ## Patterns built for Nitin's decks (helpers, no template equivalent)
 
-Worked source for all three: `~/Documents/dataplatform/revenue/RevenueDomain-<date>.build.js`.
+Worked source for all three: the revenue domain build script, `RevenueDomain-<date>.build.js`
+under `${DECKS_DIR}`.
 
 | Message | Pattern | Build |
 |---|---|---|

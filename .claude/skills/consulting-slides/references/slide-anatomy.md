@@ -3,7 +3,7 @@
 The visual grammar below is what reads as "BCG style" to people who have seen those decks:
 quiet, grey-and-green, one message, everything in the same place on every slide. The
 numbers are in inches on a 13.33 x 7.5 in (16:9) canvas, matching the templates in
-`~/Documents/personal/slide_templates`.
+`${SLIDE_TEMPLATES_DIR}` (from `.env`).
 
 ## Zones on a content slide
 

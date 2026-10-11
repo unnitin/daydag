@@ -3,7 +3,7 @@ name: consulting-slides
 description: "Build or rewrite a slide deck the way BCG, Bain and McKinsey do it: answer first, action titles that read as the argument, one exhibit per slide, sources and page numbers everywhere, green-on-grey Trebuchet look matched to Nitin's slide templates, delivered as a .pptx. Use this whenever Nitin asks for a deck, slides, a presentation, a one-pager for the sponsor or department leadership, a storyline, an executive summary, a ghost deck, a roadmap or timeline slide, or asks to make existing slides 'more BCG', 'more consulting', 'answer first' or 'less verbose', even if he does not say PowerPoint. Also use it to review a deck against consulting standards."
 daydag:
   # Not orchestrated by DayDAG: invoked by hand. Decks go where the user points it
-  # (a project folder such as ~/Documents/dataplatform). The one vault write is
+  # (`${DECKS_DIR}/<project>/`, both from `.env`). The one vault write is
   # the style rules his feedback teaches, appended as rows he can edit (#196).
   writes:
     - vault:DayDAG/Style.md
@@ -16,7 +16,7 @@ daydag:
 A deck is an argument. The titles carry it, the bodies prove it, and everything sits in the
 same place on every page. This skill turns a brief plus source material into that kind of
 deck, in the house look (green on grey, Trebuchet MS, matching the three template decks in
-`~/Documents/personal/slide_templates/`), as a `.pptx` the reader can edit.
+`${SLIDE_TEMPLATES_DIR}` from `.env`), as a `.pptx` the reader can edit.
 
 Read the reference that matches the step you are on; they are short:
 

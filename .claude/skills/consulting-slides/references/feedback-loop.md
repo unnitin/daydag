@@ -53,8 +53,7 @@ loop is cheap for him and exact for you; follow it rather than inventing a revie
 - Things that are not in play yet still get a line saying when they join ("the new platform
   joins the plan when its schemas hold actual data"), so nobody asks where they went.
 - Worked example of all of the above: the revenue domain slides, built from
-  `~/Documents/dataplatform/revenue/RevenueDomain-<date>.build.js` (two slides, three
-  sticky rounds).
+  `RevenueDomain-<date>.build.js` under `${DECKS_DIR}` (two slides, three sticky rounds).
 - Pending numbers are bracketed placeholders with the date they arrive (`[Mon]`), explained
   once in the note line. Never fill them with a guess.
 - In the house look, small icons ("bugs") are thin-line glyphs in green, not coloured-dot
