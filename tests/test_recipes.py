@@ -290,14 +290,6 @@ def test_meeting_prep_uses_the_same_plain_date_name():
     assert recipes.meeting_prep(date(2026, 9, 8)) == "Create Music Group/Meeting Prep/0907-0911.md"
 
 
-def test_workstreams_looks_in_daydag_before_fact_base():
-    """Custody transfers to DayDAG at the cut (#37); both paths are live states."""
-    assert recipes.workstreams_paths() == (
-        "Create Music Group/DayDAG/Workstreams.md",
-        "Create Music Group/Fact Base/Workstreams.md",
-    )
-
-
 def test_local_path_adds_the_prefix_when_the_configured_root_stops_short():
     path = recipes.vault_path({"VAULT_ROOT": "/vault/Documents"}, "Fact Base", "Workstreams.md")
     assert str(path) == "/vault/Documents/Create Music Group/Fact Base/Workstreams.md"
@@ -327,42 +319,6 @@ def test_a_missing_vault_root_names_the_key():
 
 
 @pytest.mark.guardrail
-def test_fields_are_explicit_and_bounded():
-    """A 14-day, 4-project JQL returned 125,231 chars and overflowed (#2 audit).
-
-    `fields=*all` is the cause: it ships every custom field on every issue.
-    Same guardrail 6 argument as the calendar - an overflowing query is not a
-    degraded read, it is a silent one.
-    """
-    params = recipes.jira_search(["CING"])
-    assert "*all" not in params["fields"]
-    assert "*navigable" not in params["fields"]
-    assert set(params["fields"].split(",")) >= {"key", "summary", "status", "assignee", "updated"}
-    assert 0 < params["maxResults"] <= recipes.JIRA_MAX_RESULTS_CAP
-
-
-@pytest.mark.guardrail
-@pytest.mark.parametrize("bad", ["*all", "*navigable", "key,*all"])
-def test_asking_for_every_field_is_refused(bad):
-    with pytest.raises(RecipeError, match=r"\*"):
-        recipes.jira_search(["CING"], fields=bad.split(","))
-
-
-@pytest.mark.guardrail
-def test_page_size_above_the_cap_is_refused():
-    with pytest.raises(RecipeError, match="maxResults"):
-        recipes.jira_search(["CING"], max_results=recipes.JIRA_MAX_RESULTS_CAP + 1)
-
-
-def test_paging_advances_by_the_page_size():
-    first = recipes.jira_search(["CING"], max_results=50)
-    second = recipes.jira_search(["CING"], max_results=50, page=1)
-    assert first["startAt"] == 0
-    assert second["startAt"] == 50
-    assert first["jql"] == second["jql"]
-
-
-@pytest.mark.guardrail
 @pytest.mark.parametrize(
     "bad",
     ['CING" OR key != "x', "cing", "C ING", "CING;DROP", "", "TOOLONGAPROJECTKEY"],
@@ -373,30 +329,7 @@ def test_a_project_key_that_is_not_a_project_key_is_refused(bad):
     They come from a hand-edited watchlist, which is untrusted input.
     """
     with pytest.raises(RecipeError):
-        recipes.jira_search([bad])
-
-
-def test_no_projects_is_refused_rather_than_querying_every_project():
-    with pytest.raises(RecipeError, match="project"):
-        recipes.jira_search([])
-
-
-def test_jql_scopes_projects_window_and_order():
-    jql = recipes.jira_jql(["CING", "PLAT"], updated_within_days=7)
-    assert 'project in ("CING", "PLAT")' in jql
-    assert "updated >= -7d" in jql
-    assert jql.endswith("ORDER BY updated DESC")
-
-
-def test_status_filter_is_quoted():
-    jql = recipes.jira_jql(["CING"], statuses=["In Progress", "Blocked"])
-    assert 'status in ("In Progress", "Blocked")' in jql
-
-
-@pytest.mark.guardrail
-def test_a_status_cannot_carry_a_quote_out_of_its_operator():
-    with pytest.raises(RecipeError, match="quote"):
-        recipes.jira_jql(["CING"], statuses=['done" OR key != "'])
+        recipes.jira_moved_on(bad, date(2026, 9, 25))
 
 
 # ---------------------------------------------------------------------------
@@ -406,12 +339,16 @@ def test_a_status_cannot_carry_a_quote_out_of_its_operator():
 
 def _gh_recipes():
     repo = WatchedRepo("CreateMusicGroup", "createos-discovery-services")
+    day = date(2026, 9, 25)
     return [
         recipes.gh_open_prs(repo),
         recipes.gh_pr_checks(repo, 412),
         recipes.gh_default_branch(repo),
         recipes.gh_recent_runs(repo, branch="develop"),
         recipes.gh_recent_runs(repo),
+        recipes.gh_merged_on([repo], day),
+        recipes.gh_reviewed_on([repo], day, review="approved"),
+        recipes.gh_closed_issues_on([repo], day),
     ]
 
 
@@ -471,16 +408,6 @@ def test_the_default_branch_is_resolved_never_assumed():
     assert "defaultBranchRef" in recipes.gh_default_branch(WatchedRepo("org", "repo"))
 
 
-def test_a_slug_string_works_as_well_as_a_watched_repo():
-    assert recipes.gh_open_prs(WatchedRepo("org", "repo")) == recipes.gh_open_prs("org/repo")
-
-
-@pytest.mark.parametrize("bad", ["not a slug", "org/repo/extra", "org", "", "-org/repo"])
-def test_a_bad_slug_is_refused(bad):
-    with pytest.raises(RecipeError):
-        recipes.gh_open_prs(bad)
-
-
 @pytest.mark.guardrail
 @pytest.mark.parametrize("bad", ["--json", "-x", "a b", "a;rm -rf /"])
 def test_a_branch_name_cannot_smuggle_a_flag_or_a_second_argument(bad):
@@ -492,6 +419,19 @@ def test_a_branch_name_cannot_smuggle_a_flag_or_a_second_argument(bad):
 def test_a_pr_number_must_be_a_positive_integer(bad):
     with pytest.raises(RecipeError):
         recipes.gh_pr_checks("org/repo", bad)
+
+
+def test_a_slug_string_works_as_well_as_a_watched_repo():
+    day = date(2026, 9, 25)
+    assert recipes.gh_merged_on([WatchedRepo("org", "repo")], day) == recipes.gh_merged_on(
+        ["org/repo"], day
+    )
+
+
+@pytest.mark.parametrize("bad", ["not a slug", "org/repo/extra", "org", "", "-org/repo"])
+def test_a_bad_slug_is_refused(bad):
+    with pytest.raises(RecipeError):
+        recipes.gh_merged_on([bad], date(2026, 9, 25))
 
 
 # --- regressions found by the prep-pings agent reviewing this module ---------

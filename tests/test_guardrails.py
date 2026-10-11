@@ -69,11 +69,11 @@ TRIPWIRES (no implementation exists - these fail when one lands unguarded)
       package can reach a connector on its own
 
 GAPS - not covered here, and not pretended to be
-    1. `DecisionQueue.answer_for` reads an answer only as a whole word at one
-       end of the line (tested below). A hand edit may land at either end, so a
-       decision whose text *begins or ends* with a bare "yes"/"no" still
-       self-answers. Removing that last case means fixing where an answer is
-       allowed to be written, which is a decision rather than a patch.
+    1. Decisions. The queue that read a "yes"/"no" beside a line retired with
+       `DecisionQueue` (PR #199). Today `closure.asks_in` closes a decision only
+       on a strike-through or `status: answered`, so a decision whose text ends
+       in a bare "no" no longer self-answers; `tests/test_closure.py` pins that
+       reader and nothing here tests decisions.
     2. Guardrail 4 (discrepancies surfaced, never auto-resolved) is covered for
        the ledger's ambiguous-note case in `tests/test_ledger.py`; there is no
        general discrepancy surface to test yet.
@@ -102,7 +102,7 @@ import pytest
 from daydag import delivery
 from daydag.pulse import Item, Mirror, Pulse
 from daydag.registry import PRIVATE_SURFACES, Registry, RegistryError
-from daydag.state import DecisionQueue, EventLog, NotesGap, StateFolder
+from daydag.state import EventLog, NotesGap, StateFolder
 from daydag.voice import Push
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -394,28 +394,6 @@ def test_create_never_overwrites_an_existing_vault_file(tmp_path: Path):
 
 
 @pytest.mark.guardrail
-def test_decisions_grow_by_append_only(folder: StateFolder):
-    """BEHAVIOURAL. An answer written in the margin must survive the next loop.
-
-    Byte-prefix equality, not "the old line is still in there": a regenerated
-    file can contain the same text and still have dropped a hand edit.
-    """
-    queue = DecisionQueue(folder)
-    queue.add("draft nudge to the VP?")
-    folder.decisions_path.write_text(
-        folder.decisions_path.read_text(encoding="utf-8") + "  <- answered in the margin: no\n",
-        encoding="utf-8",
-    )
-    before = folder.decisions_path.read_bytes()
-
-    queue.add("close the compute loop?")
-
-    after = folder.decisions_path.read_bytes()
-    assert after.startswith(before), "Decisions.md was rewritten rather than appended to"
-    assert b"answered in the margin" in after
-
-
-@pytest.mark.guardrail
 def test_a_loop_rewrites_no_vault_file_but_state_md_and_only_with_its_old_text_kept(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
@@ -455,13 +433,15 @@ def test_a_loop_rewrites_no_vault_file_but_state_md_and_only_with_its_old_text_k
         return real_open(self, mode, *args, **kwargs)
 
     folder = StateFolder.create(tmp_path / "DayDAG")
+    # a pending decision he could answer in place, written before the spies go on
+    folder.decisions_path.write_text(
+        folder.decisions_path.read_text(encoding="utf-8") + "- [1] draft nudge to the VP?\n",
+        encoding="utf-8",
+    )
     monkeypatch.setattr(Path, "write_text", spy_write_text)
     monkeypatch.setattr(Path, "open", spy_open)
     monkeypatch.setattr(vault, "_atomic_write", spy_atomic_write)
 
-    queue = DecisionQueue(folder)
-    queue.add("draft nudge to the VP?")
-    queue.render()
     folder.update_state(
         chase=[{"owner": "vp-data", "ask": "compute consolidation"}],
         watch=[{"what": "nightly ingest job"}],
@@ -588,48 +568,6 @@ def test_repo_evidence_may_only_add_a_flag_never_close_a_loop(pr_state: str, sta
     assert updated["status"] == status, f"{pr_state} evidence changed a loop's status"
     assert added == {"evidence_of_movement"}, f"evidence added {sorted(added)} beyond movement"
     assert all(updated[key] == value for key, value in loop.items())
-
-
-@pytest.mark.guardrail
-@pytest.mark.parametrize(
-    "text",
-    [
-        "should we not consolidate compute?",
-        "do it now?",
-        "nothing has moved on the ingest job - chase it?",
-        "draft a note to the parked workstream owners?",
-        "does the yesterday backfill need re-running?",
-    ],
-)
-def test_a_decision_never_answers_itself(folder: StateFolder, text: str):
-    """BEHAVIOURAL. The same rule as loops: nothing closes without real evidence.
-
-    A decision read as answered is dropped from the next push, so the principal
-    never sees it and the agent records an answer nobody wrote. Substring
-    matching made "not", "now" and "nothing" all read as a "no", and "parked"
-    mid-sentence read as an answer - the words most likely to appear in a
-    question about whether to do something.
-    """
-    queue = DecisionQueue(folder)
-    item = queue.add(text)
-
-    assert queue.answer_for(item) is None, f"{text!r} answered itself"
-    assert queue.status(item) == "open"
-    assert text in queue.render(), "an unanswered decision was dropped from the push"
-
-
-@pytest.mark.guardrail
-@pytest.mark.parametrize("answer", ["yes", "no", "parked", "snooze"])
-def test_a_real_answer_is_still_read(folder: StateFolder, answer: str):
-    """BEHAVIOURAL. The guard above must not deafen the queue to a hand edit."""
-    queue = DecisionQueue(folder)
-    item = queue.add("draft nudge to the VP?")
-    folder.decisions_path.write_text(
-        folder.decisions_path.read_text(encoding="utf-8").rstrip("\n") + f" {answer}\n",
-        encoding="utf-8",
-    )
-    assert queue.answer_for(item) == answer
-    assert queue.status(item) == "answered"
 
 
 # Write-SHAPED constructs only. The bare nouns `^assignee$` and `^comment$` were

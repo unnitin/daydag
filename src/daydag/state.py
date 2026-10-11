@@ -4,12 +4,6 @@ USING IT
     folder = StateFolder.create(root)       # DayDAG/, idempotent
     folder.update_state(chase=..., watch=..., notes_gaps=...)  # APPENDS
 
-    queue = DecisionQueue(folder)
-    item = queue.add("draft nudge to VP-Data?")
-    queue.answer_for(item)                  # whatever a human wrote beside it
-    queue.status(item)                      # answered | parked | open
-    queue.render()                          # the block for the next push
-
     log = EventLog.open(path)               # SQLite, OUTSIDE the vault
     log.record("loop_opened", sensitivity=classify_sensitivity(ask, quote, origin=kind),
                **payload)                 # kind: the Slack conversation type
@@ -49,8 +43,10 @@ CONTRACTS
        Nothing re-derives the list now, because nothing can.
     5. `Decisions.md` is APPENDED and never regenerated, so an answer written
        in the margin cannot be overwritten before it is read.
-    6. Rendering a decision counts as ASKING it. That is what lets an
-       unanswered item age out instead of being re-asked forever.
+    6. A decision closes only by his hand: a row under `Pending decisions` is
+       open until it is struck through or carries `status: answered`, which is
+       what `closure.asks_in` honours. (The queue that rendered and aged
+       decisions was retired in PR #199; nothing ages a decision out today.)
     7. A VAULT-BOUND kind cannot be recorded without saying how sensitive it
        is. `record("loop_opened", ...)` with no `sensitivity`, or with anything
        other than exactly "private" or "normal", raises; the gate in (2)
@@ -125,7 +121,7 @@ a hand edit is an event, and it wins over anything the agent derived.
 | File | Who writes it | Cadence |
 |---|---|---|
 | `State.md` | both | appended to, never rewritten. Your edits win; sub-bullets are never reflowed |
-| `Decisions.md` | both | appended, never regenerated. Answer by writing next to a line |
+| `Decisions.md` | both | appended, never regenerated; ~~strike~~ a line or add `status: answered` |
 | `Watchlist.md` | you | config: repos, Jira projects, channels |
 | `Proposals/` | the agent | proposed diffs awaiting a yes |
 | `Archive/` | the agent | pre-cutover snapshots |
@@ -134,24 +130,6 @@ History, metrics and the meeting ledger live in the event log outside this
 vault, not here. Sensitive items are marked there and, by the principal's
 2026-09-25 decision, written here like anything else.
 """
-
-#: A pending decision line, e.g. "- [3] draft nudge to VP-Data? no"
-_DECISION = re.compile(r"^- \[(?P<id>\d+)\]\s+(?P<text>.*?)\s*$", re.MULTILINE)
-
-#: An answer a human may write beside a decision: a whole word, at one end of
-#: the line or the other - a hand edit lands either before the text or after it.
-#:
-#: Both restrictions are there because the two failure directions are not equal.
-#: A missed answer means the decision is asked again; a phantom one means it is
-#: silently dropped and never seen. The substring form read "not", "now" and
-#: "nothing" as a "no" nobody wrote, and read the word "parked" mid-sentence as
-#: an answer - the words most likely to appear in a question about whether to
-#: do something.
-_ANSWER_WORDS = r"snooze|yes|no|parked"
-_ANSWER = re.compile(
-    rf"^\s*({_ANSWER_WORDS})\b|\b({_ANSWER_WORDS})[\s.,!?;:)\]]*$",
-    re.IGNORECASE,
-)
 
 # --------------------------------------------------------------------------
 # reading a projection back - State.md is hand-edited, so anything that reads
@@ -945,85 +923,6 @@ class StateFolder:
 
     def read_state(self) -> str:
         return self.state_path.read_text(encoding="utf-8")
-
-
-class DecisionQueue:
-    """Pending decisions: appended, never regenerated.
-
-    Decisions batch onto the next scheduled push rather than interrupting. An
-    agent that needs an answer at an unpredictable moment is a pager, and a
-    pager gets muted.
-    """
-
-    #: Renders before an unanswered item is parked and stops being re-asked.
-    MAX_PUSHES = 3
-
-    def __init__(self, folder: StateFolder) -> None:
-        self._folder = folder
-        self._pushes: dict[str, int] = {}
-
-    def _read(self) -> str:
-        return self._folder.decisions_path.read_text(encoding="utf-8")
-
-    def add(self, text: str) -> str:
-        """Append a decision and return its stable id.
-
-        Ids are strings because they are quoted back by a human - "2 yes, 4 no"
-        in a Slack reply, or written beside the line in Obsidian.
-        """
-        body = self._read()
-        next_id = str(max((int(m["id"]) for m in _DECISION.finditer(body)), default=0) + 1)
-        with self._folder.decisions_path.open("a", encoding="utf-8") as handle:
-            handle.write(f"- [{next_id}] {text}\n")
-        self._pushes[next_id] = 0
-        return next_id
-
-    def answer_for(self, item_id: str) -> str | None:
-        """Whatever a human wrote after the decision, if anything.
-
-        A hand edit is an event and wins over derived state, so this reads the
-        file rather than any in-memory view.
-        """
-        for match in _DECISION.finditer(self._read()):
-            if match["id"] != str(item_id):
-                continue
-            found = _ANSWER.search(match["text"].strip())
-            if found is None:
-                return None
-            return (found.group(1) or found.group(2)).casefold()
-        return None
-
-    def status(self, item_id: str) -> str:
-        """``answered``, ``parked`` or ``open``."""
-        if self.answer_for(item_id):
-            return "answered"
-        if self._pushes.get(str(item_id), 0) >= self.MAX_PUSHES:
-            return "parked"
-        return "open"
-
-    def render(self) -> str:
-        """The numbered block that rides on the next push.
-
-        Rendering counts as asking, which is what lets an unanswered item age
-        out instead of being re-asked forever. Silence is an answer; the agent
-        just says out loud that it read it that way.
-        """
-        lines = []
-        for match in _DECISION.finditer(self._read()):
-            item_id = match["id"]
-            if self.answer_for(item_id):
-                continue
-            self._pushes[item_id] = self._pushes.get(item_id, 0) + 1
-            if self._pushes[item_id] > self.MAX_PUSHES:
-                continue
-            lines.append(f"{item_id}. {match['text']}")
-        return "\n".join(lines)
-
-
-@dataclass
-class _Event:
-    kind: str
-    payload: dict[str, Any]
 
 
 #: Kinds `chase_items` projects into `State.md`. Recording one without an

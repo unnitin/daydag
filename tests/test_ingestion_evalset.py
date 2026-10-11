@@ -16,7 +16,7 @@ import re
 
 import pytest
 
-from daydag.evalset import (
+from evalset import (
     DATE_FORMS,
     DECISION_MARKERS,
     HARD_CASES,
