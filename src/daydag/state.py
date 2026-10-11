@@ -4,15 +4,11 @@ USING IT
     folder = StateFolder.create(root)       # DayDAG/, idempotent
     folder.update_state(chase=..., watch=..., notes_gaps=...)  # APPENDS
 
-    queue = DecisionQueue(folder)
-    item = queue.add("draft nudge to VP-Data?")
-    queue.answer_for(item)                  # whatever a human wrote beside it
-    queue.status(item)                      # answered | parked | open
-    queue.render()                          # the block for the next push
-
     log = EventLog.open(path)               # SQLite, OUTSIDE the vault
     log.record("loop_opened", sensitivity=classify_sensitivity(ask, quote, origin=kind),
                **payload)                 # kind: the Slack conversation type
+    log.record("meeting", event)            # a connector's record, whole - `kind` and all
+    log.record_cursor("org/repo", sha); log.last_cursor("org/repo")
     log.chase_items()
     log.median_days_to_answer()
 
@@ -47,8 +43,10 @@ CONTRACTS
        Nothing re-derives the list now, because nothing can.
     5. `Decisions.md` is APPENDED and never regenerated, so an answer written
        in the margin cannot be overwritten before it is read.
-    6. Rendering a decision counts as ASKING it. That is what lets an
-       unanswered item age out instead of being re-asked forever.
+    6. A decision closes only by his hand: a row under `Pending decisions` is
+       open until it is struck through or carries `status: answered`, which is
+       what `closure.asks_in` honours. (The queue that rendered and aged
+       decisions was retired in PR #199; nothing ages a decision out today.)
     7. A VAULT-BOUND kind cannot be recorded without saying how sensitive it
        is. `record("loop_opened", ...)` with no `sensitivity`, or with anything
        other than exactly "private" or "normal", raises; the gate in (2)
@@ -78,11 +76,12 @@ import sqlite3
 import statistics
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 
 from daydag.payloads import has
+from daydag.vault import NoteSnapshot, VaultError, VaultNote
 from daydag.voice import WARN
 
 #: The sanctioned warning glyph (plain U+26A0, not its emoji-presentation
@@ -122,7 +121,7 @@ a hand edit is an event, and it wins over anything the agent derived.
 | File | Who writes it | Cadence |
 |---|---|---|
 | `State.md` | both | appended to, never rewritten. Your edits win; sub-bullets are never reflowed |
-| `Decisions.md` | both | appended, never regenerated. Answer by writing next to a line |
+| `Decisions.md` | both | appended, never regenerated; ~~strike~~ a line or add `status: answered` |
 | `Watchlist.md` | you | config: repos, Jira projects, channels |
 | `Proposals/` | the agent | proposed diffs awaiting a yes |
 | `Archive/` | the agent | pre-cutover snapshots |
@@ -131,24 +130,6 @@ History, metrics and the meeting ledger live in the event log outside this
 vault, not here. Sensitive items are marked there and, by the principal's
 2026-09-25 decision, written here like anything else.
 """
-
-#: A pending decision line, e.g. "- [3] draft nudge to VP-Data? no"
-_DECISION = re.compile(r"^- \[(?P<id>\d+)\]\s+(?P<text>.*?)\s*$", re.MULTILINE)
-
-#: An answer a human may write beside a decision: a whole word, at one end of
-#: the line or the other - a hand edit lands either before the text or after it.
-#:
-#: Both restrictions are there because the two failure directions are not equal.
-#: A missed answer means the decision is asked again; a phantom one means it is
-#: silently dropped and never seen. The substring form read "not", "now" and
-#: "nothing" as a "no" nobody wrote, and read the word "parked" mid-sentence as
-#: an answer - the words most likely to appear in a question about whether to
-#: do something.
-_ANSWER_WORDS = r"snooze|yes|no|parked"
-_ANSWER = re.compile(
-    rf"^\s*({_ANSWER_WORDS})\b|\b({_ANSWER_WORDS})[\s.,!?;:)\]]*$",
-    re.IGNORECASE,
-)
 
 # --------------------------------------------------------------------------
 # reading a projection back - State.md is hand-edited, so anything that reads
@@ -868,13 +849,25 @@ class StateFolder:
         (#63, #61). An item with neither ``owner`` nor ``ask`` degrades to a
         named warning line rather than the ``- ?`` it used to render silently.
 
+        The read and the write go through `vault`: an evicted iCloud file is
+        refused rather than read as absent, the write is a compare-and-swap
+        against what was read, and it is atomic.
+
         Raises:
             StateNotWritable: the file could not be reproduced from its own
-                parse. Nothing is written. A shape the parser cannot model is
+                parse, is an iCloud placeholder, or changed on disk while this
+                ran. Nothing is written. A shape the parser cannot model is
                 worth a skipped update and a complaint; it is not worth a
                 best-effort rewrite of the file this method exists to protect.
         """
-        before = self.read_state() if self.state_path.exists() else _EMPTY_STATE
+        note = VaultNote(self.state_path, "DayDAG/State.md")
+        try:
+            snapshot: NoteSnapshot | None = note.read()
+        except FileNotFoundError:
+            snapshot = None
+        except VaultError as refused:
+            raise StateNotWritable(f"{refused} Nothing was written.") from refused
+        before = snapshot.text if snapshot is not None else _EMPTY_STATE
         doc = StateDoc.parse(before)
         if doc.render() != before:
             raise StateNotWritable(
@@ -917,93 +910,19 @@ class StateFolder:
             # A no-op run must not churn the file, the archive, or the iCloud
             # sync that carries both to his other devices.
             return 0
-        if self.state_path.exists():
-            (self.root / "Archive").mkdir(exist_ok=True)
-            (self.root / "Archive" / "State.md.bak").write_text(before, encoding="utf-8")
-        self.state_path.write_text(after, encoding="utf-8")
+        try:
+            if snapshot is None:
+                note.create(after)
+            else:
+                (self.root / "Archive").mkdir(exist_ok=True)
+                (self.root / "Archive" / "State.md.bak").write_text(before, encoding="utf-8")
+                note.apply(note.plan_rewrite(snapshot, after))
+        except VaultError as refused:
+            raise StateNotWritable(f"{refused} Nothing was written.") from refused
         return appended
 
     def read_state(self) -> str:
         return self.state_path.read_text(encoding="utf-8")
-
-
-class DecisionQueue:
-    """Pending decisions: appended, never regenerated.
-
-    Decisions batch onto the next scheduled push rather than interrupting. An
-    agent that needs an answer at an unpredictable moment is a pager, and a
-    pager gets muted.
-    """
-
-    #: Renders before an unanswered item is parked and stops being re-asked.
-    MAX_PUSHES = 3
-
-    def __init__(self, folder: StateFolder) -> None:
-        self._folder = folder
-        self._pushes: dict[str, int] = {}
-
-    def _read(self) -> str:
-        return self._folder.decisions_path.read_text(encoding="utf-8")
-
-    def add(self, text: str) -> str:
-        """Append a decision and return its stable id.
-
-        Ids are strings because they are quoted back by a human - "2 yes, 4 no"
-        in a Slack reply, or written beside the line in Obsidian.
-        """
-        body = self._read()
-        next_id = str(max((int(m["id"]) for m in _DECISION.finditer(body)), default=0) + 1)
-        with self._folder.decisions_path.open("a", encoding="utf-8") as handle:
-            handle.write(f"- [{next_id}] {text}\n")
-        self._pushes[next_id] = 0
-        return next_id
-
-    def answer_for(self, item_id: str) -> str | None:
-        """Whatever a human wrote after the decision, if anything.
-
-        A hand edit is an event and wins over derived state, so this reads the
-        file rather than any in-memory view.
-        """
-        for match in _DECISION.finditer(self._read()):
-            if match["id"] != str(item_id):
-                continue
-            found = _ANSWER.search(match["text"].strip())
-            if found is None:
-                return None
-            return (found.group(1) or found.group(2)).casefold()
-        return None
-
-    def status(self, item_id: str) -> str:
-        """``answered``, ``parked`` or ``open``."""
-        if self.answer_for(item_id):
-            return "answered"
-        if self._pushes.get(str(item_id), 0) >= self.MAX_PUSHES:
-            return "parked"
-        return "open"
-
-    def render(self) -> str:
-        """The numbered block that rides on the next push.
-
-        Rendering counts as asking, which is what lets an unanswered item age
-        out instead of being re-asked forever. Silence is an answer; the agent
-        just says out loud that it read it that way.
-        """
-        lines = []
-        for match in _DECISION.finditer(self._read()):
-            item_id = match["id"]
-            if self.answer_for(item_id):
-                continue
-            self._pushes[item_id] = self._pushes.get(item_id, 0) + 1
-            if self._pushes[item_id] > self.MAX_PUSHES:
-                continue
-            lines.append(f"{item_id}. {match['text']}")
-        return "\n".join(lines)
-
-
-@dataclass
-class _Event:
-    kind: str
-    payload: dict[str, Any]
 
 
 #: Kinds `chase_items` projects into `State.md`. Recording one without an
@@ -1089,6 +1008,15 @@ class SensitivityRequired(Exception):
 #: "privat", True - would pass a None check and then render as visible.
 SENSITIVITIES = frozenset({"private", "normal"})
 
+#: The kind a mirror's read-up-to point is stored under.
+MIRROR_CURSOR = "mirror_cursor"
+
+
+def _encode(value: Any) -> str:
+    """json's fallback for a value it cannot take: an instant as its isoformat,
+    anything else as its `str`."""
+    return value.isoformat() if isinstance(value, (date, datetime)) else str(value)
+
 
 class EventLog:
     """Append-mostly SQLite, outside the vault.
@@ -1112,8 +1040,29 @@ class EventLog:
     def open(cls, path: str | Path) -> EventLog:
         return cls(sqlite3.connect(str(path)))
 
-    def record(self, kind: str, *, sensitivity: str | None = None, **payload: Any) -> None:
+    def record(
+        self,
+        kind: str,
+        payload: Mapping[str, Any] | None = None,
+        *,
+        sensitivity: str | None = None,
+        **fields: Any,
+    ) -> None:
         """Append one event.
+
+        ``payload`` is the record as a mapping, for a caller storing a
+        connector's record whole: a key named `kind` or `sensitivity` INSIDE it
+        is data, not an argument. The raw Calendar API puts `kind` on every
+        event, and splatting one into this signature collided with the
+        parameter and raised out of the morning and the wrap. ``fields`` say
+        the same thing as keywords, for callers that build the row themselves.
+        A key given both ways is refused (`TypeError`), as Python refuses
+        `f(a=1, **{"a": 2})`: letting one win silently is how a record's own
+        value goes missing without a trace.
+
+        The log owns the encoding: a `datetime` or `date` at any depth is
+        stored as its isoformat and anything else json cannot take as its
+        `str`, so a caller storing a record whole pre-walks nothing.
 
         ``sensitivity`` may be omitted for a kind that never reaches the vault -
         a run-log row, a remembered meeting. For a kind in `VAULT_BOUND` it is
@@ -1134,9 +1083,12 @@ class EventLog:
                 f"sensitivity={sensitivity!r} is not one of {sorted(SENSITIVITIES)}; "
                 "the vault gate compares for equality, so a near miss renders as visible"
             )
+        twice = sorted(set(payload or ()) & set(fields))
+        if twice:
+            raise TypeError(f"record() got {twice} both in the payload and as keywords")
         self._db.execute(
             "INSERT INTO events (kind, sensitivity, payload) VALUES (?, ?, ?)",
-            (kind, sensitivity, json.dumps(payload)),
+            (kind, sensitivity, json.dumps({**(payload or {}), **fields}, default=_encode)),
         )
         self._db.commit()
 
@@ -1198,6 +1150,26 @@ class EventLog:
         return rows
 
     # -- mirror freshness ------------------------------------------------
+
+    def record_cursor(self, repo: str, cursor: str) -> None:
+        """Remember where ``repo``'s pulse read up to, so the next run reads on.
+
+        Without this every run starts at first sight and reports a quiet day
+        forever - the cursor was computed, returned, and thrown away (#138).
+        """
+        self.record(MIRROR_CURSOR, repo=repo, cursor=cursor)
+
+    def last_cursor(self, repo: str) -> str | None:
+        """The newest stored cursor for ``repo``, or ``None`` on first sight.
+
+        A row that will not decode is skipped, as `_rows` skips one.
+        """
+        newest: str | None = None
+        for payload in self.recorded(MIRROR_CURSOR):
+            if isinstance(payload, Mapping) and payload.get("repo") == repo:
+                cursor = payload.get("cursor")
+                newest = str(cursor) if cursor else None
+        return newest
 
     def record_fetch(self, repo: str, *, at: datetime) -> None:
         """Note that ``repo``'s mirror fetched cleanly at ``at``.

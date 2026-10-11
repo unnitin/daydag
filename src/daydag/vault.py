@@ -6,6 +6,8 @@ USING IT
     edit = note.plan_tick(snap, line_no)    # PURE: reads nothing, writes nothing
     edit.diff()                             # unified diff, for Proposals/
     note.apply(edit)                        # CAS against snap.digest
+    note.apply(note.plan_rewrite(snap, text))   # whole file, same CAS (State.md)
+    note.create(text)                       # first run only; refuses an evicted note
 
 CONTRACTS
     1. Touch only what changed; leave the rest BYTE-FOR-BYTE. An edit is a byte
@@ -22,6 +24,10 @@ CONTRACTS
        for a human when there is no vault on the runtime at all (#24).
     5. Writes are atomic: temp file in the same directory, fsync, `os.replace`.
        A crash mid-write leaves the original note untouched.
+    6. `plan_rewrite` is the one exception to contract 1, for a caller that
+       has already proven its own byte-for-byte round trip (`State.md`'s
+       writer refuses a file its parse cannot reproduce). It replaces the
+       whole file and keeps contracts 2, 3 and 5.
 
 WHY IT EXISTS
     The spike's premise was that the Obsidian connector is create/append-only,
@@ -296,6 +302,39 @@ class VaultNote:
             before="",
             after=text,
         )
+
+    def plan_rewrite(self, snapshot: NoteSnapshot, text: str) -> NoteEdit:
+        """The whole note replaced by ``text`` - contract 6, never a shortcut.
+
+        For a caller that renders the full file from a parse it has already
+        proven reproduces the original. Applying it is still a compare-and-swap
+        against ``snapshot`` and still atomic.
+        """
+        return NoteEdit(
+            snapshot=snapshot,
+            byte_span=(0, len(snapshot.data)),
+            replacement=text.encode("utf-8"),
+            lineno=1,
+            before="",
+            after="",
+        )
+
+    def create(self, text: str) -> None:
+        """Write a note that does not exist yet, atomically.
+
+        Raises :class:`NotMaterialisedError` when an evicted copy sits beside
+        it - a missing file next to its `.icloud` sidecar is not a first run,
+        and writing there would sync an empty file over the real one - and
+        :class:`ConflictError` when the note already exists.
+        """
+        if (self.path.parent / f".{self.path.name}.icloud").exists():
+            raise NotMaterialisedError(self.path)
+        if self.path.exists():
+            current = hashlib.sha256(self.path.read_bytes()).hexdigest()
+            raise ConflictError(
+                self.path, "nothing", current, "it exists; read it and plan an edit"
+            )
+        _atomic_write(self.path, text.encode("utf-8"))
 
     # -- apply -----------------------------------------------------------
 

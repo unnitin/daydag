@@ -65,7 +65,7 @@ from __future__ import annotations
 
 import json
 import sys
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
@@ -85,7 +85,18 @@ from daydag.ledger import (
 from daydag.people import People
 from daydag.prep import Audience, Reason, build, point, prep_worthy
 from daydag.prep_selector import HORIZON_DAYS, select
-from daydag.pulse import PulseError, read_watchlist
+from daydag.pulse import (
+    FIRST_SIGHT,
+    READ_FAILED,
+    READ_OK,
+    MirrorStore,
+    Pulse,
+    PulseError,
+    SyncReport,
+    github_url,
+    mirror_root,
+    read_watchlist,
+)
 from daydag.runlog import RunLog
 from daydag.smoke import REACHED
 from daydag.state import (
@@ -390,6 +401,10 @@ def _prep_ahead(
 def _extra_notes(loop: str, day: date) -> list[Step]:
     """Vault notes a loop reads BEYOND its own weekly note.
 
+    The week-ahead's is next week's note: its lead finding is that the note
+    is missing, and before #112 it was never fetched, only guessed from this
+    week's.
+
     Only the EOD wrap has any: on a Friday it reports whether next week's plan
     and next week's meeting prep actually landed, reading both through
     `sources.vault_note`. The plan never asked for them, so even once that
@@ -400,6 +415,15 @@ def _extra_notes(loop: str, day: date) -> list[Step]:
     one specific note and overloading it would make "which note is missing"
     unanswerable.
     """
+    if loop == "week-ahead":
+        this_monday, _ = recipes.week_range(day)
+        return [
+            Step(
+                "vault_notes",
+                "read it; absent is the finding - put it under `vault_notes` keyed by path",
+                {"paths": [recipes.weekly_note(this_monday + timedelta(days=7))]},
+            )
+        ]
     if loop != "eod":
         return []
     next_week = day + timedelta(days=7)
@@ -671,8 +695,11 @@ class _Payloads:
     push down - see contract 3.
     """
 
-    def __init__(self, payloads: Mapping[str, Any]) -> None:
+    def __init__(self, payloads: Mapping[str, Any], *, weekly_path: str | None = None) -> None:
         self._payloads = payloads
+        #: The path the plan fetched `vault` from - this run's weekly note.
+        #: `vault` is that one note and no other (#112).
+        self._weekly_path = weekly_path
 
     @staticmethod
     def _instant(value: Any) -> Any:
@@ -801,7 +828,14 @@ class _Payloads:
             null        -> the note does not exist     (FileNotFoundError)
             ""          -> it exists and is empty
             text        -> the note
+
+        Served under the path it was fetched for and no other (#112). This
+        used to ignore ``path``, so the week-ahead's check for NEXT week's note
+        was handed this week's and "no week-ahead plan" could never fire while
+        this week's note existed. Any other path is a `vault_note` read.
         """
+        if self._weekly_path is not None and path != self._weekly_path:
+            return self.vault_note(path)
         if "vault" not in self._payloads:
             raise RunError("the weekly note was not read")
         note = self._payloads["vault"]
@@ -1051,7 +1085,9 @@ def _remember(log: EventLog | None, snapshot: Iterable[Mapping[str, Any]]) -> No
     if log is None:
         return
     for record in snapshot:
-        log.record(MEETING, **record)
+        # Whole, as a mapping: the raw Calendar API puts its own `kind` on
+        # every event, and splatted into `record(kind, ...)` it raised.
+        log.record(MEETING, record)
 
 
 def _jsonable(value: Any) -> Any:
@@ -1343,6 +1379,60 @@ def _points(payloads: Mapping[str, Any]) -> list[Any]:
     return points
 
 
+def build_pulse(
+    identities: Mapping[str, str],
+    log: EventLog | None,
+    *,
+    url_for: Callable[[Any], str] = github_url,
+) -> tuple[Pulse, SyncReport]:
+    """The pulse for this run: mirrors synced, each read on from its stored cursor.
+
+    The CLI path #138 was missing. `render` accepted a pulse and `main` never
+    built one, so `ship` degraded on every real run and the shipping sections
+    of the morning, the wrap and the week-ahead never rendered. Cursors come
+    from the event log and go back to it (`store_cursors`) once the push has
+    rendered - without that every run started at first sight and reported a
+    quiet day forever.
+
+    Raises:
+        RunError: no vault, so no `Watchlist.md` to read repos from.
+        PulseError, ConfigError: an unreadable watchlist, no `MIRROR_DIR`.
+    """
+    folder = _vault(identities)
+    if folder is None:
+        raise RunError("no vault is configured, so there is no Watchlist.md to read repos from")
+    watchlist = read_watchlist(folder.watchlist_path)
+    store = MirrorStore(mirror_root(identities), url_for=url_for, log=log)
+    cursors: dict[str, str] = {}
+    if log is not None:
+        for repo in watchlist.repos:
+            # A repo marked `wiki` is two mirrors, each with its own cursor.
+            for target in (repo, repo.wiki_repo()) if repo.wiki else (repo,):
+                if cursor := log.last_cursor(target.slug):
+                    cursors[target.slug] = cursor
+    report = store.sync(watchlist, cursors=cursors)
+    return Pulse.from_sync(report), report
+
+
+def store_cursors(log: EventLog, report: SyncReport) -> None:
+    """Remember where each mirror read up to. After the render, never before:
+    the cursor advances when the pulse lists its items, and a cursor stored
+    ahead of a push that then failed would bury those landings.
+
+    Only a cursor a read produced is stored. A mirror nobody read (a stale
+    one, or a loop that never listed the pulse's items) still holds what it
+    started as - for a `branch:` row the branch NAME, which stored back reads
+    as an empty range forever. A read that FAILED goes back to first sight:
+    the usual cause is an upstream force-push that left the stored sha
+    unreachable, and storing it again failed every run after.
+    """
+    for mirror in report.mirrors:
+        if mirror.read == READ_OK:
+            log.record_cursor(mirror.label, mirror.cursor)
+        elif mirror.read == READ_FAILED:
+            log.record_cursor(mirror.label, FIRST_SIGHT)
+
+
 def render(
     loop: str,
     *,
@@ -1364,7 +1454,9 @@ def render(
     """
     _known(loop)
     _aware(now)
-    sources = _Payloads(payloads)
+    sources = _Payloads(
+        payloads, weekly_path=recipes.weekly_note(now.astimezone(timezone_for(identities)).date())
+    )
     folder = state if state is not None else _vault(identities)
     events = log if log is None else EventLog.open(log)
     directory = (
@@ -1678,7 +1770,7 @@ def main(argv: list[str] | None = None) -> int:
         print(
             "usage: python -m daydag.run {plan|render} {"
             + "|".join(LOOPS)
-            + '} [--log PATH] [--write-state] [--for "<meeting or person>"]'
+            + '} [--log PATH] [--write-state] [--mirrors] [--for "<meeting or person>"]'
             + " [--calendar PATH] [--payloads PATH]"
         )
         return 2
@@ -1691,6 +1783,9 @@ def main(argv: list[str] | None = None) -> int:
     # `--write-state` projects what the run learned back into `State.md`.
     log = args[args.index("--log") + 1] if "--log" in args[:-1] else None
     write_state = "--write-state" in args
+    # `--mirrors` syncs the watchlist's repos and builds the pulse (#138), so
+    # `ship` and the shipping sections have something to render.
+    with_mirrors = "--mirrors" in args
     # `--for` names the meeting to prep. Without it `prep` takes the next
     # qualifying one, which is the scheduled ping's behaviour.
     selector = ""
@@ -1736,15 +1831,26 @@ def main(argv: list[str] | None = None) -> int:
                 if payloads_path is not None
                 else json.load(sys.stdin)
             )
+            pulse, report = None, None
+            if with_mirrors:
+                try:
+                    pulse, report = build_pulse(identities, EventLog.open(log) if log else None)
+                except (RunError, ConfigError, PulseError) as unbuilt:
+                    # Guardrail 6: no pulse is one degrade line in the push,
+                    # never a dead run. `render` already says it for `ship`.
+                    print(f"couldn't build the pulse: {unbuilt}", file=sys.stderr)
             text = render(
                 loop,
                 now=now,
                 identities=identities,
                 payloads=payloads,
                 log=log,
+                pulse=pulse,
                 write_state=write_state,
                 selector=selector,
             )
+            if log and report is not None:
+                store_cursors(EventLog.open(log), report)
             if text:
                 print(text)
             else:

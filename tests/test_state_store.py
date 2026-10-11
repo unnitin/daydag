@@ -9,7 +9,7 @@ from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 
-from daydag.state import ChaseItem, DecisionQueue, EventLog, NotesGap, StateFolder
+from daydag.state import ChaseItem, EventLog, NotesGap, StateFolder
 
 #: A fixed offset, so an offset other than UTC is exercised without pulling in
 #: a tz database or depending on the machine's own zone.
@@ -48,33 +48,6 @@ def test_state_is_added_to_each_loop_never_regenerated(folder):
     folder.update_state(chase=[{"owner": "jon", "ask": "wave 2 scope"}])
     assert "seth" in folder.read_state(), "the first loop's item was overwritten"
     assert "jon" in folder.read_state()
-
-
-def test_decisions_are_appended_never_regenerated(folder):
-    """An answer written in the margin must survive the next loop."""
-    q = DecisionQueue(folder)
-    first = q.add("draft nudge to seth?")
-    q.add("close the compute loop?")
-    assert first in q.render(), "an earlier decision was dropped on append"
-
-
-def test_a_hand_edit_wins_over_derived_state(folder):
-    """ARCHITECTURE: 'A hand edit is itself an event, and wins over derived state.'"""
-    q = DecisionQueue(folder)
-    item = q.add("draft nudge to seth?")
-    folder.decisions_path.write_text(
-        folder.decisions_path.read_text().replace(f"[{item}]", f"[{item}] no")
-    )
-    assert q.answer_for(item) == "no"
-
-
-def test_decision_ages_to_parked_after_three_pushes(folder):
-    """Silence is an answer; the agent says out loud that it read it that way."""
-    q = DecisionQueue(folder)
-    item = q.add("draft nudge to seth?")
-    for _ in range(3):
-        q.render()
-    assert q.status(item) == "parked"
 
 
 @pytest.mark.guardrail
@@ -536,3 +509,49 @@ def test_a_sensitive_meeting_title_never_reaches_state_md_as_a_notes_gap_when_ru
     text = folder.state_path.read_text()
     assert "Pod steering" in text
     assert "Exit interview" not in text
+
+
+# -- a record stored whole ----------------------------------------------------
+
+
+def test_a_record_stored_whole_may_carry_the_logs_own_parameter_names():
+    """A caller storing a connector's record hands it over as a mapping, so a
+    key named `kind` or `sensitivity` in the RECORD is data, never an argument.
+    The raw Calendar API puts `kind: "calendar#event"` on every event, and
+    `run._remember` splatted records into this signature and raised."""
+    log = EventLog.open(":memory:")
+    log.record("meeting", {"id": "e1", "kind": "calendar#event", "sensitivity": "n/a"})
+    log.record("meeting", {"id": "e2"}, summary="keywords still work beside it")
+
+    assert log.recorded("meeting") == [
+        {"id": "e1", "kind": "calendar#event", "sensitivity": "n/a"},
+        {"id": "e2", "summary": "keywords still work beside it"},
+    ]
+
+
+def test_a_key_given_both_in_the_payload_and_as_a_keyword_is_refused():
+    """Letting one win silently is how a record's own value goes missing
+    without a trace. Refused, as Python refuses `f(a=1, **{"a": 2})`; nothing
+    is written."""
+    log = EventLog.open(":memory:")
+
+    with pytest.raises(TypeError, match="summary"):
+        log.record("meeting", {"id": "e1", "summary": "from google"}, summary="from the caller")
+
+    assert log.recorded("meeting") == []
+
+
+def test_an_instant_at_any_depth_is_stored_as_its_isoformat():
+    """The log owns its encoding: a caller storing a record whole pre-walks
+    nothing. Google nests the instant as `{"dateTime": ...}`, one level below
+    where a caller's own walk would stop."""
+    log = EventLog.open(":memory:")
+    when = datetime(2026, 9, 7, 15, 0, tzinfo=UTC)
+
+    log.record("meeting", {"id": "e1", "start": {"dateTime": when}, "day": when.date()})
+    log.record("meeting", {"id": "e2", "odd": {1, 2}})
+
+    assert log.recorded("meeting") == [
+        {"id": "e1", "start": {"dateTime": "2026-09-07T15:00:00+00:00"}, "day": "2026-09-07"},
+        {"id": "e2", "odd": "{1, 2}"},
+    ]

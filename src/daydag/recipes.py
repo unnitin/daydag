@@ -4,10 +4,10 @@ USING IT
     calendar_day(day)                       # ONE day. Never a week - see 1
     slack_overnight(now, mentioning=principal, identities=ids, since_hour=17)
     gmail_gemini_notes(after=day, before=day)   # from:GEMINI_SENDER + label
-    jira_jql(["PROJ"], updated_within_days=14)  # bounded fields and results
-    gh_open_prs(repo)
-    gh_pr_checks(repo, 42)
-    gh_recent_runs(repo, branch="main")
+    jira_moved_on("PROJ", day)                 # one project, one day, five fields
+    gh_merged_on(repos, day)                   # one `gh search` across every watched repo
+    gh_open_prs(repo)                          # review state and the CI rollup, one repo
+    gh_recent_runs(repo, branch="dev")         # CI health on the watchlist's branch
     vault_path(ids, "Weekly Notes", weekly_note(day))
     week_range(day), week_label(day), next_week_label(day)
     title_from_gemini_subject(subject)
@@ -17,8 +17,10 @@ CONTRACTS
        and exceeded the output limit - measured, not a hunch.
     2. Jira always names `fields` explicitly and bounds `maxResults`. Never
        `*all`: a 14-day 4-project query with unbounded fields returned 125,231
-       chars. `JIRA_MAX_RESULTS_CAP` and `GH_LIMIT_CAP` are the caps, and
-       `smoke` builds its reported bounds FROM them.
+       chars. `JIRA_MAX_RESULTS_CAP` and `GH_LIMIT_CAP` are the caps: the
+       Jira one bounds `jira_moved_on`'s page (asserted at import, below), the
+       GitHub one every `gh search`, and `smoke` builds its reported bounds
+       FROM them.
     3. Slack is addressed by ID, never display name. `from:@someone` does not
        fail, it silently matches nothing.
     4. Gmail matches the SUBJECT: `Notes: "<title>" <date>`, plus the
@@ -84,9 +86,7 @@ __all__ = [
     "gmail_gemini_notes",
     "gmail_sent_on",
     "is_user_id",
-    "jira_jql",
     "jira_moved_on",
-    "jira_search",
     "meeting_prep",
     "next_week_label",
     "slack_channel_on",
@@ -102,7 +102,6 @@ __all__ = [
     "week_label",
     "week_range",
     "weekly_note",
-    "workstreams_paths",
 ]
 
 
@@ -136,17 +135,6 @@ def _resolve(value: str, identities: Mapping[str, str] | None, *, what: str) -> 
     regex live in config - there were two regexes for one concept before.
     """
     return resolve_reference(value, identities, what=what, error=RecipeError)
-
-
-#: A JQL ORDER BY is one field plus an optional direction. It was the only input
-#: concatenated straight into the query while keys and statuses were validated.
-_ORDER_BY = re.compile(r"^[A-Za-z][A-Za-z0-9_]*(\s+(ASC|DESC))?$", re.IGNORECASE)
-
-
-def _safe_order_by(order_by: str) -> str:
-    if not isinstance(order_by, str) or not _ORDER_BY.match(order_by.strip()):
-        raise RecipeError(f"{order_by!r} is not a field name plus an optional ASC/DESC")
-    return order_by.strip()
 
 
 def _as_day(value: object, *, what: str) -> date:
@@ -558,7 +546,7 @@ def vault_relative(*parts: str) -> str:
     if not cleaned:
         raise RecipeError("no path given")
     # Strip the prefix whether it arrives as its own segment or joined onto the
-    # front of the first one. weekly_note() and workstreams_paths() return the
+    # front of the first one. weekly_note() and meeting_prep() return the
     # joined form, so feeding their output back in doubled the prefix and put
     # the write in a sibling folder that only looks right.
     first = cleaned[0]
@@ -636,19 +624,6 @@ def meeting_prep(day: date) -> str:
     return vault_relative(MEETING_PREP, f"{week_label(day)}.md")
 
 
-def workstreams_paths() -> tuple[str, str]:
-    """Where Workstreams.md may be, in the order to look.
-
-    Custody transfers from `weekly-planning` to DayDAG at the cut (#37) and the
-    file moves with it, so both locations are live states of the same system.
-    DayDAG first: after the cut that is the real one and the old path may linger.
-    """
-    return (
-        vault_relative(DAYDAG, "Workstreams.md"),
-        vault_relative(FACT_BASE, "Workstreams.md"),
-    )
-
-
 # ---------------------------------------------------------------------------
 # Jira - bounded, because the unbounded form has already overflowed
 # ---------------------------------------------------------------------------
@@ -657,11 +632,10 @@ def workstreams_paths() -> tuple[str, str]:
 #: because `*all` ships every custom field on every issue: that is what turned
 #: a 14-day, 4-project query into 125,231 characters (#2 audit).
 #:
-#: ``resolutiondate`` and ``labels`` were added for the board reader (#12):
-#: the first is what lets ``closed_unannounced`` tell a close from a mention
-#: that merely predates it, the second is the "newly blocked" signal. Grown
-#: here rather than requested ad hoc by that module - a second, shorter field
-#: list for the same board is exactly the drift this module exists to prevent.
+#: ``resolutiondate`` and ``labels`` were added for the board join (#12), which
+#: is retired at tag `pre-retirement`. The list stays because `smoke` builds its
+#: reported Jira bound from it and the evening test pins `JIRA_MOVED_FIELDS` as
+#: a subset of it; `jira_moved_on` itself sends the five fields it reads.
 JIRA_FIELDS: tuple[str, ...] = (
     "key",
     "summary",
@@ -677,9 +651,6 @@ JIRA_FIELDS: tuple[str, ...] = (
 #: Page size ceiling. The connector's limit is on response *size*, which no
 #: count can guarantee - but 100 issues of 7 fields stays comfortably inside it.
 JIRA_MAX_RESULTS_CAP = 100
-JIRA_DEFAULT_MAX_RESULTS = 50
-JIRA_DEFAULT_WINDOW_DAYS = 7
-
 #: Atlassian project keys: 2-10 uppercase alphanumerics starting with a letter.
 #: A Jira project key. Public because `board` parses the same keys out of
 #: the watchlist and a second copy is how the two drift - which they had.
@@ -702,82 +673,15 @@ def _project_keys(projects: Iterable[str]) -> list[str]:
     return keys
 
 
-def jira_jql(
-    projects: Iterable[str],
-    *,
-    updated_within_days: int = JIRA_DEFAULT_WINDOW_DAYS,
-    statuses: Sequence[str] | None = None,
-    order_by: str = "updated DESC",
-) -> str:
-    """The data team's board state as JQL.
-
-    The window defaults to a week rather than the fortnight that overflowed, and
-    it is a relative ``-Nd`` so a saved query does not silently age.
-    """
-    if updated_within_days < 1:
-        raise RecipeError("updated_within_days must be at least 1")
-    keys = ", ".join(f'"{key}"' for key in _project_keys(projects))
-    clauses = [f"project in ({keys})", f"updated >= -{updated_within_days}d"]
-    if statuses:
-        quoted = ", ".join(f'"{_no_quotes(status, what="status")}"' for status in statuses)
-        clauses.append(f"status in ({quoted})")
-    return f"{' AND '.join(clauses)} ORDER BY {_safe_order_by(order_by)}"
-
-
-def _as_field_tuple(fields: object) -> tuple[str, ...]:
-    """Field selections, refusing a bare string.
-
-    A `str` is iterable, so `fields="key,summary"` silently became one field per
-    character. The wildcard guard then matched `"*all"` letter by letter and
-    looked like it was working.
-    """
-    if isinstance(fields, str):
-        raise RecipeError("fields must be a sequence of names, not a single string")
-    return tuple(fields)
-
-
-def jira_search(
-    projects: Iterable[str],
-    *,
-    updated_within_days: int = JIRA_DEFAULT_WINDOW_DAYS,
-    statuses: Sequence[str] | None = None,
-    fields: Sequence[str] = JIRA_FIELDS,
-    max_results: int = JIRA_DEFAULT_MAX_RESULTS,
-    page: int = 0,
-) -> dict[str, object]:
-    """Search parameters for one page of board state.
-
-    Paged rather than widened: the connector's failure mode is an output
-    overflow, and an overflow is not a truncated answer, it is no answer at all.
-    A caller that needs more asks for ``page=1``.
-    """
-    requested = [str(field).strip() for field in fields]
-    wildcards = [field for field in requested if field.startswith("*")]
-    if wildcards:
-        raise RecipeError(
-            f"{wildcards} asks for every field. That is what returned 125,231 chars "
-            "and overflowed the connector; name the fields you need."
-        )
-    if not requested:
-        raise RecipeError("no fields given")
-    if not 1 <= max_results <= JIRA_MAX_RESULTS_CAP:
-        raise RecipeError(f"maxResults must be 1-{JIRA_MAX_RESULTS_CAP}, got {max_results}")
-    if page < 0:
-        raise RecipeError("page must not be negative")
-    return {
-        "jql": jira_jql(projects, updated_within_days=updated_within_days, statuses=statuses),
-        "fields": ",".join(requested),
-        "maxResults": max_results,
-        "startAt": page * max_results,
-    }
-
-
 #: Page cap for the evening's movement query. MEASURED, 2026-09-25: three
 #: projects x nine fields x one day came back at 81,582 characters and
 #: overflowed the connector - ~3,400 chars an issue, because every assignee
 #: ships four avatar URLs whatever `fields` says. Five fields and one project
 #: per call is ~2,500 an issue; fifteen stays well under the size that failed.
 JIRA_MOVED_MAX_RESULTS = 15
+# The one Jira read left must sit under the cap `smoke` reports, or the bound
+# it prints is a lie; `jira_search`, which enforced the cap, is retired.
+assert JIRA_MOVED_MAX_RESULTS <= JIRA_MAX_RESULTS_CAP
 
 #: What the wrap reads off a moved ticket, and nothing else.
 JIRA_MOVED_FIELDS: tuple[str, ...] = ("key", "summary", "status", "assignee", "updated")
@@ -826,6 +730,29 @@ GH_WRITE_VERBS = frozenset(
     }
 )
 
+GH_LIMIT_CAP = 100
+_SLUG = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+
+def _slug(repo: object) -> str:
+    """``owner/name`` from a :class:`daydag.pulse.WatchedRepo` or a plain string.
+
+    Duck-typed on ``.slug`` rather than imported: the pulse owns ``WatchedRepo``
+    on its own path, and a shared module reaching into a path-owned one is the
+    coupling CONTRIBUTING's branch table exists to prevent.
+    """
+    slug = getattr(repo, "slug", repo)
+    if not isinstance(slug, str) or not _SLUG.match(slug):
+        raise RecipeError(f"{repo!r} is not an owner/name repo slug")
+    return slug
+
+
+def _limit(value: int, *, what: str) -> str:
+    if not isinstance(value, int) or isinstance(value, bool) or not 1 <= value <= GH_LIMIT_CAP:
+        raise RecipeError(f"{what} must be 1-{GH_LIMIT_CAP}, got {value!r}")
+    return str(value)
+
+
 #: What the pulse reads off an open PR. `statusCheckRollup` is the CI half.
 GH_PR_FIELDS: tuple[str, ...] = (
     "number",
@@ -850,33 +777,13 @@ GH_RUN_FIELDS: tuple[str, ...] = (
     "url",
 )
 
-GH_LIMIT_CAP = 100
 GH_DEFAULT_PR_LIMIT = 50
+
 GH_DEFAULT_RUN_LIMIT = 20
 
-_SLUG = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$")
 #: Git ref characters. Leading `-` excluded by the character class, so a branch
 #: cannot arrive at `gh` as a flag.
 _BRANCH = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]*$")
-
-
-def _slug(repo: object) -> str:
-    """``owner/name`` from a :class:`daydag.pulse.WatchedRepo` or a plain string.
-
-    Duck-typed on ``.slug`` rather than imported: the pulse owns ``WatchedRepo``
-    on its own path, and a shared module reaching into a path-owned one is the
-    coupling CONTRIBUTING's branch table exists to prevent.
-    """
-    slug = getattr(repo, "slug", repo)
-    if not isinstance(slug, str) or not _SLUG.match(slug):
-        raise RecipeError(f"{repo!r} is not an owner/name repo slug")
-    return slug
-
-
-def _limit(value: int, *, what: str) -> str:
-    if not isinstance(value, int) or isinstance(value, bool) or not 1 <= value <= GH_LIMIT_CAP:
-        raise RecipeError(f"{what} must be 1-{GH_LIMIT_CAP}, got {value!r}")
-    return str(value)
 
 
 def gh_open_prs(repo: object, *, limit: int = GH_DEFAULT_PR_LIMIT) -> list[str]:

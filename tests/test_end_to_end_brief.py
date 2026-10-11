@@ -38,7 +38,7 @@ import pytest
 from daydag import brief as brief_module
 from daydag.ledger import Ledger, Match
 from daydag.pulse import Mirror, Pulse
-from daydag.state import DecisionQueue, EventLog, StateFolder
+from daydag.state import EventLog, StateFolder
 from daydag.voice import voice_violations
 
 PT = timezone(timedelta(hours=-7))
@@ -223,13 +223,36 @@ def test_a_whole_morning_arrives_as_one_assembled_brief(tmp_path, landings, git_
     assert "perf-conversation" in written
     assert "nightly ingest" in written
 
-    # -- a decision survives being answered by hand ------------------------
-    queue = DecisionQueue(folder)
-    item = queue.add("close the CDI-596 loop?")
-    assert queue.status(item) == "open"
+    # -- a pending decision is open until he closes it in place -------------
+    # (the queue that rendered and aged decisions was retired in PR #199; what
+    # reads the file today is closure.asks_in, so that is what is driven here)
+    from daydag.closure import asks_in
+
     decisions = folder.decisions_path
-    decisions.write_text(decisions.read_text().replace(f"[{item}] close", f"[{item}] no - close"))
-    assert queue.answer_for(item) == "no", "a hand edit is an event and wins"
+    decisions.write_text(
+        decisions.read_text(encoding="utf-8") + "- close the CDI-596 loop? · status: open\n",
+        encoding="utf-8",
+    )
+    pending = [
+        a
+        for a in asks_in(folder.read_state(), decisions.read_text(encoding="utf-8"))
+        if a.section == "Pending decisions"
+    ]
+    assert [a.text for a in pending] == ["close the CDI-596 loop? · status: open"]
+    assert pending[0].waiting_on == "principal"
+    decisions.write_text(
+        decisions.read_text(encoding="utf-8").replace(
+            "- close the CDI-596 loop? · status: open",
+            "- ~~close the CDI-596 loop?~~ · status: answered",
+        ),
+        encoding="utf-8",
+    )
+    still_open = [
+        a
+        for a in asks_in(folder.read_state(), decisions.read_text(encoding="utf-8"))
+        if a.section == "Pending decisions"
+    ]
+    assert still_open == [], "a hand edit is an event and wins"
 
     # -- and the assembler turns all of it into one message ----------------
     # Every input below is the object an earlier stanza actually produced: the

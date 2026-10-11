@@ -1,0 +1,39 @@
+{
+  "name": "Consulting green",
+  "font": "Trebuchet MS",
+  "fallbackFont": "Calibri",
+  "canvas": { "w": 13.333, "h": 7.5 },
+  "colors": {
+    "green": "03522D",
+    "green2": "197A56",
+    "bright": "29BA74",
+    "mint": "3EAD92",
+    "lime": "D4DF33",
+    "slate": "295E7E",
+    "ink": "575757",
+    "grey": "6E6F73",
+    "rule": "D9D9D9",
+    "tint": "F2F2F2",
+    "greenTint": "E8F5EE",
+    "amber": "C8891A",
+    "amberTint": "FBF0DC",
+    "red": "B23A48",
+    "white": "FFFFFF"
+  },
+  "sizes": {
+    "title": 22,
+    "subtitle": 13,
+    "body": 13,
+    "label": 11,
+    "small": 10,
+    "footnote": 9,
+    "kpi": 44
+  },
+  "zones": {
+    "margin": 0.5,
+    "title": { "x": 0.5, "y": 0.35, "w": 11.6, "h": 0.9 },
+    "subtitle": { "x": 0.5, "y": 1.2, "w": 11.6, "h": 0.35 },
+    "body": { "x": 0.5, "y": 1.65, "w": 12.333, "h": 4.95 },
+    "footer": { "y": 6.9 }
+  }
+}
