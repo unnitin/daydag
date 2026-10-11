@@ -122,7 +122,7 @@ Two mechanical notes worth writing down before someone rediscovers them:
 - **Projects v2 is GraphQL-only.** The REST API does not expose the new project boards at all. Column moves come from `ProjectV2ItemFieldValue` on the org project — `gh project item-list --owner CreateMusicGroup --format json` wraps it. The old REST `/projects` endpoints are the deprecated classic boards and will return nothing useful.
 - **The Atlassian connector is authorised** (the #2 connector audit's follow-up) with a read-only token — `read:jira-work` plus Confluence read, no write scope at all. `board.py` (#12) is the reader; when the token itself is missing or expired, the Jira half of the board delta is still a "couldn't check" line, not a blocker.
 
-The two flags the board delta exists to catch stay as spec'd: *a ticket he believes exists but was never made*, and *a ticket closed with nobody saying so*.
+The two flags the board delta exists to catch stay as spec'd: *a ticket he believes exists but was never made*, and *a ticket closed with nobody saying so*. The join and snapshot diff that computed them (`board.py`, #12) were never called by a loop and were retired on 2026-10-11 at tag `pre-retirement` (PR #199); today the eod plan reads what moved per project through `recipes.jira_moved_on` and `movement` proposes it as evidence. Restore from the tag when a loop needs the join.
 
 ### Calendar ↔ Gemini — the meeting ledger
 
@@ -254,6 +254,8 @@ The back-and-forth needs somewhere to live, or "did I already say no to that?" b
 - **Held** in `DayDAG/Decisions.md` — a file DayDAG appends to and never regenerates, so an answer can't be overwritten before it's read. Nitin answers by writing `no` next to a line in Obsidian and the next loop picks it up. That is the escape hatch when he doesn't want a conversation.
 - **Logged** in the event log: item, asked-on, answered-on, answer. Which is how §8's "how much of what it surfaced was acted on" gets measured at the 4-week check.
 - **Ages out.** An item unanswered across three pushes goes to `parked` with a line saying so, rather than re-asking forever. Silence is an answer; the agent just says out loud that it read it that way.
+
+Status, 2026-10-11: the queue was built as `state.DecisionQueue` and never wired into a loop, so it was retired at tag `pre-retirement` (PR #199). What runs today: `closure.asks_in` reads open decisions out of `Decisions.md` for the chase loop, the file is still append-only and hand-answered, and the aging rule is not implemented. Restore the class from the tag when a loop renders decisions.
 
 ### Where the conversation happens — and how it becomes two-way
 

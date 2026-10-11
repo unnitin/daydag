@@ -9,7 +9,7 @@ from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 
-from daydag.state import ChaseItem, DecisionQueue, EventLog, NotesGap, StateFolder
+from daydag.state import ChaseItem, EventLog, NotesGap, StateFolder
 
 #: A fixed offset, so an offset other than UTC is exercised without pulling in
 #: a tz database or depending on the machine's own zone.
@@ -48,33 +48,6 @@ def test_state_is_added_to_each_loop_never_regenerated(folder):
     folder.update_state(chase=[{"owner": "jon", "ask": "wave 2 scope"}])
     assert "seth" in folder.read_state(), "the first loop's item was overwritten"
     assert "jon" in folder.read_state()
-
-
-def test_decisions_are_appended_never_regenerated(folder):
-    """An answer written in the margin must survive the next loop."""
-    q = DecisionQueue(folder)
-    first = q.add("draft nudge to seth?")
-    q.add("close the compute loop?")
-    assert first in q.render(), "an earlier decision was dropped on append"
-
-
-def test_a_hand_edit_wins_over_derived_state(folder):
-    """ARCHITECTURE: 'A hand edit is itself an event, and wins over derived state.'"""
-    q = DecisionQueue(folder)
-    item = q.add("draft nudge to seth?")
-    folder.decisions_path.write_text(
-        folder.decisions_path.read_text().replace(f"[{item}]", f"[{item}] no")
-    )
-    assert q.answer_for(item) == "no"
-
-
-def test_decision_ages_to_parked_after_three_pushes(folder):
-    """Silence is an answer; the agent says out loud that it read it that way."""
-    q = DecisionQueue(folder)
-    item = q.add("draft nudge to seth?")
-    for _ in range(3):
-        q.render()
-    assert q.status(item) == "parked"
 
 
 @pytest.mark.guardrail

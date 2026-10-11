@@ -2,14 +2,14 @@
 
 USING IT
     from daydag.ingestion import classify_items, as_predictions
-    from daydag.evalset import load_items, score
+    from evalset import load_items, score    # tests/evalset.py, beside the fixtures
 
     batch = classify_items(load_items())     # list[Classification], item order preserved
     result = score(as_predictions(batch))    # per-label precision/recall
     [c.item_id for c in batch if c.label is None]   # unplaced - surface, don't guess
 
 CONTRACTS - break one and the guarantee is gone
-    1. ``classify`` returns one of :data:`daydag.evalset.LABELS`, or ``None``.
+    1. ``classify`` returns one of :data:`LABELS`, or ``None``.
        ``None`` means *unplaced* - a shape this classifier has no evidence for -
        never a sixth label and never a guess dressed up as one.
     2. Pure and total. No vault, no network, no connector client (this package
@@ -81,8 +81,6 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from daydag.evalset import DECISION_MARKERS, MODALITIES, OWNER_FORMS
-
 __all__ = [
     "CREATION_LANGUAGE",
     "Classification",
@@ -91,6 +89,53 @@ __all__ = [
     "classify_items",
     "unplaced",
 ]
+
+#: The five categories of SPEC section 3.3 step 2. Exactly one per item.
+LABELS = (
+    "principal_commitment",
+    "assigned_ask",
+    "decision",
+    "new_workstream",
+    "noise",
+)
+
+#: How the note names an owner. `the_group` is Gemini's literal `[The group]`,
+#: and it is common enough that treating it as "no owner, therefore not an ask"
+#: would discard a large share of the real asks.
+OWNER_FORMS = frozenset(
+    {"principal", "named_person", "named_people", "first_name_only", "the_group", "none"}
+)
+
+#: Gemini writes everything in the third person, so the first-person signal
+#: SPEC section 3.3 illustrates with "I'll intro Daniel to CTO" never appears.
+#: Modality is what is left to separate a commitment from a description.
+MODALITIES = frozenset(
+    {
+        "imperative",
+        "past_declarative",
+        "present_declarative",
+        "future_will",
+        "progressive",
+        "hedged",
+    }
+)
+
+#: The verbs that mark a decision in the prose. There is no `Decisions` section
+#: to read - see reference/ingestion-eval.md.
+DECISION_MARKERS = frozenset(
+    {
+        "decided",
+        "agreed",
+        "consensus",
+        "established",
+        "adopted",
+        "resolved",
+        "finalized",
+        "prioritized",
+        "confirmed",
+        None,
+    }
+)
 
 #: The two note sections a labelled item can come from (evalset schema).
 _SECTIONS = frozenset({"body", "next_steps"})
@@ -155,7 +200,7 @@ def _is_board_hygiene(text: str) -> bool:
 
 
 def classify(item: Mapping[str, Any]) -> str | None:
-    """One of :data:`daydag.evalset.LABELS`, or ``None`` if unplaced.
+    """One of :data:`LABELS`, or ``None`` if unplaced.
 
     ``item`` follows the schema in ``tests/fixtures/ingestion/items.jsonl``:
     the output of an earlier parsing step, not raw meeting text. Only
@@ -275,10 +320,10 @@ def classify_items(items: Iterable[Mapping[str, Any]]) -> list[Classification]:
 
 
 def as_predictions(classifications: Iterable[Classification]) -> dict[str, str]:
-    """``{item_id: label}`` for :func:`daydag.evalset.score`, unplaced items dropped.
+    """``{item_id: label}`` for `tests/evalset.py`'s ``score``, unplaced items dropped.
 
     Dropping rather than guessing is deliberate and costs nothing extra:
-    ``score`` already counts an absent id as a miss (evalset.py), which is
+    ``score`` already counts an absent id as a miss (tests/evalset.py), which is
     exactly what an unplaced item is - a real item the classifier declined to
     guess at, not a hit and not a false positive either.
     """

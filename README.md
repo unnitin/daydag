@@ -39,7 +39,7 @@ artifact is the load-bearing rule; the rest is plumbing.
 | `state` | The `DayDAG/` vault folder and the SQLite event log. Two stores, opposite requirements |
 | `ledger` | Calendar-driven meeting rows, so a meeting that produced **no** notes is visible |
 | `pulse` | Repo state: local mirrors for history, API for review state |
-| `board` | Board state: Jira deltas and the ticket-key join, read never driven |
+| `board` | The watchlist's `jira` and `projects` blocks, and ticket keys in a line; the join and deltas are retired at tag `pre-retirement` until a loop needs them |
 | `closure` | Open is a verdict, not a default: the reply under every ask is read before the ask is reported open |
 | `vault` | Targeted line edits to a note, with an iCloud-aware compare-and-swap |
 | `voice` | The house voice as assertions, and the templates for every push |
@@ -56,7 +56,6 @@ artifact is the load-bearing rule; the rest is plumbing.
 | `prep_ahead` | Day-before prep for the calls his `## Prep rules` name - rows he edits, not code |
 | `people` | Who someone is - ids, title, DM, groups, how often met - with stated facts outranking inferred ones |
 | `run` | The two-phase contract that makes a loop runnable: plan the fetch, assemble the push |
-| `evalset` | The hand-labelled ingestion ground truth, and `score()` — so precision is measured, not asserted |
 | `soak` | The five-day gate's journal: every edit he asks for, and whether a repeat is still outstanding |
 | `ingestion` | SPEC §3.3's classifier: five labels, biased to precision, no write path |
 | `movement` | What the live sources say moved, proposed for confirmation - never a closure, no write path |
