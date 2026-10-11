@@ -6,6 +6,8 @@ USING IT
     gmail_gemini_notes(after=day, before=day)   # from:GEMINI_SENDER + label
     jira_moved_on("PROJ", day)                 # one project, one day, five fields
     gh_merged_on(repos, day)                   # one `gh search` across every watched repo
+    gh_open_prs(repo)                          # review state and the CI rollup, one repo
+    gh_recent_runs(repo, branch="dev")         # CI health on the watchlist's branch
     vault_path(ids, "Weekly Notes", weekly_note(day))
     week_range(day), week_label(day), next_week_label(day)
     title_from_gemini_subject(subject)
@@ -75,7 +77,11 @@ __all__ = [
     "calendar_day",
     "calendar_days",
     "gh_closed_issues_on",
+    "gh_default_branch",
     "gh_merged_on",
+    "gh_open_prs",
+    "gh_pr_checks",
+    "gh_recent_runs",
     "gh_reviewed_on",
     "gmail_gemini_notes",
     "gmail_sent_on",
@@ -745,6 +751,103 @@ def _limit(value: int, *, what: str) -> str:
     if not isinstance(value, int) or isinstance(value, bool) or not 1 <= value <= GH_LIMIT_CAP:
         raise RecipeError(f"{what} must be 1-{GH_LIMIT_CAP}, got {value!r}")
     return str(value)
+
+
+#: What the pulse reads off an open PR. `statusCheckRollup` is the CI half.
+GH_PR_FIELDS: tuple[str, ...] = (
+    "number",
+    "title",
+    "author",
+    "createdAt",
+    "updatedAt",
+    "isDraft",
+    "reviewDecision",
+    "headRefName",
+    "url",
+    "statusCheckRollup",
+)
+
+GH_RUN_FIELDS: tuple[str, ...] = (
+    "databaseId",
+    "displayTitle",
+    "headBranch",
+    "conclusion",
+    "status",
+    "createdAt",
+    "url",
+)
+
+GH_DEFAULT_PR_LIMIT = 50
+
+GH_DEFAULT_RUN_LIMIT = 20
+
+#: Git ref characters. Leading `-` excluded by the character class, so a branch
+#: cannot arrive at `gh` as a flag.
+_BRANCH = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]*$")
+
+
+def gh_open_prs(repo: object, *, limit: int = GH_DEFAULT_PR_LIMIT) -> list[str]:
+    """Open PRs for one watched repo, with review state and the CI rollup.
+
+    argv, never a shell string: the slug comes from a hand-edited watchlist, and
+    a string handed to a shell is a command injection. Same reason
+    ``pulse._run_git`` takes a list.
+    """
+    return [
+        "gh",
+        "pr",
+        "list",
+        "--repo",
+        _slug(repo),
+        "--state",
+        "open",
+        "--limit",
+        _limit(limit, what="limit"),
+        "--json",
+        ",".join(GH_PR_FIELDS),
+    ]
+
+
+def gh_pr_checks(repo: object, number: int) -> list[str]:
+    """CI check state for one PR."""
+    if not isinstance(number, int) or isinstance(number, bool) or number < 1:
+        raise RecipeError(f"PR number must be a positive integer, got {number!r}")
+    return ["gh", "pr", "checks", str(number), "--repo", _slug(repo)]
+
+
+def gh_default_branch(repo: object) -> list[str]:
+    """Resolve the default branch instead of assuming ``main``.
+
+    `createos-dsp-ingestion` defaults to ``develop``. A branch-health check
+    hardcoding ``main`` finds nothing there and reports green - guardrail 3
+    inverted, since it asserts health it never checked.
+    """
+    return ["gh", "repo", "view", _slug(repo), "--json", "defaultBranchRef"]
+
+
+def gh_recent_runs(
+    repo: object,
+    *,
+    branch: str | None = None,
+    limit: int = GH_DEFAULT_RUN_LIMIT,
+) -> list[str]:
+    """Recent CI runs. ``branch`` is omitted rather than defaulted - see above."""
+    argv = [
+        "gh",
+        "run",
+        "list",
+        "--repo",
+        _slug(repo),
+        "--limit",
+        _limit(limit, what="limit"),
+        "--json",
+        ",".join(GH_RUN_FIELDS),
+    ]
+    if branch is not None:
+        if not isinstance(branch, str) or not _BRANCH.match(branch):
+            raise RecipeError(f"{branch!r} is not a branch name")
+        argv += ["--branch", branch]
+    return argv
 
 
 #: What the wrap reads off one search hit. `gh search` has no `mergedAt`;

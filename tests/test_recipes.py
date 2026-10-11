@@ -341,6 +341,11 @@ def _gh_recipes():
     repo = WatchedRepo("CreateMusicGroup", "createos-discovery-services")
     day = date(2026, 9, 25)
     return [
+        recipes.gh_open_prs(repo),
+        recipes.gh_pr_checks(repo, 412),
+        recipes.gh_default_branch(repo),
+        recipes.gh_recent_runs(repo, branch="develop"),
+        recipes.gh_recent_runs(repo),
         recipes.gh_merged_on([repo], day),
         recipes.gh_reviewed_on([repo], day, review="approved"),
         recipes.gh_closed_issues_on([repo], day),
@@ -381,6 +386,39 @@ def test_the_module_exposes_no_send_or_write_surface():
     ]
     forbidden = ("send", "post", "reply", "draft", "transition", "assign", "delete")
     assert [n for n in exported if any(word in n.lower() for word in forbidden)] == []
+
+
+def test_open_prs_asks_for_explicit_fields_and_a_bounded_limit():
+    argv = recipes.gh_open_prs(WatchedRepo("org", "repo"))
+    assert "--json" in argv
+    fields = argv[argv.index("--json") + 1].split(",")
+    assert {"number", "title", "url", "reviewDecision", "statusCheckRollup"} <= set(fields)
+    assert int(argv[argv.index("--limit") + 1]) <= recipes.GH_LIMIT_CAP
+
+
+@pytest.mark.guardrail
+def test_the_default_branch_is_resolved_never_assumed():
+    """`createos-dsp-ingestion` defaults to `develop`, not `main`.
+
+    A branch-health check hardcoding `main` reports nothing for it and looks
+    green - guardrail 3's "if it cannot source it, it says so" inverted.
+    """
+    assert "main" not in recipes.gh_recent_runs(WatchedRepo("org", "repo"))
+    assert "--branch" not in recipes.gh_recent_runs(WatchedRepo("org", "repo"))
+    assert "defaultBranchRef" in recipes.gh_default_branch(WatchedRepo("org", "repo"))
+
+
+@pytest.mark.guardrail
+@pytest.mark.parametrize("bad", ["--json", "-x", "a b", "a;rm -rf /"])
+def test_a_branch_name_cannot_smuggle_a_flag_or_a_second_argument(bad):
+    with pytest.raises(RecipeError):
+        recipes.gh_recent_runs("org/repo", branch=bad)
+
+
+@pytest.mark.parametrize("bad", [0, -1, "412; rm -rf /"])
+def test_a_pr_number_must_be_a_positive_integer(bad):
+    with pytest.raises(RecipeError):
+        recipes.gh_pr_checks("org/repo", bad)
 
 
 def test_a_slug_string_works_as_well_as_a_watched_repo():
