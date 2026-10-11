@@ -61,6 +61,7 @@ artifact is the load-bearing rule; the rest is plumbing.
 | `movement` | What the live sources say moved, proposed for confirmation - never a closure, no write path |
 | `call_notes` | The ingest sweep (idempotent on the gmail message id) and the EOD calls section: attendance per note, provenance on every line, ranked priorities; actionable items recorded for the `State.md` chase list (#180) |
 | `style` | What his feedback taught, as rows he edits in `DayDAG/Style.md`: scope by section, lifetime by `holds`, the checkable ones enforced at build |
+| `team_practices` | The team's "How we work" metrics: ticket coverage today, reviews and ownership next. No author, anywhere |
 
 ## Working on it
 

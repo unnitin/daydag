@@ -1,0 +1,39 @@
+# Which changes need a human review, from §2 of the "How we work" doc.
+#
+# Read by `daydag.team_practices.load_risk_rules`. A config file rather than
+# prose in a skill, per the team's own ADR 0003 and `docs/writing-docs.md`
+# rule 5: rules and pointers in the doc, values in a file next to it.
+#
+# Matching is `fnmatch`, in which `*` crosses `/`. So `orchestration/*` covers
+# every file at any depth under it, and a pattern needs no `**`.
+#
+# The doc's tie-break is the rule here too: **if unsure, first bucket.** A PR
+# that touches one human-required path is human-required, whatever else is in
+# it, and a path in neither list is human-required rather than waved through.
+
+# A change here can move money, break a published contract, or take a
+# production pipeline down. The doc asks for a named human on these.
+human_required:
+  - orchestration/*            # the production DAGs
+  - resources/jobs/*           # job definitions the bundle deploys
+  - resources/ops/*            # ops jobs, same blast radius
+  - resources/ownership.yml    # who gets paged, once T0 lands
+  - resources/pipeline_permissions.yml
+  - "*schema*"                 # a published contract, wherever it lives
+  - "*royalty*"                # the doc names royalty, revenue and financial
+  - "*revenue*"                #   data explicitly
+  - "*financial*"
+  - "*.sql"                    # a query that feeds any of the above
+  - scripts/run.py             # the entry point every environment calls
+
+# Reviewed content, not reviewed risk. The bot alone is enough here, and
+# saying so is what keeps the human-required list meaningful.
+bot_enough:
+  - docs/*
+  - tests/*
+  - "*.md"
+  - .github/*
+  - .githooks/*
+  - "*requirements*.txt"
+  - uv.lock
+  - poetry.lock
