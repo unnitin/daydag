@@ -47,7 +47,7 @@ loop is cheap for him and exact for you; follow it rather than inventing a revie
   the platform reaches anyone yet; the first report is due this sprint"), not pasted from
   standups.
 - His vocabulary wins: "destination" not "target state", "proposal" not "strawman", "end to
-  end" said explicitly. Keep a list per deck in memory and reuse it.
+  end" said explicitly. These live as rows in `DayDAG/Style.md` (below), not in memory.
 - Exclusions carry their reason where the reader looks for the thing excluded (in the table
   header: "X excluded, it migrates first"), not in a footnote.
 - Things that are not in play yet still get a line saying when they join ("the new platform
@@ -61,6 +61,36 @@ loop is cheap for him and exact for you; follow it rather than inventing a revie
 - Callouts are allowed and welcome when they carry a claim the shape cannot ("a draft design
   exists; hydrate it now, the design evolves with the inputs"); anchor them to the element
   with a pointer.
+
+## What each round keeps, and where
+
+Half the stickies on the revenue deck were rules he had already given once. A rule that
+lives only in memory is recalled by relevance, not loaded with the work, so it gets asked
+for twice. Rules now live as rows in `DayDAG/Style.md`, read by `daydag.style` at build
+time and edited by him in Obsidian:
+
+```
+- <rule> · <why> · <holds> · <source> · stated|inferred
+```
+
+- **Scope is the section.** `## House` holds what applies to every piece of his work;
+  any other heading is one project (`## Revenue domain`). Craft rules that would hold for
+  anyone's deck belong in this skill's references instead, by PR.
+- **Lifetime is the `holds` field**, independent of scope: `always`, `while <fact>`, or
+  `until <YYYY-MM-DD>`. The test at write time is "what would have to change for this to
+  stop being true?" Nothing but his taste: always. A fact in the world: `while` that fact.
+  A date: it is not a rule, it is a chase-list item.
+- **Standing** is `stated` when he wrote or confirmed the row, `inferred` when a round
+  derived it from a sticky. Stated outranks inferred; the agent appends and never edits.
+- **Lapsed rows** (struck through, or past their date) are listed, not applied. Rows with a
+  condition are applied with the condition echoed in the reply, so an assumption with an
+  expiry is visible on every round.
+- **Checkable rows are enforced.** `"A", never "B"` becomes a scan of the build script for
+  B; a `never ... emoji` row scans for emoji. `python -m daydag.style check` runs both.
+- **Promotion needs evidence.** A rule starts at the narrowest scope the sticky supports.
+  Seen again on a second project, it is proposed for `house`; a house rule he never
+  overrides is a candidate for this skill's references. A project that needs an exception
+  gets an exception row; the house row stays as what he normally wants.
 
 ## Layout traps that cost a round each
 

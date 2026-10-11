@@ -162,6 +162,7 @@ Create Music Group/
     State.md           # chase list · watch items · snoozes · open notes-gaps  (agent-written, hand-correctable)
     Decisions.md       # pending decisions; Nitin answers in place              (both write it)
     Watchlist.md       # repos · Jira projects · GH Projects · channels          (config; Nitin's, agent proposes)
+    Style.md           # what feedback taught, one rule per row with scope and lifetime (Nitin's; agent appends `inferred` rows)
     Proposals/         # proposed diffs awaiting a yes, one file each            (agent-written, deleted on apply)
     Archive/           # pre-cutover snapshots of anything DayDAG took custody of
   Fact Base/           # unchanged — Nitin's, plus Workstreams (see custody, below)
