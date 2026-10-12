@@ -21,6 +21,12 @@ loop is cheap for him and exact for you; follow it rather than inventing a revie
 1. `python3 scripts/stickies.py <deck>.pptx` lists the yellow (`FFFF00`) text boxes with
    slide number, position and text. Position tells you what the sticky points at (a sticky
    at the status strip is about the status strip).
+   Then `python3 scripts/drift.py <his-version>.pptx <your-last-build>.pptx`: he also retypes
+   headings and cells in place, and says nothing about it. Every text box that differs from
+   what you gave him is feedback; carry his wording into the build script before applying
+   the stickies, or the rebuild silently overwrites it (it did, on 11 Oct 2026, five headings).
+   Keep a dated copy of every build you hand over and of every file he hands back (in your
+   state folder, not beside his deck) so the next diff has its base.
 2. Copy the sticky version to your scratch folder before touching anything, so his words
    survive the rebuild.
 3. Apply every sticky, in his words where he gave them. Where a sticky asks for options

@@ -65,7 +65,9 @@ Read the reference that matches the step you are on; they are short:
    output, one call per slide in deck order, then render with `scripts/render.sh` and look
    at every page. Fix overflow, collisions and drifting titles before showing anything.
    Revisions change only the slides named; the build script is the source, so edit it and
-   rebuild rather than patching the file. Before any handover run
+   rebuild rather than patching the file. A flow that needs explaining gets one worked
+   example built click by click: name each step's shapes in the script and run
+   `scripts/animate.py` after every rebuild (see `build.md`). Before any handover run
    `python -m daydag.style check <build.js> --project "<project>"`: it flags the phrases
    and emoji his rules forbid, and echoes every rule applied on a condition, so the reply
    can say which assumptions have an expiry.
@@ -73,12 +75,14 @@ Read the reference that matches the step you are on; they are short:
 6. **Deliver** the `.pptx` path, the rendered pages for what changed, and two or three
    things to check by page number. Say what is unverified or estimated.
 
-7. **Iterate through stickies.** He answers with yellow text boxes on the slides. Each
-   round: list them, back up his version, apply all of them, rebuild, render, look at every
-   page, reply sticky by sticky. When he says "promote", `scripts/promote.sh` turns the draft
-   into a dated file. Neither script deletes anything: render output lives in one marked
-   folder, and an old one is moved aside with its path printed. Where a sticky asks for
-   alternatives, build each as its own slide marked option A and B.
+7. **Iterate through stickies.** He answers with yellow text boxes on the slides, and by
+   retyping headings in place. Each round: back up his version, list the stickies, run
+   `scripts/drift.py` against your last build to catch what he retyped, carry both into
+   the script, rebuild, render, look at every page, reply sticky by sticky. When he says
+   "promote", `scripts/promote.sh` turns the draft into a dated file. Neither script
+   deletes anything: render output lives in one marked folder, and an old one is moved
+   aside with its path printed. Where a sticky asks for alternatives, build each as its
+   own slide marked option A and B.
 
 8. **Write through what the round taught.** Sort each sticky into a one-off, which dies
    with the round, or a rule. A rule is appended as a row he can edit:
@@ -111,6 +115,8 @@ Read the reference that matches the step you are on; they are short:
   glyph set with a legend.
 - One highlighted number per slide in bright green; everything else grey. Status colours
   always come with the status word.
+- No grey tracker text in the top corner. A section cue is the green tab (`sticker`), used
+  only where it earns its place: "Illustrative" on a built example, "A1" on an appendix page.
 - Never copy slides from the template decks that carry client content or BCG branding;
   reproduce the layout in a clean file.
 - The vault is a lagging indicator: if the deck states status, derive it from live

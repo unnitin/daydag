@@ -53,10 +53,18 @@ deck.save('deck.pptx');
    `python3 <skill>/scripts/catalog_template.py <deck.pptx>` prints slide number, text
    and picture count; `pattern-library.md` maps messages to slide numbers.
 7. Feedback rounds: `python3 <skill>/scripts/stickies.py <deck>.pptx` lists his yellow
-   stickies with slide and position; `bash <skill>/scripts/promote.sh <deck>-draft.pptx`
+   stickies with slide and position; `python3 <skill>/scripts/drift.py <his>.pptx <last-build>.pptx`
+   lists what he retyped in place; `bash <skill>/scripts/promote.sh <deck>-draft.pptx`
    renames deck and script to the dated version and moves the render folder aside. Neither
    script deletes: a render folder is only moved, and only when it carries the marker, so
    a same-named folder of his is never touched. Details in `feedback-loop.md`.
+
+Click-to-build: give every shape of step k an `objectName` starting `<prefix><k>` (pptxgenjs
+passes it through `deck.text` and any raw `addShape`), then run
+`python3 <skill>/scripts/animate.py deck.pptx --slide N --prefix P --steps K`. Each step
+appears on one click and earlier steps stay. It rewrites the slide's timing in place and
+keeps `<deck>.pre-anim.pptx` the first time, so run it again after every rebuild; the
+build script cannot carry animation itself.
 
 Helper options added from use: `chevrons(..., { textSize })` for the text under each step;
 `bulletList(..., { iconData })` puts a line icon before the box title; a `boxPanel` shorter
