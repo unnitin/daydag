@@ -214,20 +214,25 @@ def calendar_days(start: date, end: date, *, tz: ZoneInfo = PACIFIC) -> list[Day
     return [calendar_day(start + timedelta(days=offset), tz=tz) for offset in range(span + 1)]
 
 
-def next_working_day(day: date) -> date:
-    """The first Monday-to-Friday date strictly after ``day``.
+def next_working_day(day: date, n: int = 1) -> date:
+    """The ``n``-th Monday-to-Friday date strictly after ``day``. Friday's next is Monday.
 
     What the EOD wrap means by "tomorrow" (#170): a Friday wrap that read
     Saturday found nothing and said nothing about Monday. Weekends only - a
     full-day OOO or holiday would need the calendar to answer, and the plan
     fetches exactly one day before it has seen any events, so it cannot skip
-    a day it has not read. `run.plan` and `eod_wrap` both call this, so the
-    day fetched and the day asked for cannot drift apart.
+    a day it has not read. `run.plan`, `eod_wrap` and `prep_ahead` (``n`` is a
+    prep rule's lead, "2 days before") all call this, so the day fetched and
+    the day asked for cannot drift apart.
     """
-    after = day + timedelta(days=1)
-    while after.weekday() >= 5:  # 5 = Saturday, 6 = Sunday
-        after += timedelta(days=1)
-    return after
+    if n < 1:
+        raise ValueError("n counts working days ahead and starts at 1")
+    current = day
+    while n:
+        current += timedelta(days=1)
+        if current.weekday() < 5:  # 5 = Saturday, 6 = Sunday
+            n -= 1
+    return current
 
 
 # ---------------------------------------------------------------------------

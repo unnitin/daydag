@@ -51,9 +51,9 @@ WHY IT EXISTS
     a scheduled evening push, so it can afford the reading a deck needs.
 
 KNOWN LIMIT
-    Working days skip weekends only, not holidays. `next_working_day` is a
-    local helper; the EOD wrap's Friday -> Monday fix (#170) has its own, and
-    the two should become one recipe once both land.
+    Working days skip weekends only, not holidays. `next_working_day` is the
+    recipe the EOD wrap uses too (re-exported here), so "tomorrow" means the
+    same day in both evening loops.
 """
 
 from __future__ import annotations
@@ -69,7 +69,7 @@ from daydag import brief
 from daydag.ledger import attendee_parts, is_resource, qualifies, title_from_gemini_subject
 from daydag.prep import MAX_POINTS, Point, PrepError, point
 from daydag.pulse import _BOLD_HEADING, _BULLET, _HEADING, _RULE
-from daydag.recipes import RecipeError, gmail_gemini_notes, slack_search
+from daydag.recipes import RecipeError, gmail_gemini_notes, next_working_day, slack_search
 from daydag.voice import WARN
 
 __all__ = [
@@ -269,22 +269,6 @@ def read_rules(path: str | Path | None) -> Rules:
 # ---------------------------------------------------------------------------
 # which day
 # ---------------------------------------------------------------------------
-
-
-def next_working_day(day: date, n: int = 1) -> date:
-    """The ``n``-th weekday after ``day``. Friday's next is Monday.
-
-    Local on purpose - #170 is fixing the same Friday -> Monday bug in the EOD
-    wrap in parallel, and a shared helper belongs on main once one lands.
-    """
-    if n < 1:
-        raise ValueError("n counts working days ahead and starts at 1")
-    current = day
-    while n:
-        current += timedelta(days=1)
-        if current.weekday() < 5:
-            n -= 1
-    return current
 
 
 def target_days(today: date, rules: Rules) -> list[date]:

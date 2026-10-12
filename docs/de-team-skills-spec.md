@@ -1,5 +1,10 @@
 # Data Engineering skills - spec
 
+> **Status, 2026-10-12.** A spec, not built: none of T0-T5 exists yet. By section 1 they
+> live in `cmg-sdp-transform` and the shared plugin, so they are built there; this file
+> stays here as the agreed shape until then. The reporting half (coverage, reviews) is
+> built in this repo, see `docs/how-we-work-skills.md`.
+
 Six skills that make the "How we work" doc cheap to follow, plus where a DE
 skill belongs and what shape it has to be in to get merged.
 
