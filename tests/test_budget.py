@@ -16,6 +16,7 @@ import subprocess
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
+from urllib.parse import urlparse
 
 import pytest
 
@@ -435,10 +436,11 @@ def test_every_thread_promise_has_its_reply(tmp_path):
     assert few.promised == ()
     assert budget.dangling(many) == []
     assert "overnight, the rest (13)" in many.thread
-    assert all(
-        "example.slack.com" in line or "example.com" in line
+    hosts = {
+        urlparse(brief.split_citation(line)[1].strip(" ()")).hostname
         for line in many.thread.splitlines()[1:]
-    )
+    }
+    assert hosts <= {"example.slack.com", "mail.example.com"}, "a reply row lost its permalink"
 
 
 def _thread_rows(key, count):
