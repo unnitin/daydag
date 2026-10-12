@@ -12,9 +12,14 @@ instead of re-deriving it.
 **Status: in development.** All eight loops the skill advertises now run. Two of
 them - the morning brief and the Sunday week-ahead - have been checked end to
 end against live connectors on days verified by hand; the other six run but
-have not, and that gap is where every defect found so far has lived. Nothing
-runs on a schedule. See [USAGE.md](USAGE.md) for the per-loop split and how to
-run one.
+have not, and that gap is where every defect found so far has lived. The
+morning brief passed its five-day soak (#13). Nothing runs on a schedule. See
+[USAGE.md](USAGE.md) for the per-loop split and how to run one.
+
+Not built yet, each an issue: the schedule (#25), the chaser's clocks and nudge
+drafts (#18), write-back to the vault (#16), the ingestion digest (#17), most
+on-demand commands (#22), the section 8 measurements (#27), and the pulse's PR
+review and CI half (#145).
 
 ## Where to start
 
@@ -23,7 +28,7 @@ run one.
 | [USAGE.md](USAGE.md) | **How to actually run it**, what works today, and the gotchas |
 | [SPEC.md](SPEC.md) | What the agent does — the loops, the sources, the guardrails |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | How the pieces fit, and **who owns each artifact** |
-| [BUILD.md](BUILD.md) | What gets built in what order, and why that order |
+| [Issues](https://github.com/unnitin/daydag/issues) | What is planned: the milestones (M2 to M5) and the open decisions (D-1 to D-4), one issue each |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Tests first, review before pushing, how to merge |
 
 Read ARCHITECTURE's ownership table before changing anything. One writer per

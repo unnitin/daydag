@@ -40,7 +40,7 @@ That is the whole interface. `SKILL.md` maps the other phrasings ("wrap up",
 | "prep tomorrow's calls" / `prep-ahead` | **runs**, new in [#171](https://github.com/unnitin/daydag/issues/171). Evening, with the wrap: preps the next working day's calls that match `## Prep rules` in `DayDAG/Watchlist.md`. Checked against Monday 9/28's real calendar; not yet run end to end. |
 | "ingest", "chase", "what shipped" | **run**, newly wired in [#95](https://github.com/unnitin/daydag/issues/95). `chase` reads `State.md`; `ship` needs a Pulse built from the mirrors: pass `--mirrors` (and `--log`, so the cursors persist). |
 
-All seven loops the skill advertises are now reachable. Two — morning and
+All eight loops the skill advertises are now reachable. Two — morning and
 week-ahead — have been checked against real data end to end; the rest have run,
 which is not the same thing.
 
@@ -164,14 +164,14 @@ Payloads: `{"calendar": [...], "prep_ahead": {"<event id>": {"notes": [...],
 "deck": [...], "slack": [...], "points": [...], "ideas": [...]}}}` - each read's
 `put_under` names its key. `ideas` render only for a rule that asks for them,
 labelled as suggestions; a deck that would not open is one line.
-## The soak (running now)
+## The soak (passed)
 
-The morning brief is inside its five-day gate - BUILD's M2-5 - which was set
-before seven loops got built on top of it and never actually run. Five working
-days, every requested edit logged, passing when the count trends down and
-nothing is still being asked twice.
+The morning brief's five-day gate (#13) passed: eleven days logged between
+15 Sep and 7 Oct, the edits falling from 13 and 16 a day to none, and nothing
+asked twice still open. The journal stays the place to log an edit the day you
+ask for it; the commands are unchanged.
 
-Each morning, after reading the brief:
+After reading a brief:
 
 ```sh
 LOG=~/.local/state/daydag/events.db
@@ -181,11 +181,14 @@ python -m daydag.soak report  --log $LOG
 ```
 
 ```
-soak: 2/5 days - 3 more working day(s) to run
-  2026-09-14  1 edit
-  2026-09-15  1 edit
-  ⚠ asked twice, fold it into the skill: drop the emoji from the overnight lines
+soak: 11/5 days - passed
+  2026-09-15  13 edits
+  2026-09-17  16 edits
+  ...
+  2026-10-07  0 edits
 ```
+
+A repeat shows as `⚠ asked twice, fold it into the skill: <the edit>` under the days.
 
 Say it the way you said it - the journal spots a repeat by matching the text,
 and a tidied paraphrase reads as a new request. A repeat is the useful signal,

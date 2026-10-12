@@ -35,8 +35,9 @@ Three specifics worth not re-deriving:
    (`pulse.py`). That is the entire API surface DayDAG consumes. Everything
    richer in the docstring is aspiration, not a call site.
 2. **Projects v2 is deliberately flagged, not read** (`board.py`: *"GitHub
-   Projects v2 is flagged, not read - the v2 API returns an empty page rather
-   than an error, which is why a watched org project renders as one [note]"*).
+   Projects v2 is flagged, not read - the v2 API is GraphQL-only and a REST
+   call against it returns nothing useful rather than an error, which is why a
+   watched org project renders as one named line instead of silence"*).
    So the `project` / `read:project` scope buys nothing.
 3. **DayDAG never reads a GitHub token itself.** No `GH_TOKEN` or
    `GITHUB_TOKEN` anywhere in `src/`. Mirrors shell out to `git`; the token

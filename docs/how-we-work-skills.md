@@ -1,5 +1,11 @@
 # Skills for "Data Engineering - How we work" - design and execution plans
 
+> **Status, 2026-10-12.** D1 `coverage` and D2 `reviews` are built: `daydag.team_practices`
+> and the `team-practices` skill (#163). Reviewers are counted, not named, until the people
+> directory has a GitHub login (#162). Nothing triggers the skill yet; it runs when asked.
+> D3 `owners`, D4 `pack` and T0-T5 are not built; T1-T5 belong in the team's repos (§3
+> below and `docs/de-team-skills-spec.md`), not here.
+
 Written 2026-09-20 from the doc Nitin posted to #team_data_engineering
 (`${SLACK_CH_TEAM_DATA_ENGINEERING}`, thread ts kept out of the repo) on
 2026-09-18, the doc itself (`${GDOC_HOW_WE_WORK}`), its three replies, and a read of `CreateMusicGroup/cmg-sdp-transform` today: 300
