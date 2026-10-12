@@ -71,7 +71,17 @@ from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any
 
-from daydag import brief, call_notes, closure, eod_wrap, movement, prep_ahead, recipes, week_ahead
+from daydag import (
+    brief,
+    budget,
+    call_notes,
+    closure,
+    eod_wrap,
+    movement,
+    prep_ahead,
+    recipes,
+    week_ahead,
+)
 from daydag.board import read_board_watchlist
 from daydag.config import ConfigError, resolve_reference, timezone_for
 from daydag.ledger import (
@@ -106,6 +116,7 @@ from daydag.state import (
     StateNotWritable,
     classify_sensitivity,
 )
+from daydag.voice import clipped
 
 __all__ = ["LOOPS", "Plan", "RunError", "Step", "main", "plan", "render"]
 
@@ -1031,21 +1042,24 @@ def _past(record: Mapping[str, Any], horizon: datetime, tz: Any) -> bool:
     return isinstance(end, datetime) and _local(end, tz) < horizon
 
 
-def _gave_up_section(rows: Sequence[Row], tz: Any) -> str:
+def _gave_up_section(rows: Sequence[Row], tz: Any) -> tuple[brief.Section, list[str]]:
     """One line per title, its dates beside it: a daily standup that never
-    produced a note is one decision, not five lines."""
+    produced a note is one decision, not five lines. The titles come back in
+    line order, so the budget can say which ones the DM actually named."""
     dates: dict[str, list[str]] = {}
     for row in rows:
         start = _local(row.start, tz)
         dates.setdefault(row.summary, []).append(f"{start:%a %b} {start.day}".lower())
-    return brief.Section(
+    section = brief.Section(
         f"gave up on notes ({len(rows)})",
         tuple(
             f"- {summary} ({', '.join(days)}) - no note found in"
             f" {REPLAY_HORIZON.days} days, dropping it from the list"
             for summary, days in dates.items()
         ),
-    ).render()
+        key="gave-up",
+    )
+    return section, list(dates)
 
 
 def _remembered(
@@ -1444,6 +1458,8 @@ def render(
     pulse: Any = None,
     write_state: bool = False,
     selector: str = "",
+    full: bool = False,
+    on_fit: Callable[[str], None] | None = None,
 ) -> str:
     """The push text for ``loop``, assembled from what the agent fetched.
 
@@ -1451,6 +1467,12 @@ def render(
     seeded today are readable tomorrow, and the run leaves a row either way.
     Without one every run starts blank, which is correct for a test and wrong
     for a morning.
+
+    The morning is fitted to one Slack message (`daydag.budget`, #185): what
+    comes back is the DM, then `budget.THREAD_MARK` and one reply when the DM
+    had to cut overnight or shipping rows. ``full`` returns the unfitted render
+    instead and records nothing a fitted run would; ``on_fit`` receives the
+    fit's one-line summary (what was cut, and where it lives).
     """
     _known(loop)
     _aware(now)
@@ -1497,6 +1519,7 @@ def render(
         if directory is not None:
             _observe_past(directory, ledger, identities, now)
     runner = RunLog(events, clock=lambda: now) if events is not None else None
+    assembled: list[brief.Brief] = []
 
     def _assemble() -> str:
         if loop == "ship":
@@ -1520,14 +1543,16 @@ def render(
         if loop == "prep-ahead":
             return _prep_ahead(now, identities, payloads, directory)
         if loop == "morning":
-            return brief.assemble(
+            morning = brief.assemble(
                 now=now,
                 sources=sources,
                 identities=identities,
                 state=folder,
                 ledger=ledger,
                 pulse=pulse,
-            ).render()
+            )
+            assembled.append(morning)
+            return morning.render()
         if loop == "eod":
             rows = _movement_rows(folder, payloads, now)
             return eod_wrap.assemble(
@@ -1555,12 +1580,8 @@ def render(
             text = _assemble()
             active.observe([{"name": loop, "source": "daydag", "status": REACHED, "reason": ""}])
 
-    if gave_up:
-        # Said once, in the morning, then recorded so it is not said again.
-        text += "\n\n" + _gave_up_section(gave_up, tz)
-        if events is not None:
-            for row in gave_up:
-                events.record(GAVE_UP, id=row.event_id, start=row.start.isoformat())
+    gave_up_section, gave_up_titles = _gave_up_section(gave_up, tz) if gave_up else (None, [])
+    late: list[str] = []
     if loop not in _NO_REMEMBER and loop not in _LOOKS_AHEAD:
         # A prep is a QUESTION about the week ahead, not a day's seeding.
         # Remembering its seven fetched days persisted every future meeting;
@@ -1585,8 +1606,67 @@ def render(
             # letting this propagate threw away a complete brief over a file
             # the writer declined to touch - the loudest possible failure for
             # the most conservative possible refusal.
-            text += f"\n\n- couldn't update State.md: {unwritable}"
+            refusal = f"- couldn't update State.md: {unwritable}"
+            if loop == "morning":
+                late.append(clipped(refusal, 200, ellipsis="..."))
+            else:
+                text += f"\n\n{refusal}"
+    if assembled:
+        text = _fit_morning(
+            assembled[0],
+            now=now,
+            tz=tz,
+            gave_up=gave_up,
+            section=gave_up_section,
+            titles=gave_up_titles,
+            late=late,
+            events=events,
+            full=full,
+            on_fit=on_fit,
+        )
     return text
+
+
+def _fit_morning(
+    assembled: brief.Brief,
+    *,
+    now: datetime,
+    tz: Any,
+    gave_up: Sequence[Row],
+    section: brief.Section | None,
+    titles: Sequence[str],
+    late: Sequence[str],
+    events: EventLog | None,
+    full: bool,
+    on_fit: Callable[[str], None] | None,
+) -> str:
+    """The morning as one DM plus at most one reply, gave-up recorded for what it names.
+
+    Gave-up is said once, then recorded so it is not said again - but only for
+    the titles the DM actually names (#185). A title the budget counted instead
+    is not recorded, so `_gave_up` returns it tomorrow and the brief names it
+    then. `full` is the unfitted render for a terminal and records nothing.
+    """
+    if full:
+        text = assembled.render()
+        if section is not None:
+            text += "\n\n" + section.render()
+        return text + "".join(f"\n\n{line}" for line in late)
+    fitted = budget.fit_morning(
+        assembled,
+        now=now,
+        gave_up=section,
+        gave_up_titles=titles,
+        gave_up_days=REPLAY_HORIZON.days,
+        late=late,
+    )
+    if events is not None:
+        for row in gave_up:
+            if row.summary in fitted.gave_up_shown:
+                events.record(GAVE_UP, id=row.event_id, start=row.start.isoformat())
+    if on_fit is not None:
+        on_fit(fitted.summary())
+    return fitted.text()
 
 
 def _observe_past(
@@ -1771,7 +1851,7 @@ def main(argv: list[str] | None = None) -> int:
             "usage: python -m daydag.run {plan|render} {"
             + "|".join(LOOPS)
             + '} [--log PATH] [--write-state] [--mirrors] [--for "<meeting or person>"]'
-            + " [--calendar PATH] [--payloads PATH]"
+            + " [--calendar PATH] [--payloads PATH] [--full]"
         )
         return 2
 
@@ -1783,6 +1863,9 @@ def main(argv: list[str] | None = None) -> int:
     # `--write-state` projects what the run learned back into `State.md`.
     log = args[args.index("--log") + 1] if "--log" in args[:-1] else None
     write_state = "--write-state" in args
+    # `--full` prints the morning unfitted, for a terminal: the answer to a
+    # "+N more" line. Never posted, and it records nothing a fitted run would.
+    full = "--full" in args
     # `--mirrors` syncs the watchlist's repos and builds the pulse (#138), so
     # `ship` and the shipping sections have something to render.
     with_mirrors = "--mirrors" in args
@@ -1848,6 +1931,9 @@ def main(argv: list[str] | None = None) -> int:
                 pulse=pulse,
                 write_state=write_state,
                 selector=selector,
+                full=full,
+                # stderr, so the posted text stays exactly the push
+                on_fit=lambda line: print(line, file=sys.stderr),
             )
             if log and report is not None:
                 store_cursors(EventLog.open(log), report)

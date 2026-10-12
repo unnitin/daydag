@@ -105,6 +105,24 @@ encodings bite, and both fail quietly in the direction of saying *less*:
 `SKILL.md` carries the full shaping contract. Get it wrong and the loop
 degrades rather than lying, but it degrades silently.
 
+## The morning fits one message
+
+`render morning` prints a DM of at most 4,500 characters and, on a heavy day, a
+line `--- thread ---` followed by one reply holding the overnight and shipping
+rows the DM cut (#185). Post the two parts as they are - the skill says how -
+and read stderr for what was cut and where it lives:
+
+```
+morning push: 2,707 chars; cut owed 112 -> DayDAG/State.md; watch 41 -> DayDAG/State.md; ...
+```
+
+To see what a "+N more" line hides, render the same payloads unfitted in the
+terminal. It records nothing, so the next fitted run still names what it cut:
+
+```sh
+python -m daydag.run render morning --payloads payloads.json --full
+```
+
 ## Prepping a meeting you name
 
 ```sh

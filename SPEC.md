@@ -71,6 +71,8 @@ watch
 
 Meeting prep for the day's flagged meetings goes as threaded replies under the brief, not inline.
 
+**It fits one message (#185).** A Slack message carries about 5,000 characters, and a heavy day rendered 23,000-59,000, so for three weeks every brief was rewritten by hand. The renderer now enforces a 4,500-character budget (`daydag.budget`). A morning that fits is unchanged. One that does not keeps the day's meetings (packed, one line per clash pile-up, each line citing the calendar's day view instead of every event's link) and shows the first few of each list - the 🔴 items in note order, the chase and watch rows with a link first, overnight newest first - with every cut counted on a line that names where the rest lives: `DayDAG/State.md`, the weekly note, "listed again tomorrow" or "named in tomorrow's brief". Overnight and shipping rows have no such home, so the ones cut go verbatim into one threaded reply. A cited line is shortened in its words, never its link, and nothing is dropped without a count.
+
 ### 3.2 Meeting prep pings — 30 min before qualifying meetings
 
 Qualifying: 1:1s, steering/pod meetings, anything with Sponsor/CTO/external parties. Skipped: standups, focus blocks. Per meeting: 3–5 talking points built from the last ~4 weeks of that meeting's notes (Gemini notes, Notion meeting notes, Granola) plus related Slack threads from the same window — the exact recipe of the weekly-planning skill's File 2, run just-in-time and delivered as a short DM. Points carry the "why now": not "sprint demo" but "sprint demo — frame the wins, force the Revenue-domain teaser decision."

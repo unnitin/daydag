@@ -64,6 +64,18 @@ python -m daydag.run render morning < payloads.json   # the push text
 python -m daydag.run render morning --payloads payloads.json   # same, from a file - use this when headless
 ```
 
+**Posting the morning (#185).** `render morning` fits the brief to one Slack
+message. Render once and post what it printed: everything ABOVE the line
+`--- thread ---` verbatim as the DM to the principal, and everything BELOW it,
+when there is a below, as ONE reply in that DM's thread (`thread_ts` from the
+link the first post returns). Never compose, trim, merge, reorder or "tidy"
+either part - a "+N more ... (DayDAG/State.md)" line is the budget saying where
+the rest lives, and it is the line he can open. Post nothing if render printed
+nothing; if the reply fails, post one line saying so. Never post `--full`: it
+is the unfitted render, for the terminal when he asks what a "+N" hides. The
+one-line summary render writes to stderr goes into the run log. Log the soak
+day as shipped only when the posted text is byte-for-byte what render printed.
+
 `plan` gives you one step per source. Run each one **exactly as given** - the
 query is built from `daydag.recipes`, which carries the bounds the #2 audit
 measured: one calendar day (five days returned 156,681 chars and never
