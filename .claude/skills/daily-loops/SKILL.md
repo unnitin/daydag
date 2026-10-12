@@ -72,9 +72,12 @@ link the first post returns). Never compose, trim, merge, reorder or "tidy"
 either part - a "+N more ... (DayDAG/State.md)" line is the budget saying where
 the rest lives, and it is the line he can open. Post nothing if render printed
 nothing; if the reply fails, post one line saying so. Never post `--full`: it
-is the unfitted render, for the terminal when he asks what a "+N" hides. The
-one-line summary render writes to stderr goes into the run log. Log the soak
-day as shipped only when the posted text is byte-for-byte what render printed.
+is the unfitted render, for the terminal when he asks what a "+N" hides, and
+it writes nothing a later brief reads - pass the same `--log` so it sees the
+remembered gaps and gave-up titles too. The fit's one-line summary is recorded in the event log as
+`morning_fit` and printed to stderr only in a terminal; it is never part of the
+post. Log the soak day as shipped only when the posted text is byte-for-byte
+what render printed.
 
 `plan` gives you one step per source. Run each one **exactly as given** - the
 query is built from `daydag.recipes`, which carries the bounds the #2 audit

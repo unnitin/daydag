@@ -2,10 +2,11 @@
 
 The real render that day was 59,510 characters against a Slack message of about
 5,000, so every brief since 21 Sep was rewritten by hand. This builds a morning
-with the same SHAPE - 24 meetings with an 8-meeting pile-up and five two-way
-clashes, 115 chase rows (111 with the link on a sub-bullet, 3 struck), 43 watch
-rows (7 struck), an 11-item red list with one 700-character item, 8 Slack
-mentions and 9 Gemini notes overnight - and none of its content. Every name is a
+of about the same SIZE and shape - 24 meetings with a 10-meeting pile-up and
+four two-way clashes (the real day had 8 and five), 115 chase rows (111 with
+the link on a sub-bullet, 3 struck), 43 watch rows (7 struck), an 11-item red
+list with one 700-character item, 8 Slack mentions and 9 Gemini notes
+overnight - and none of its content. Every name is a
 role token, every link points at example.com, and every id is a placeholder the
 secret scanner lets through.
 
@@ -120,16 +121,17 @@ def _at(hour: int, minute: int = 0, day: date = DAY) -> datetime:
 
 
 def events(day: date = DAY, *, count: int = 24, seed: int = 7) -> list[dict[str, Any]]:
-    """``count`` meetings: an 8-meeting chained pile-up, five two-way clashes,
-    the rest clash-free; three declined, one all-day. Datetimes, as the
-    runner's payload adapter hands them to the brief."""
+    """``count`` meetings: eight chained from 9:15 that run into the first noon
+    pair (one 10-meeting pile-up), four more two-way clashes, the rest
+    clash-free; three declined, one all-day. Datetimes, as the runner's
+    payload adapter hands them to the brief."""
     rng = random.Random(seed)  # noqa: S311 - a fixed seed, not a secret
     slots: list[tuple[datetime, datetime]] = []
-    # the pile-up: 9:15 to 11:45, each overlapping the next
+    # the pile-up: eight from 9:15, each overlapping the next, the last ending 12:05
     for i in range(8):
         start = _at(9, 15, day) + timedelta(minutes=20 * i)
         slots.append((start, start + timedelta(minutes=30)))
-    # five clashing pairs through the afternoon
+    # five clashing pairs from noon; the noon pair runs into the pile-up
     for hour in (12, 13, 14, 15, 16):
         slots.append((_at(hour, 0, day), _at(hour, 30, day)))
         slots.append((_at(hour, 15, day), _at(hour, 45, day)))

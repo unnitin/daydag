@@ -116,7 +116,6 @@ from daydag.state import (
     StateNotWritable,
     classify_sensitivity,
 )
-from daydag.voice import clipped
 
 __all__ = ["LOOPS", "Plan", "RunError", "Step", "main", "plan", "render"]
 
@@ -903,6 +902,9 @@ def _vault(identities: Mapping[str, str]) -> StateFolder | None:
 #: note and was surfaced as "gave up" - so it is said once, not every morning.
 GAVE_UP = "meeting_gave_up"
 
+#: One row per fitted morning: the push's size and what it cut, and where to (#185).
+MORNING_FIT = "morning_fit"
+
 _Key = tuple[str, datetime]
 
 
@@ -1470,9 +1472,15 @@ def render(
 
     The morning is fitted to one Slack message (`daydag.budget`, #185): what
     comes back is the DM, then `budget.THREAD_MARK` and one reply when the DM
-    had to cut overnight or shipping rows. ``full`` returns the unfitted render
-    instead and records nothing a fitted run would; ``on_fit`` receives the
-    fit's one-line summary (what was cut, and where it lives).
+    had to send rows on. ``full`` returns the unfitted render instead and
+    writes nothing a later brief reads: no run-log row, no remembered
+    meetings, no State.md projection, no directory observations, no gave-up
+    records, no fit row - it answers a "+N more" line without changing what
+    tomorrow's brief says. (Opening a log that does not exist yet still
+    creates it, an empty vault still gets its `DayDAG/` folder, and `main`'s
+    `--mirrors` still fetches and stamps the fetch time it reports.) ``on_fit`` receives the
+    fit's one-line summary (what was cut, and where it lives), which is also
+    recorded in the log as a `morning_fit` row.
     """
     _known(loop)
     _aware(now)
@@ -1481,6 +1489,9 @@ def render(
     )
     folder = state if state is not None else _vault(identities)
     events = log if log is None else EventLog.open(log)
+    # What this run may WRITE to the log. `--full` reads the same history a
+    # fitted run reads and writes none of it back.
+    records = None if full else events
     directory = (
         People(events)
         if events is not None and (loop in _NEEDS_LEDGER or loop == "prep-ahead")
@@ -1516,9 +1527,9 @@ def render(
         # idempotent per instance, so brief's own seeding stays a no-op.
         ledger.seed_day(_seedable(payloads))
         _attach_notes(ledger, payloads, now)
-        if directory is not None:
+        if directory is not None and records is not None:
             _observe_past(directory, ledger, identities, now)
-    runner = RunLog(events, clock=lambda: now) if events is not None else None
+    runner = RunLog(records, clock=lambda: now) if records is not None else None
     assembled: list[brief.Brief] = []
 
     def _assemble() -> str:
@@ -1589,7 +1600,7 @@ def render(
         # reported as a permanent "meeting w/ no notes", and a rescheduled one
         # became two rows - a phantom gap beside the real meeting. `_snapshot`
         # now keeps only today's rows, but prep still records nothing.
-        _remember(events, snapshot)
+        _remember(records, snapshot)
     # Only the ledger-carrying loops project. The original reason - that a loop
     # handed an empty ledger would REPLACE the notes-gaps section with nothing -
     # stopped applying when `update_state` became an append (#130): projecting
@@ -1597,7 +1608,7 @@ def render(
     # still does is keep `chase`, `ingest`, `ship` and `week-ahead` from filing
     # their derived items, and whether it should is a separate decision from
     # this one, so it stays as it is rather than being widened in passing.
-    if write_state and loop in _NEEDS_LEDGER and folder is not None and events is not None:
+    if write_state and loop in _NEEDS_LEDGER and folder is not None and records is not None:
         try:
             _project(folder, events, ledger, now)
         except StateNotWritable as unwritable:
@@ -1608,7 +1619,8 @@ def render(
             # the most conservative possible refusal.
             refusal = f"- couldn't update State.md: {unwritable}"
             if loop == "morning":
-                late.append(clipped(refusal, 200, ellipsis="..."))
+                # whole when the morning fits; the budget clips it only in a fitted DM
+                late.append(refusal)
             else:
                 text += f"\n\n{refusal}"
     if assembled:
@@ -1620,7 +1632,7 @@ def render(
             section=gave_up_section,
             titles=gave_up_titles,
             late=late,
-            events=events,
+            events=records,
             full=full,
             on_fit=on_fit,
         )
@@ -1646,6 +1658,8 @@ def _fit_morning(
     the titles the DM actually names (#185). A title the budget counted instead
     is not recorded, so `_gave_up` returns it tomorrow and the brief names it
     then. `full` is the unfitted render for a terminal and records nothing.
+    The fit's summary goes to the log as `MORNING_FIT`, so a cut can be
+    explained after the fact without reading stderr.
     """
     if full:
         text = assembled.render()
@@ -1664,6 +1678,7 @@ def _fit_morning(
         for row in gave_up:
             if row.summary in fitted.gave_up_shown:
                 events.record(GAVE_UP, id=row.event_id, start=row.start.isoformat())
+        events.record(MORNING_FIT, summary=fitted.summary())
     if on_fit is not None:
         on_fit(fitted.summary())
     return fitted.text()
@@ -1864,7 +1879,8 @@ def main(argv: list[str] | None = None) -> int:
     log = args[args.index("--log") + 1] if "--log" in args[:-1] else None
     write_state = "--write-state" in args
     # `--full` prints the morning unfitted, for a terminal: the answer to a
-    # "+N more" line. Never posted, and it records nothing a fitted run would.
+    # "+N more" line. Never posted; it writes nothing a later brief reads, and
+    # leaves the cursors where the fitted run put them.
     full = "--full" in args
     # `--mirrors` syncs the watchlist's repos and builds the pulse (#138), so
     # `ship` and the shipping sections have something to render.
@@ -1932,10 +1948,13 @@ def main(argv: list[str] | None = None) -> int:
                 write_state=write_state,
                 selector=selector,
                 full=full,
-                # stderr, so the posted text stays exactly the push
-                on_fit=lambda line: print(line, file=sys.stderr),
+                # A terminal sees the fit's summary; a scheduled run whose
+                # stderr may be merged into what it posts does not - the log
+                # has it either way (`MORNING_FIT`).
+                on_fit=(lambda line: print(line, file=sys.stderr)) if sys.stderr.isatty() else None,
             )
-            if log and report is not None:
+            # `--full` is read-only: the cursors stay where the fitted run left them
+            if log and report is not None and not full:
                 store_cursors(EventLog.open(log), report)
             if text:
                 print(text)

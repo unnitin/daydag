@@ -3,8 +3,8 @@
 USING IT
     fitted = fit_morning(assembled, now=now, gave_up=section, gave_up_titles=titles, late=lines)
     fitted.text()             # the DM; then THREAD_MARK and ONE reply, when one is needed
-    fitted.gave_up_shown      # the gave-up titles the DM names - record GAVE_UP for these only
-    fitted.summary()          # one line for stderr and the run log
+    fitted.gave_up_shown      # gave-up titles the DM or its reply names: record only these
+    fitted.summary()          # one line for the run log (and stderr, in a terminal)
     head, thread = split_parts(fitted.text())
     dangling(fitted)          # [] - every "in the thread" line has its reply
 
@@ -14,18 +14,26 @@ CONTRACTS - break one and the guarantee is gone
        only acts on a morning that would not fit.
     2. Otherwise the DM is at most `PUSH_BUDGET` characters, always. Each section
        is ranked and capped, then a deterministic loop shrinks caps in
-       `SHRINK_ORDER` until it fits; with every cap at zero only headings, count
-       lines and the degrade footer remain, which is bounded by construction.
+       `SHRINK_ORDER` until it fits, and gives back any row that then fits
+       again; with every cap at zero only headings, count lines, the degrade
+       footer and the pulse's own notices (one per unreadable repo) remain,
+       which is bounded by construction - by the sources and the watchlist.
     3. Nothing is dropped silently. Every row of a fitted section is shown,
        counted on an overflow line that cites where the rest lives (`State.md`,
        the weekly note, the calendar day), counted with a promise that is true
-       ("listed again tomorrow", "named in tomorrow's brief"), or copied whole
-       into the thread. `Fitted.cuts` holds shown + counted == total per section.
-    4. Citations are never clipped. A line is shortened in what it says, never in
-       its link, so every line still passes `brief.unsourced_claims`.
-    5. Only overnight and shipping overflow goes to the thread - the two sections
-       nothing re-raises tomorrow. `brief.NOT_SHOWN` appears only on their
-       overflow lines, and `dangling` checks the reply carries them.
+       ("listed again tomorrow"), or carried to the thread. `Fitted.cuts` holds
+       shown + counted == total per section, and a meeting a pile-up row does
+       not name is counted, not shown.
+    4. No list row loses or cuts a link. A row is shortened in what it says; a
+       link inside the words moves to the row's citation first, so every row
+       still passes `brief.unsourced_claims`. (A packed meeting TITLE is cut at
+       `brief.TITLE_CAP` as a title; its row cites the calendar's day.)
+    5. Overflow with no other home - overnight, shipping, and gave-up titles -
+       goes to ONE thread reply. Every section the DM says is "in the thread"
+       keeps its heading there, with the count it really shows; rows the reply
+       itself cannot hold are counted on a line saying where they still are,
+       overnight first (still in Slack and Gmail). `dangling` reads the DM's
+       own words and checks every promise it makes has its section.
     6. Pure and deterministic: no I/O, no clock, the same input gives the same text.
 
 WHY IT EXISTS
@@ -39,23 +47,27 @@ WHY IT EXISTS
 KNOWN LIMIT
     "Newest appended" stands in for "moved since the last brief": nothing records
     what the last brief showed, so a stale row can hold a slot. `_ranked` is the
-    one place a shown-lines record would plug in. The 7 Oct margin is about 70
-    characters; a heavier day relies on the shrink loop, which costs rows -
-    watch, then no-notes, then gave-up go to count lines first.
+    one place a shown-lines record would plug in. A heavier day than 7 Oct
+    relies on the shrink loop, which costs rows - watch, then no-notes, then
+    gave-up go to count lines first. Gave-up titles the reply cannot hold wait
+    for a later morning; its floor of `CAPS["gave-up"]` rows a day is what
+    stops a run of heavy days from holding them forever.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
 from daydag import recipes
 from daydag.brief import (
     NOT_SHOWN,
+    PILE_WIDTH,
     UNSOURCED,
     Brief,
+    MeetingRow,
     Section,
     _local,
     clip_line,
@@ -101,7 +113,19 @@ CAPS: Mapping[str, int] = {
 
 #: Who gives up a line first when the DM is still over. Watch first - it never
 #: made a hand-written brief - and meetings last, because the day is the brief.
-SHRINK_ORDER = ("watch", "gaps", "gave-up", "shipping", "owed", "note", "overnight", "meetings")
+#: Before a meeting row goes, a pile-up stops naming every meeting in it
+#: ("pile": 1 names them all, 0 names them up to `brief.PILE_WIDTH`).
+SHRINK_ORDER = (
+    "watch",
+    "gaps",
+    "gave-up",
+    "shipping",
+    "owed",
+    "note",
+    "overnight",
+    "pile",
+    "meetings",
+)
 
 #: The line between the DM and its one reply. Not a bullet, so no guardrail reads it.
 THREAD_MARK = "--- thread ---"
@@ -109,8 +133,34 @@ _SEPARATOR = f"\n\n{THREAD_MARK}\n\n"
 
 STATE_PATH = "DayDAG/State.md"
 
-#: Sections whose overflow goes to the thread: nothing re-raises them tomorrow.
-_THREADED = ("overnight", "shipping")
+#: The State.md refusal, held to this in a fitted DM (whole when the brief fits),
+#: by cutting its middle: the start says what failed, the end how to fix it.
+LATE_CAP = 200
+
+#: Sections whose overflow goes to the thread, in the order the reply shows them,
+#: with the heading each takes there.
+_THREADED = {"overnight": "overnight", "shipping": "shipping", "gave-up": "gave up on notes"}
+
+#: When the reply itself is over, who gives up a row, and down to how many.
+#: Overnight first: its mentions and notes are still in Slack and Gmail. Then
+#: gave-up down to its DM cap - a dropped title is named on a later morning, and
+#: the floor keeps a run of heavy days still naming some. Then shipping: once
+#: the cursors move, nothing re-reports a landing. Gave-up's floor goes last.
+_THREAD_DROP = (("overnight", 0), ("gave-up", CAPS["gave-up"]), ("shipping", 0), ("gave-up", 0))
+
+#: How the DM says a section's rest is in the thread - what `dangling` reads.
+_PROMISE = {
+    "overnight": f" overnight, {NOT_SHOWN} - in the thread",
+    "shipping": f" shipping, {NOT_SHOWN} - in the thread",
+    "gave-up": f" days, {NOT_SHOWN} - in the thread",
+}
+
+#: Where a row the reply could not hold still is, per section.
+_STILL_AT = {
+    "overnight": "still in slack and gmail",
+    "shipping": "the repos' own history still has them",
+    "gave-up": "named in a later brief",
+}
 
 #: The order the fitted DM reads in. A section the brief did not produce is skipped.
 _ORDER = (
@@ -148,17 +198,38 @@ class Fitted:
     thread: str = ""
     gave_up_shown: frozenset[str] = frozenset()
     cuts: tuple[Cut, ...] = ()
+    #: The sections whose DM overflow line says "in the thread".
+    promised: tuple[str, ...] = ()
+    #: The caps the fit settled on, per section (rows, for meetings); empty
+    #: when the morning fit whole.
+    caps: Mapping[str, int] = field(default_factory=dict)
+    #: Rows the reply itself could not hold, per section - counted there.
+    dropped: Mapping[str, int] = field(default_factory=dict)
 
     def text(self) -> str:
         return f"{self.head}{_SEPARATOR}{self.thread}" if self.thread else self.head
 
     def summary(self) -> str:
-        """``morning push: 4,428 chars, thread 2,713; cut owed 112 -> DayDAG/State.md; ...``"""
+        """``morning push: 4,428 chars, thread 2,713; cut owed 112 -> DayDAG/State.md; ...``
+
+        "fits whole" is a morning returned byte for byte; "fitted, nothing cut"
+        one the budget repacked without counting a row away.
+        """
         sizes = f"morning push: {len(self.head):,} chars"
         if self.thread:
             sizes += f", thread {len(self.thread):,}"
-        moved = [f"{cut.section} {cut.counted} -> {cut.home}" for cut in self.cuts if cut.counted]
-        return f"{sizes}; cut {'; '.join(moved)}" if moved else f"{sizes}; fits whole"
+        if not self.cuts:
+            return f"{sizes}; fits whole"
+        moved = []
+        for cut in self.cuts:
+            if not cut.counted:
+                continue
+            gone = self.dropped.get(cut.section, 0)
+            where = f"{cut.counted - gone} -> {cut.home}"
+            if gone:
+                where += f", {gone} -> {_STILL_AT[cut.section]}"
+            moved.append(f"{cut.section} {where}")
+        return f"{sizes}; cut {'; '.join(moved)}" if moved else f"{sizes}; fitted, nothing cut"
 
 
 def split_parts(text: str) -> tuple[str, str]:
@@ -170,15 +241,17 @@ def split_parts(text: str) -> tuple[str, str]:
 
 
 def dangling(fitted: Fitted) -> list[str]:
-    """Every DM line that says its rows are in the thread when the thread lacks them."""
-    missing: list[str] = []
-    for line in fitted.head.splitlines():
-        for key in _THREADED:
-            if f"{key}, {NOT_SHOWN} - in the thread" in line and f"{key}, the rest (" not in (
-                fitted.thread
-            ):
-                missing.append(line)
-    return missing
+    """Every section the DM's own text says is in the thread whose heading the
+    thread lacks. Read from the DM, not from what was routed, so a promise
+    made without routing its rows is caught; a heading counts only at the start
+    of a line, so a row that happens to quote it does not."""
+    head, thread = fitted.head.splitlines(), fitted.thread.splitlines()
+    return [
+        key
+        for key, words in _PROMISE.items()
+        if any(line.endswith(words) for line in head)
+        and not any(line.startswith(f"{_THREADED[key]}, the rest") for line in thread)
+    ]
 
 
 # --------------------------------------------------------------------------
@@ -230,20 +303,43 @@ def _qualifiers(rows: Sequence[str]) -> str:
 @dataclass
 class _Draft:
     head: str
-    threaded: dict[str, list[str]]
+    #: Rows for the reply, per threaded key, each with the gave-up title it names.
+    threaded: dict[str, list[tuple[str, str]]]
     cuts: list[Cut]
+    #: Rows shown and rows available, per section - the shrink and re-grow loops read these.
     shown: dict[str, int]
+    available: dict[str, int]
     gave_up_shown: frozenset[str]
 
 
 def _meetings(
-    section: Section, events: Sequence[Mapping[str, Any]], day: Any, now: datetime, cap: int
-) -> tuple[Section, Cut, int]:
-    rows = packed_meeting_rows(events, day)
+    section: Section,
+    events: Sequence[Mapping[str, Any]],
+    day: Any,
+    now: datetime,
+    cap: int,
+    *,
+    name_all: bool,
+) -> tuple[Section, Cut, dict[str, int], dict[str, int]]:
+    """The packed meetings at ``cap`` rows, and the rows and pile-up names shown
+    and available - what the shrink and re-grow loops read.
+
+    A cut row is counted as already over or later today; a meeting a pile-up
+    row does not name is counted on that row. Both cite the calendar's day, so
+    `Cut.shown` is the meetings the DM names, and every other is counted.
+    """
+    whole = packed_meeting_rows(events, day)
+    packed = packed_meeting_rows(events, day, pile_width=PILE_WIDTH)
+    clips = {
+        i
+        for i, (named, short) in enumerate(zip(whole, packed, strict=True))
+        if short.named < named.named
+    }
+    rows = whole if name_all else packed
     link = day_link(day)
 
-    def over(row: tuple[str, tuple[Mapping[str, Any], ...]]) -> bool:
-        ends = [_local(event.get("end")) for event in row[1]]
+    def over(row: MeetingRow) -> bool:
+        ends = [_local(event.get("end")) for event in row.members]
         return bool(ends) and all(end is not None and end <= now for end in ends)
 
     # already-over rows go first, earliest first; then the latest of the rest
@@ -251,20 +347,30 @@ def _meetings(
     later_rows = [i for i in reversed(range(len(rows))) if i not in over_rows]
     removal = over_rows + later_rows
     cut_rows = set(removal[: max(0, len(rows) - cap)])
-    kept = [rows[i][0] for i in range(len(rows)) if i not in cut_rows]
-    over_count = sum(len(rows[i][1]) for i in cut_rows if i in over_rows)
-    later_count = sum(len(rows[i][1]) for i in cut_rows if i not in over_rows)
+    kept_rows = [i for i in range(len(rows)) if i not in cut_rows]
+    kept = [rows[i].line for i in kept_rows]
+    over_count = sum(len(rows[i].members) for i in cut_rows if i in over_rows)
+    later_count = sum(len(rows[i].members) for i in cut_rows if i not in over_rows)
     if cut_rows:
         parts = [f"+{over_count} already over"] if over_count else []
         parts += [f"+{later_count} later today"] if later_count else []
         kept.append(f"- {', '.join(parts)} ({link})")
-    total = len(events)
-    shown = total - over_count - later_count
+    total = sum(len(row.members) for row in rows)
+    named = sum(rows[i].named for i in kept_rows)
+    shown = {"meetings": len(kept_rows), "pile": int(name_all and bool(clips & set(kept_rows)))}
+    available = {"meetings": len(rows), "pile": int(bool(clips))}
     return (
         Section(section.heading, tuple(kept), key="meetings"),
-        Cut("meetings", total, shown, link),
-        len(rows) - len(cut_rows),
+        Cut("meetings", total, named, link),
+        shown,
+        available,
     )
+
+
+def _is_row(line: str) -> bool:
+    """A cited bullet of a pulse block. Its sub-headings and its own degrade
+    lines ("could not fetch") are not rows: they stay, uncapped and uncounted."""
+    return line.startswith("- ") and bool(split_citation(line)[1])
 
 
 def _capped(
@@ -275,10 +381,10 @@ def _capped(
     note_path: str,
     gave_up_titles: Sequence[str],
     gave_up_days: int,
-) -> tuple[Section, Cut, list[str], frozenset[str]]:
+) -> tuple[Section, Cut, list[tuple[str, str]], frozenset[str]]:
     """The section at ``cap`` lines, its overflow line, and the rows for the thread."""
     lines = list(section.lines)
-    threaded: list[str] = []
+    threaded: list[tuple[str, str]] = []
     titles: frozenset[str] = frozenset()
     if key == "note":
         shown, rest = lines[:cap], lines[cap:]
@@ -292,17 +398,24 @@ def _capped(
         lead = f"+{len(rest)} more" if shown else f"{len(rest)}"
         overflow = f"- {lead} {where}{_qualifiers(rest)} ({STATE_PATH})"
         home = STATE_PATH
-    elif key in _THREADED:
-        bullets = [line for line in lines if line.startswith("- ")]
-        shown, rest = bullets[:cap], bullets[cap:]
-        lead = f"+{len(rest)} more" if shown else f"{len(rest)}"
-        overflow = f"- {lead} {key}, {NOT_SHOWN} - in the thread"
-        home = "the thread"
-        threaded = rest
-        # non-bullet lines of a pulse block (its own sub-headings) pass through
-        passthrough = [line for line in lines if not line.startswith("- ")]
-        shown = passthrough + shown
-        lines = bullets
+    elif key in {"overnight", "shipping"}:
+        rows = [i for i, line in enumerate(lines) if _is_row(line)]
+        keep = set(rows[:cap])
+        rest = [lines[i] for i in rows[cap:]]
+        lead = f"+{len(rest)} more" if keep else f"{len(rest)}"
+        body = [
+            _clip(line) if i in keep else line
+            for i, line in enumerate(lines)
+            if i in keep or not _is_row(line)
+        ]
+        if rest:
+            body.append(f"- {lead} {key}, {NOT_SHOWN} - in the thread")
+        return (
+            Section(section.heading, tuple(body), key=key),
+            Cut(key, len(rows), len(keep), "the thread"),
+            [(line, "") for line in rest],
+            titles,
+        )
     elif key == "gaps":
         newest_first = list(reversed(lines))
         shown, rest = newest_first[:cap], newest_first[cap:]
@@ -316,17 +429,17 @@ def _capped(
         shown, rest = lines[:cap], lines[cap:]
         titles = frozenset(gave_up_titles[: len(shown)])
         lead = f"+{len(rest)} more" if shown else f"{len(rest)}"
-        overflow = f"- {lead} w/ no note found in {gave_up_days} days - named in tomorrow's brief"
-        home = "named in tomorrow's brief"
+        overflow = f"- {lead} w/ no note found in {gave_up_days} days, {NOT_SHOWN} - in the thread"
+        home = "the thread"
+        threaded = list(zip(rest, gave_up_titles[len(shown) :], strict=False))
     else:  # a section the budget does not know is shown whole and never cut
         return section, Cut(key or "other", len(lines), len(lines), ""), [], titles
-    kept = [_clip(line) if key not in {"gaps", "gave-up"} else line for line in shown]
+    kept = [line if key in {"gaps", "gave-up"} else _clip(line) for line in shown]
     if rest:
         kept.append(overflow)
-    shown_rows = len([line for line in shown if line.startswith("- ")])
     return (
         Section(section.heading, tuple(kept), key=key),
-        Cut(key, len(lines), shown_rows, home),
+        Cut(key, len(lines), len(shown), home),
         threaded,
         titles,
     )
@@ -347,9 +460,10 @@ def _compose(
         by_key["gave-up"] = gave_up
     note_path = recipes.weekly_note(assembled.day)
     blocks = [assembled.header]
-    threaded: dict[str, list[str]] = {}
+    threaded: dict[str, list[tuple[str, str]]] = {}
     cuts: list[Cut] = []
     shown: dict[str, int] = {}
+    available: dict[str, int] = {}
     gave_up_shown: frozenset[str] = frozenset()
     extra = [s for s in assembled.sections if s.lines and s.key not in _ORDER]
     for key in _ORDER:
@@ -359,11 +473,17 @@ def _compose(
         if key == "no-note":
             blocks.append(section.render())
             continue
-        if key == "meetings":
-            fitted, cut, rows_shown = _meetings(
-                section, assembled.events, assembled.day, now, caps["meetings"]
+        if key == "meetings" and assembled.events:
+            fitted, cut, rows_shown, rows_available = _meetings(
+                section,
+                assembled.events,
+                assembled.day,
+                now,
+                caps["meetings"],
+                name_all=bool(caps["pile"]),
             )
-            shown[key] = rows_shown
+            shown.update(rows_shown)
+            available.update(rows_available)
         else:
             fitted, cut, rest, titles = _capped(
                 section,
@@ -373,7 +493,7 @@ def _compose(
                 gave_up_titles=gave_up_titles,
                 gave_up_days=gave_up_days,
             )
-            shown[key] = cut.shown
+            shown[key], available[key] = cut.shown, cut.total
             if rest:
                 threaded[key] = rest
             if key == "gave-up":
@@ -381,36 +501,61 @@ def _compose(
         cuts.append(cut)
         blocks.append(fitted.render())
     blocks += [section.render() for section in extra]
-    footer = [f"- couldn't check {name}" for name in assembled.unreachable] + list(late)
+    footer = [f"- couldn't check {name}" for name in assembled.unreachable]
+    footer += [_middle(line, LATE_CAP) for line in late]
     if footer:
         blocks.append("\n".join(footer))
-    return _Draft("\n\n".join(blocks), threaded, cuts, shown, gave_up_shown)
+    return _Draft("\n\n".join(blocks), threaded, cuts, shown, available, gave_up_shown)
 
 
-def _thread(threaded: Mapping[str, list[str]], budget: int) -> str:
-    """The one reply: overnight and shipping rows the DM cut, verbatim, fitted."""
-    sections = [
-        (f"{key}, the rest ({len(rows)})", list(rows))
-        for key in _THREADED
-        if (rows := threaded.get(key))
-    ]
-    if not sections:
-        return ""
+def _middle(line: str, cap: int) -> str:
+    """``line`` at ``cap`` characters, cut in the middle: what failed, then the fix."""
+    if len(line) <= cap:
+        return line
+    start = (cap - 3) // 2
+    return line[:start] + "..." + line[len(line) - (cap - 3 - start) :]
 
-    def render(parts: list[tuple[str, list[str]]], dropped: int) -> str:
-        text = "\n\n".join("\n".join([heading, *rows]) for heading, rows in parts if rows)
-        if dropped:
-            text += f"\n- +{dropped} more, {NOT_SHOWN} - `render morning --full` prints them"
-        return text
 
-    dropped = 0
-    while len(render(sections, dropped)) > budget and any(rows for _, rows in sections):
-        for _, rows in reversed(sections):
-            if rows:
-                rows.pop()
-                dropped += 1
+def _thread(
+    threaded: Mapping[str, list[tuple[str, str]]], budget: int
+) -> tuple[str, frozenset[str], dict[str, int]]:
+    """The one reply, fitted; the gave-up titles it names; the rows it dropped.
+
+    Every section the DM promised keeps its heading with the count it really
+    shows; rows the reply cannot hold are dropped as `_THREAD_DROP` says and
+    counted on that section's own line saying where they still are.
+    """
+    kept = {key: list(rows) for key, rows in threaded.items() if rows}
+    dropped = dict.fromkeys(kept, 0)
+    if not kept:
+        return "", frozenset(), {}
+
+    def render() -> str:
+        parts = []
+        for key in _THREADED:
+            if key not in kept:
+                continue
+            rows = [row for row, _ in kept[key]]
+            heading = (
+                f"{_THREADED[key]}, the rest ({len(rows)})"
+                if rows
+                else f"{_THREADED[key]}, the rest"
+            )
+            if dropped[key]:
+                rows.append(f"- +{dropped[key]} more, {NOT_SHOWN} - {_STILL_AT[key]}")
+            parts.append("\n".join([heading, *rows]))
+        return "\n\n".join(parts)
+
+    while len(render()) > budget:
+        for key, floor in _THREAD_DROP:
+            if len(kept.get(key, ())) > floor:
+                kept[key].pop()
+                dropped[key] += 1
                 break
-    return render(sections, dropped)
+        else:
+            break  # only headings and count lines remain
+    named = frozenset(title for _, title in kept.get("gave-up", ()) if title)
+    return render(), named, {key: count for key, count in dropped.items() if count}
 
 
 def fit_morning(
@@ -427,8 +572,20 @@ def fit_morning(
 
     ``gave_up`` is the runner's "gave up on notes" section and ``gave_up_titles``
     its titles, one per line, in order; ``late`` are lines the runner adds after
-    assembly (the State.md refusal). See the module contracts.
+    assembly (the State.md refusal), kept whole when the morning fits. See the
+    module contracts.
+
+    Raises:
+        ValueError: two sections share a key, or ``gave_up_titles`` is not one
+            title per gave-up line - either would lose rows without a count.
     """
+    keys = [section.key for section in assembled.sections if section.key]
+    if len(keys) != len(set(keys)):
+        raise ValueError(f"two sections share a key: {sorted(keys)}")
+    lines = len(gave_up.lines) if gave_up is not None else 0
+    if len(gave_up_titles) != lines:
+        # More titles than lines would record a title nobody saw as said.
+        raise ValueError(f"{lines} gave-up lines but {len(gave_up_titles)} titles")
     whole = assembled.render()
     if gave_up is not None and gave_up.lines:
         whole += "\n\n" + gave_up.render()
@@ -439,6 +596,8 @@ def fit_morning(
 
     caps = dict(CAPS)
     caps["meetings"] = len(packed_meeting_rows(assembled.events, assembled.day))
+    caps["pile"] = 1
+    ceiling = dict(caps)
 
     def compose() -> _Draft:
         return _compose(
@@ -455,14 +614,34 @@ def fit_morning(
     while len(draft.head) > budget:
         for key in SHRINK_ORDER:
             if draft.shown.get(key, 0) > 0 and caps.get(key, 0) > 0:
-                caps[key] -= 1
+                caps[key] = min(caps[key], draft.shown[key]) - 1
                 break
         else:
             break  # the floor: nothing left to shrink
         draft = compose()
+    # Give back what the shrink took and no longer needs: one row at a time,
+    # latest-shrunk first, never past the starting caps, kept only if it fits.
+    grew = True
+    while grew:
+        grew = False
+        for key in reversed(SHRINK_ORDER):
+            if caps.get(key, 0) < ceiling.get(key, 0) and draft.shown.get(
+                key, 0
+            ) < draft.available.get(key, 0):
+                caps[key] += 1
+                trial = compose()
+                if len(trial.head) <= budget:
+                    draft, grew = trial, True
+                else:
+                    caps[key] -= 1
+    thread, named, dropped = _thread(draft.threaded, budget)
+    promised = tuple(key for key in _THREADED if draft.threaded.get(key))
     return Fitted(
         head=draft.head,
-        thread=_thread(draft.threaded, budget),
-        gave_up_shown=draft.gave_up_shown,
+        thread=thread,
+        gave_up_shown=draft.gave_up_shown | named,
         cuts=tuple(draft.cuts),
+        promised=promised,
+        caps=dict(caps),
+        dropped=dropped,
     )
