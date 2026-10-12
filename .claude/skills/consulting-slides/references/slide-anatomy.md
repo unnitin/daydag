@@ -11,7 +11,7 @@ numbers are in inches on a 13.33 x 7.5 in (16:9) canvas, matching the templates 
 |---|---|---|
 | Action title | x 0.5, y 0.35, w 11.5, h 0.9 | The claim. 20 to 24 pt, green `03522D`, Trebuchet MS, left aligned, at most 2 lines. Same position on every slide. |
 | Lead-in / subtitle (optional) | under the title, 12 to 14 pt, grey `6E6F73` | Scope, unit or period of the exhibit: "Savings including carry-over effect, 2018 (M EUR)". |
-| Tracker / sticker (optional) | top right, small grey or green tab | "Preliminary", "Draft", "For discussion", or the chapter name. Only when it earns its place. |
+| Sticker (optional) | top right, green tab | "Illustrative", "Draft", "A1". Only when it earns its place. Nitin asked for the grey tracker text to go (11 Oct 2026). |
 | Body | x 0.5 to 12.83, y 1.4 to 6.6 | ONE exhibit: a chart, a table, a diagram, or a structured text block. |
 | Takeaway box (optional) | bottom band or right column, green tint `E8F5EE` or dark green with white text | One sentence: the so-what if the title alone is not enough. |
 | Footer left | x 0.5, y 6.85 | "Note:" lines, then "Source:" line. 8 to 9 pt grey. |
