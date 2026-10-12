@@ -50,8 +50,8 @@ from __future__ import annotations
 import re
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import date, datetime
-from typing import Any, Protocol
+from datetime import date, datetime, timedelta
+from typing import Any, NamedTuple, Protocol
 
 from daydag import recipes
 from daydag.config import resolve_reference
@@ -62,21 +62,27 @@ from daydag.voice import Push, clipped, render
 
 __all__ = [
     "ADMISSIONS",
+    "NOT_SHOWN",
     "QUOTE_CAP",
     "UNSOURCED",
     "WARN",
     "Brief",
     "BriefError",
+    "MeetingRow",
     "Reader",
     "Section",
     "Sources",
     "assemble",
     "claim",
+    "clip_line",
     "closed_red_items",
+    "day_link",
     "first_meeting_line",
+    "packed_meeting_rows",
     "read_vault_note",
     "red_items",
     "render_push",
+    "split_citation",
     "unsourced_claims",
 ]
 
@@ -99,6 +105,11 @@ WARN = "⚠"
 #: agent can't source it, it says so instead of asserting".
 UNSOURCED = "couldn't source this one"
 
+#: Said by a morning overflow line whose rows went to the thread under the DM
+#: (`daydag.budget`). An admission, not a claim: the rows are one tap away in
+#: the reply under the DM.
+NOT_SHOWN = "not shown here"
+
 #: Phrases that count as admitting an absence. A line carrying one of these is
 #: making a claim *about* a gap, so it needs no permalink - the gap is the fact.
 ADMISSIONS = (
@@ -110,6 +121,10 @@ ADMISSIONS = (
     "no note found",
     "not watched",
     "not understood",
+    NOT_SHOWN,
+    # The State.md writer declining (`StateNotWritable`): a failed write, said
+    # once at the foot of the push, is a gap and not an assertion.
+    "couldn't update",
 )
 
 #: A parenthesised citation: a URL, a `path#sha`, or a vault note path. Matched
@@ -211,10 +226,15 @@ def unsourced_claims(text: str) -> list[str]:
 
 @dataclass(frozen=True)
 class Section:
-    """A heading and its lines. An empty one never renders."""
+    """A heading and its lines. An empty one never renders.
+
+    ``key`` names the section for `daydag.budget`, which ranks and caps the
+    morning push by it; it never renders, and every other push leaves it empty.
+    """
 
     heading: str
     lines: tuple[str, ...] = ()
+    key: str = ""
 
     def render(self) -> str:
         return "\n".join([self.heading, *self.lines])
@@ -244,6 +264,8 @@ class Brief:
     sections: tuple[Section, ...]
     #: Display names of sources that could not be read this run.
     unreachable: tuple[str, ...] = ()
+    #: The day's calendar records, for `daydag.budget`'s packed meeting rows.
+    events: tuple[Mapping[str, Any], ...] = ()
 
     def render(self) -> str:
         return render_push(self.header, self.sections, self.unreachable)
@@ -514,6 +536,186 @@ def first_meeting_line(events: Iterable[Mapping[str, Any]]) -> tuple[str, str] |
 
 
 # --------------------------------------------------------------------------
+# the line, cut to size: `daydag.budget` shortens the morning with these
+# --------------------------------------------------------------------------
+
+#: One citation group at the end of a line: `` (https://...)``, `` (path#L4)``,
+#: `` (DayDAG/State.md)`` or the admission `` (couldn't source this one)``.
+_TAIL_GROUP = re.compile(r" \((?P<inner>[^()]*)\)$")
+
+#: Markup that must not be left open by a cut, checked in this order so a
+#: two-character marker is not read as two single ones. `_` is left alone:
+#: snake_case in a title would read as an open italic.
+_MARKERS = ("**", "~~", "`", "*", '"')
+
+
+def split_citation(line: str) -> tuple[str, str]:
+    """A push line split into what it says and the citations that follow it.
+
+    ``claim`` writes ``- text (link) (link)`` or ``- text (couldn't source this
+    one)``; the tail is every trailing parenthesised group that is evidence (a
+    URL, ``path#anchor`` or ``.md`` path - the same rule as `unsourced_claims`)
+    or the unsourced admission. A quote that ends in its own parenthesis is
+    closed by a quote mark first, so it stays in the body.
+    """
+    body, tail = line, ""
+    while True:
+        found = _TAIL_GROUP.search(body)
+        if found is None:
+            break
+        inner = found["inner"]
+        if inner != UNSOURCED and not _EVIDENCE.search(f"({inner})"):
+            break
+        tail = body[found.start() :] + tail
+        body = body[: found.start()]
+    return body, tail
+
+
+def _closers(text: str) -> str:
+    """What closes the markup ``text`` leaves open, innermost first.
+
+    Inside a code span nothing is markup until its backtick closes, so a ``*``
+    or a quote in code never earns a closer. A marker already open is closed
+    where it next appears, closing anything opened after it on the way.
+    """
+    opened: list[str] = []
+    index = 0
+    while index < len(text):
+        if opened and opened[-1] == "`":
+            if text[index] == "`":
+                opened.pop()
+            index += 1
+            continue
+        for marker in _MARKERS:
+            if text.startswith(marker, index):
+                if marker in opened:
+                    while opened.pop() != marker:
+                        pass
+                else:
+                    opened.append(marker)
+                index += len(marker)
+                break
+        else:
+            index += 1
+    return "".join(reversed(opened))
+
+
+#: A link inside what a line says: a markdown or Slack link, or a bare URL.
+_BODY_LINK = re.compile(r"\]\(|https?://")
+
+
+def clip_line(line: str, cap: int) -> str:
+    """``line`` with what it says clipped to ``cap`` characters, every link whole.
+
+    The budget is spent on the words, never a link: a clipped permalink is a
+    broken one, and an uncited line fails guardrail 3. So a line whose words
+    carry a link of their own is left whole, and the citation is never cut.
+    Markup the cut leaves open (bold, strike, code, a quote) is closed inside
+    the cap, so a struck item cannot strike the rest of the push.
+    """
+    body, tail = split_citation(line)
+    prefix = "- " if body.startswith("- ") else ""
+    text = " ".join(body[len(prefix) :].split())
+    if len(text) <= cap or _BODY_LINK.search(text):
+        return line
+    room = cap
+    while True:
+        cut = text if len(text) <= room else text[: max(0, room - 3)].rstrip() + "..."
+        closers = _closers(cut)
+        if len(cut) + len(closers) <= cap or room <= 3:
+            return prefix + cut + closers + tail
+        room -= len(cut) + len(closers) - cap
+
+
+def day_link(day: date) -> str:
+    """The calendar's day view for ``day``: one link that cites a whole row of
+    meetings, where each meeting's own link costs 150 characters."""
+    return f"https://calendar.google.com/calendar/r/day/{day.year}/{day.month}/{day.day}"
+
+
+#: A meeting's title in a packed row, and how long a row of meetings may run
+#: before the next starts. Sized so a heavy day's 24 meetings take about ten
+#: lines, the shape of the hand-written briefs he accepted.
+TITLE_CAP = 60
+PACK_WIDTH = 150
+
+
+def _is_all_day(event: Mapping[str, Any]) -> bool:
+    """A date, or a midnight start running a day or more.
+
+    The second shape is how a bare ``2026-10-07`` arrives once the payload
+    adapter has parsed it: as midnight. Read as a meeting, it overlaps every
+    real one and folds the whole day into a single "which one are you in?".
+    """
+    start, end = event.get("start"), event.get("end")
+    if not isinstance(start, datetime):
+        return True
+    if (start.hour, start.minute, start.second) != (0, 0, 0) or not isinstance(end, datetime):
+        return False
+    try:
+        return end - start >= timedelta(days=1)
+    except TypeError:
+        return False
+
+
+def _packed_title(event: Mapping[str, Any]) -> str:
+    title = clipped(event.get("summary") or "untitled", TITLE_CAP, ellipsis="...")
+    when = "all day" if _is_all_day(event) else _clock(event.get("start"))
+    return f"{when} {title}"
+
+
+class MeetingRow(NamedTuple):
+    """One packed line and the meetings in it."""
+
+    line: str
+    members: tuple[Mapping[str, Any], ...]
+
+
+def packed_meeting_rows(events: Sequence[Mapping[str, Any]], day: date) -> list[MeetingRow]:
+    """The day's meetings in about a tenth of the space, each row citing the day.
+
+    Every meeting is in a row, in time order. A pile-up - the same
+    `overlap_clusters` the week-ahead uses, so the two never disagree on what
+    a clash is - is ONE line ending "which one are you in?", where the
+    pairwise flags spent a line per pair. Meetings that clash with nothing
+    share ``·``-joined rows up to `PACK_WIDTH`. All-day and undated entries
+    never join a pile-up and come last. Each row carries its meetings, so the
+    budget can cut whole rows and count every meeting it did not show.
+    """
+    link = day_link(day)
+    rows: list[MeetingRow] = []
+    run: list[Mapping[str, Any]] = []
+
+    def flush() -> None:
+        if run:
+            text = " · ".join(_packed_title(e) for e in run)
+            rows.append(MeetingRow(claim(text, link), tuple(run)))
+            run.clear()
+
+    def add(event: Mapping[str, Any]) -> None:
+        width = sum(len(_packed_title(e)) + 3 for e in run) + len(_packed_title(event))
+        if run and width > PACK_WIDTH:
+            flush()
+        run.append(event)
+
+    timed = [event for event in events if not _is_all_day(event)]
+    for cluster in overlap_clusters(timed):
+        if len(cluster) > 1:
+            flush()
+            names = " · ".join(_packed_title(event) for event in cluster)
+            line = claim(f"{WARN} {names} - which one are you in?", link)
+            rows.append(MeetingRow(line, tuple(cluster)))
+            continue
+        add(cluster[0])
+    flush()
+    for event in events:
+        if _is_all_day(event):
+            add(event)
+    flush()
+    return rows
+
+
+# --------------------------------------------------------------------------
 # assembly
 # --------------------------------------------------------------------------
 
@@ -630,11 +832,14 @@ def assemble(
             Section(
                 f"{WARN} no weekly note for {recipes.week_label(day)}",
                 (claim("can't triage today against the week's priorities", note_path),),
+                key="no-note",
             )
         )
 
     if events:
-        sections.append(Section(f"meetings ({len(events)})", tuple(_meeting_lines(events))))
+        sections.append(
+            Section(f"meetings ({len(events)})", tuple(_meeting_lines(events)), key="meetings")
+        )
 
     red = red_items(note)
     if red:
@@ -642,6 +847,7 @@ def assemble(
             Section(
                 f"top of the note ({recipes.week_label(day)})",
                 tuple(claim(text, f"{note_path}#L{lineno}") for lineno, text in red),
+                key="note",
             )
         )
 
@@ -655,21 +861,21 @@ def assemble(
             _line_from_state(body) for body in read_section(written, "Watch items", top_level=True)
         ]
         if chase:
-            sections.append(Section(f"owed to you ({len(chase)})", tuple(chase)))
+            sections.append(Section(f"owed to you ({len(chase)})", tuple(chase), key="owed"))
 
     # -- the overnight delta ----------------------------------------------
     overnight = _overnight_lines(now, principal, sources, read)
     if overnight:
-        sections.append(Section(f"overnight ({len(overnight)})", tuple(overnight)))
+        sections.append(Section(f"overnight ({len(overnight)})", tuple(overnight), key="overnight"))
 
     # -- shipping, only when it has something to say ----------------------
     if pulse is not None:
         block = read("shipping", pulse.render, "")
         if block.strip():
-            sections.append(Section("shipping", tuple(block.splitlines())))
+            sections.append(Section("shipping", tuple(block.splitlines()), key="shipping"))
 
     if state is not None and watch:
-        sections.append(Section("watch", tuple(watch)))
+        sections.append(Section("watch", tuple(watch), key="watch"))
 
     # -- notes gaps: calendar drives, notes attach ------------------------
     if ledger is not None:
@@ -684,6 +890,7 @@ def assemble(
                 Section(
                     f"meetings w/ no notes ({len(gaps)})",
                     tuple(f"- {gap} - no note found in gmail, notion or granola" for gap in gaps),
+                    key="gaps",
                 )
             )
 
@@ -702,6 +909,7 @@ def assemble(
         header=header,
         sections=tuple(sections),
         unreachable=tuple(read.unreachable),
+        events=tuple(events),
     )
 
 

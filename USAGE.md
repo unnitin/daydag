@@ -105,6 +105,36 @@ encodings bite, and both fail quietly in the direction of saying *less*:
 `SKILL.md` carries the full shaping contract. Get it wrong and the loop
 degrades rather than lying, but it degrades silently.
 
+## The morning fits one message
+
+`render morning` prints a DM of at most 4,500 characters (the pulse's own
+"could not fetch" notices are never cut, so a long watchlist of dead mirrors
+could pass it) and, on a heavy day, a
+line `--- thread ---` followed by one reply holding the overnight, shipping and
+gave-up rows the DM cut (#185). Post the two parts as they are - the skill says
+how. What was cut, and where it lives, is one line in the event log
+(`morning_fit`), also printed to stderr when stderr is a terminal. In a
+scheduled run the fit prints nothing to stderr, so the summary cannot end up in
+the post. (A pulse that fails to build under `--mirrors` still reports only on
+stderr, with no line in the DM - a gap older than this budget.) The summary
+reads:
+
+```
+morning push: 2,707 chars; cut owed 112 -> DayDAG/State.md; watch 41 -> DayDAG/State.md; ...
+```
+
+To see what a "+N more" line hides, render the same payloads unfitted in the
+terminal. It writes nothing a later brief reads - no run-log row, no remembered
+meetings, no State.md write, no cursors stored, no gave-up title marked as said
+- so the next fitted run still names what it cut. Pass the same log, or the
+remembered no-notes and gave-up rows are missing; shipping also needs
+`--mirrors`, which still fetches:
+
+```sh
+python -m daydag.run render morning --payloads payloads.json \
+    --log ~/.local/state/daydag/events.db --full
+```
+
 ## Prepping a meeting you name
 
 ```sh
