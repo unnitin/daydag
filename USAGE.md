@@ -33,7 +33,7 @@ That is the whole interface. `SKILL.md` maps the other phrasings ("wrap up",
 
 | Ask | Status |
 |---|---|
-| "run my morning" | **works.** Run against real data repeatedly; the notes-gap section matches hand-checked ground truth. |
+| "run my morning" | **runs, but is rewritten before sending.** Run against real data repeatedly and the notes-gap section matches hand-checked ground truth, but the render is 23,000 to 59,000 characters against Slack's 5,000 per message, so every brief since 21 Sep was rewritten by hand (#185). |
 | "week ahead" | **works.** Run against a real week (68 events); flags clashes and reads the plan of record. |
 | "wrap up" | **runs**, including the Friday planning-outcome section, which never rendered before [#95](https://github.com/unnitin/daydag/issues/95). Exercised against real payloads rather than a live Friday. |
 | "prep me for X" | **works.** Names a meeting or a person, searches 7 days, and asks which one when the name matches several. |
@@ -194,12 +194,24 @@ Payloads: `{"calendar": [...], "prep_ahead": {"<event id>": {"notes": [...],
 "deck": [...], "slack": [...], "points": [...], "ideas": [...]}}}` - each read's
 `put_under` names its key. `ideas` render only for a rule that asks for them,
 labelled as suggestions; a deck that would not open is one line.
-## The soak (passed)
+## The soak (passed on paper; re-runs after #185)
 
-The morning brief's five-day gate (#13) passed: eleven days logged between
-15 Sep and 7 Oct, the edits falling from 13 and 16 a day to none, and nothing
-asked twice still open. The journal stays the place to log an edit the day you
-ask for it; the commands are unchanged.
+`soak report` reads "11/5 days - passed", and the arithmetic holds. What it
+counted does not show the brief works, for three reasons (audit of 12 Oct):
+
+- **The briefs it counted were not the render.** 9 of the 10 counted days were
+  rewritten by hand, because the render overflows a Slack message (#185). The
+  renderer's own output never drew a logged edit.
+- **Logging stopped at the pass.** After 21 Sep he gave roughly 56 to 69 pieces
+  of loop feedback in chat; 2 were logged. `soak shipped` is written by the
+  agent, so a zero-edit day does not show the brief was read.
+- **A repeat is matched by exact wording.** "Check the live source before
+  reporting it open" came 14 to 16 times on 8 days and never registered as one.
+
+So #13 stays open. The gate re-runs on the rendered brief once #185 lands:
+log every reaction to a loop's output the day it is given, mark a day shipped
+only when the render went out unedited, and fold a repeat when it is the same
+idea, not only the same words. The commands are unchanged.
 
 After reading a brief:
 

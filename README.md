@@ -13,8 +13,10 @@ instead of re-deriving it.
 them - the morning brief and the Sunday week-ahead - have been checked end to
 end against live connectors on days verified by hand; the other six run but
 have not, and that gap is where every defect found so far has lived. The
-morning brief passed its five-day soak (#13). Nothing runs on a schedule. See
-[USAGE.md](USAGE.md) for the per-loop split and how to run one.
+morning brief's five-day soak (#13) passed on paper only: nearly every brief it
+counted was rewritten by hand, because the render overflows a Slack message
+(#185), so it re-runs once the render is what ships. Nothing runs on a
+schedule. See [USAGE.md](USAGE.md) for the per-loop split and how to run one.
 
 Not built yet, each an issue: the schedule (#25), the chaser's clocks and nudge
 drafts (#18), write-back to the vault (#16), the ingestion digest (#17), most
