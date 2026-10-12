@@ -107,7 +107,7 @@ UNSOURCED = "couldn't source this one"
 
 #: Said by a morning overflow line whose rows went to the thread under the DM
 #: (`daydag.budget`). An admission, not a claim: the rows are one tap away in
-#: the reply, which `budget.dangling` checks is really there.
+#: the reply under the DM.
 NOT_SHOWN = "not shown here"
 
 #: Phrases that count as admitting an absence. A line carrying one of these is
@@ -600,82 +600,30 @@ def _closers(text: str) -> str:
     return "".join(reversed(opened))
 
 
-#: A link inside what a line says: a markdown link, a Slack link, a bare URL.
-_BODY_LINK = re.compile(
-    r"\[(?P<words>[^\]]*)\]\((?P<md>[^)\s]*)\)"
-    r"|<(?P<slack>https?://[^>\s|]*(?:\|[^>]*)?)>"
-    r"|(?P<bare>https?://[^\s<>()\"'`]+)"
-)
-
-#: What ends a sentence after a bare URL rather than the URL itself.
-_URL_TRAILER = ".,;:!?*_~"
-
-
-def _is_url(text: str) -> bool:
-    return text.startswith(("http://", "https://"))
-
-
-def _unlinked_words(text: str) -> tuple[str, list[str]]:
-    """``text`` with every link replaced by its words, and the links in order.
-
-    A markdown link keeps its words, a Slack ``<url|words>`` its words, a bare
-    URL nothing: the URL moves to the citation, where a cut cannot reach it.
-    A label that is itself a URL goes too, or the cut would reach it after all.
-    A bare URL stops before the punctuation that ends its sentence and before
-    a closing bracket, and a bracket left wrapping nothing is dropped - the same
-    reading `state.split_link` gives a hand-written row. A URL already cut short
-    upstream (an unclosed ``<url``, or one ending in an ellipsis) is not a link
-    any more; it stays in the words rather than pose as a citation.
-    """
-    links: list[str] = []
-
-    def words(found: re.Match[str]) -> str:
-        if found["md"] is not None:
-            links.append(found["md"])
-            return "" if _is_url(found["words"]) else found["words"]
-        if found["slack"] is not None:
-            url, _, label = found["slack"].partition("|")
-            links.append(url)
-            return "" if _is_url(label) else label
-        url = found["bare"]
-        if found.start() and text[found.start() - 1] == "<":
-            return url
-        stripped = url.rstrip(_URL_TRAILER)
-        if stripped.endswith("...") or url.endswith("…"):
-            return url
-        links.append(stripped)
-        return url[len(stripped) :]
-
-    unlinked = _BODY_LINK.sub(words, text)
-    unlinked = re.sub(r"\(\s*\)", "", unlinked)
-    unlinked = re.sub(r"\(\s+", "(", unlinked)
-    unlinked = re.sub(r"\s+([),.;:!?])", r"\1", unlinked)
-    return " ".join(unlinked.split()), links
+#: A link inside what a line says: a markdown or Slack link, or a bare URL.
+_BODY_LINK = re.compile(r"\]\(|https?://")
 
 
 def clip_line(line: str, cap: int) -> str:
     """``line`` with what it says clipped to ``cap`` characters, every link whole.
 
     The budget is spent on the words, never a link: a clipped permalink is a
-    broken one, and an uncited line fails guardrail 3. A line over ``cap``
-    first moves the links inside its words to its citation, in order, ahead of
-    the citation it had - so no link is cut, and none is lost with the words
-    around it. Markup the cut leaves open (bold, strike, code, a quote) is
-    closed inside the cap, so a struck item cannot strike the rest of the push.
+    broken one, and an uncited line fails guardrail 3. So a line whose words
+    carry a link of their own is left whole, and the citation is never cut.
+    Markup the cut leaves open (bold, strike, code, a quote) is closed inside
+    the cap, so a struck item cannot strike the rest of the push.
     """
     body, tail = split_citation(line)
     prefix = "- " if body.startswith("- ") else ""
     text = " ".join(body[len(prefix) :].split())
-    if len(text) <= cap:
+    if len(text) <= cap or _BODY_LINK.search(text):
         return line
-    text, links = _unlinked_words(text)
-    tail = "".join(f" ({link})" for link in links) + tail
     room = cap
     while True:
         cut = text if len(text) <= room else text[: max(0, room - 3)].rstrip() + "..."
         closers = _closers(cut)
         if len(cut) + len(closers) <= cap or room <= 3:
-            return prefix + (cut + closers or "link") + tail
+            return prefix + cut + closers + tail
         room -= len(cut) + len(closers) - cap
 
 
@@ -685,15 +633,11 @@ def day_link(day: date) -> str:
     return f"https://calendar.google.com/calendar/r/day/{day.year}/{day.month}/{day.day}"
 
 
-#: A meeting's title in a packed row, how long a row of meetings may run before
-#: the next starts, and how much of a pile-up is named before the rest are
-#: counted. Sized so a heavy day's 24 meetings take about ten lines, the shape
-#: of the hand-written briefs he accepted, and so no one row can eat the budget.
-#: A packed title's length, a run of clash-free meetings' width, and - only
-#: when the budget asks - a pile-up's.
+#: A meeting's title in a packed row, and how long a row of meetings may run
+#: before the next starts. Sized so a heavy day's 24 meetings take about ten
+#: lines, the shape of the hand-written briefs he accepted.
 TITLE_CAP = 60
 PACK_WIDTH = 150
-PILE_WIDTH = 300
 
 
 def _is_all_day(event: Mapping[str, Any]) -> bool:
@@ -720,41 +664,23 @@ def _packed_title(event: Mapping[str, Any]) -> str:
     return f"{when} {title}"
 
 
-def _pile_up(cluster: Sequence[Mapping[str, Any]], width: int | None) -> tuple[str, int]:
-    """The pile-up's meetings by name - up to ``width``, the rest counted -
-    and how many it named. ``None`` names every one."""
-    names: list[str] = []
-    for index, event in enumerate(cluster):
-        title = _packed_title(event)
-        if width is not None and names and len(" · ".join([*names, title])) > width:
-            return f"{' · '.join(names)} · +{len(cluster) - index} more in the pile-up", index
-        names.append(title)
-    return " · ".join(names), len(cluster)
-
-
 class MeetingRow(NamedTuple):
-    """One packed line, the meetings in it, and how many of them it names."""
+    """One packed line and the meetings in it."""
 
     line: str
     members: tuple[Mapping[str, Any], ...]
-    named: int
 
 
-def packed_meeting_rows(
-    events: Sequence[Mapping[str, Any]], day: date, *, pile_width: int | None = None
-) -> list[MeetingRow]:
+def packed_meeting_rows(events: Sequence[Mapping[str, Any]], day: date) -> list[MeetingRow]:
     """The day's meetings in about a tenth of the space, each row citing the day.
 
     Every meeting is in a row, in time order. A pile-up - the same
     `overlap_clusters` the week-ahead uses, so the two never disagree on what
     a clash is - is ONE line ending "which one are you in?", where the
-    pairwise flags spent a line per pair. Given ``pile_width``, a pile-up
-    names its meetings up to that many characters and counts the rest; the
-    budget asks for that only when nothing else is left to give. Meetings that
-    clash with nothing share ``·``-joined rows up to `PACK_WIDTH`. All-day and
-    undated entries never join a pile-up and come last. Each row carries its
-    meetings and how many it names, so the budget can cut whole rows and count
-    every meeting it did not name.
+    pairwise flags spent a line per pair. Meetings that clash with nothing
+    share ``·``-joined rows up to `PACK_WIDTH`. All-day and undated entries
+    never join a pile-up and come last. Each row carries its meetings, so the
+    budget can cut whole rows and count every meeting it did not show.
     """
     link = day_link(day)
     rows: list[MeetingRow] = []
@@ -763,7 +689,7 @@ def packed_meeting_rows(
     def flush() -> None:
         if run:
             text = " · ".join(_packed_title(e) for e in run)
-            rows.append(MeetingRow(claim(text, link), tuple(run), len(run)))
+            rows.append(MeetingRow(claim(text, link), tuple(run)))
             run.clear()
 
     def add(event: Mapping[str, Any]) -> None:
@@ -776,9 +702,9 @@ def packed_meeting_rows(
     for cluster in overlap_clusters(timed):
         if len(cluster) > 1:
             flush()
-            names, named = _pile_up(cluster, pile_width)
+            names = " · ".join(_packed_title(event) for event in cluster)
             line = claim(f"{WARN} {names} - which one are you in?", link)
-            rows.append(MeetingRow(line, tuple(cluster), named))
+            rows.append(MeetingRow(line, tuple(cluster)))
             continue
         add(cluster[0])
     flush()

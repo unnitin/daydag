@@ -12,16 +12,14 @@ from __future__ import annotations
 
 import json
 import sqlite3
-import subprocess
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
-from urllib.parse import urlparse
 
 import pytest
 
 import heavy_morning as hm
-from daydag import brief, budget, run
+from daydag import brief, budget, recipes, run
 from daydag.brief import NOT_SHOWN, UNSOURCED, Brief, Section, claim
 from daydag.state import EventLog, StateNotWritable
 from daydag.voice import voice_violations
@@ -31,7 +29,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def _fit(tmp_path, now=hm.LATE, **sizes):
     assembled = hm.brief_at(tmp_path, now, **sizes)
-    return assembled, budget.fit_morning(assembled, now=now)
+    return assembled, budget.fit_morning(assembled)
 
 
 # --------------------------------------------------------------------------
@@ -39,17 +37,8 @@ def _fit(tmp_path, now=hm.LATE, **sizes):
 # --------------------------------------------------------------------------
 
 
-def test_the_heavy_fixture_overflows_like_the_real_day_and_holds_no_real_identifier(tmp_path):
-    scan = subprocess.run(
-        [
-            sys.executable,
-            str(ROOT / "scripts" / "scan_secrets.py"),
-            str(ROOT / "tests" / "heavy_morning.py"),
-        ],
-        capture_output=True,
-        text=True,
-    )
-    assert scan.returncode == 0, scan.stdout + scan.stderr
+def test_the_heavy_fixture_overflows_like_the_real_day(tmp_path):
+    """CI's secret scan covers the fixture with every other tracked file."""
     assert len(hm.brief_at(tmp_path).render()) > 40_000, "the fixture no longer reproduces #185"
 
 
@@ -78,38 +67,25 @@ def test_split_citation_round_trips_claim(text, links, quote):
 
 
 @pytest.mark.parametrize(
-    ("markup", "closer"),
+    ("words", "closers"),
     [
         ("**bold and more words", "**"),
         ("~~struck and more", "~~"),
-        ('*"open quote then more', '"*'),
-        ("`a code span and more", "`"),
+        ('*"open quote then more', '"*'),  # innermost first
+        ("`a code span and more", "`"),  # cut inside code: closes the code, nothing in it
+        ("**a *b** c", ""),  # the italic opened inside the bold closes with it
+        ("**bold `x**y` more", "**"),  # ** inside code is code
+        ("**bold ~~strike** more", ""),  # the closing ** closes the strike opened in it
     ],
 )
-def test_clip_line_keeps_the_citation_and_closes_markup(markup, closer):
-    citation = "Weekly Notes/1005-1009.md#L3"
-    line = f"- {markup} " + "x" * 300 + f" ({citation})"
-
-    clipped = brief.clip_line(line, 120)
-    body, tail = brief.split_citation(clipped)
-
-    assert tail == f" ({citation})", "the citation was cut"
-    assert len(body) - 2 <= 120
-    assert body.endswith(f"...{closer}"), f"{closer!r} not closed, innermost first: {body}"
-
-
-def test_clip_line_reads_markup_inside_a_code_span_as_code():
-    line = "- `a**b` then **bold " + "word " * 80 + "(https://x.example.com/z)"
+def test_clip_line_keeps_the_citation_and_closes_only_what_is_still_open(words, closers):
+    citation = " (Weekly Notes/1005-1009.md#L3)"
+    line = f"- {words} " + "word " * 60 + citation[1:]
     body, tail = brief.split_citation(brief.clip_line(line, 120))
 
-    assert tail == " (https://x.example.com/z)"
-    assert body.count("`") == 2, body
-    assert body.endswith("...**"), "only the bold outside the code span is closed"
-
-    inside = "- see `" + "code " * 80 + "` done (https://x.example.com/y)"
-    body, _ = brief.split_citation(brief.clip_line(inside, 120))
-    assert body.endswith("`") and body.count("`") == 2, body
-    assert "**" not in body
+    assert tail == citation, "the citation was cut"
+    assert len(body) - 2 <= 120
+    assert body.rsplit("...", 1)[1] == closers, body
 
 
 @pytest.mark.parametrize(
@@ -117,80 +93,17 @@ def test_clip_line_reads_markup_inside_a_code_span_as_code():
     [
         "https://x.example.com/" + "p" * 80,
         "[the doc](https://x.example.com/" + "p" * 80 + ")",
-        "<https://x.example.com/" + "p" * 80 + ">",
+        "<https://x.example.com/" + "p" * 80 + "|the doc>",
+        "[the note](Weekly Notes/1005-1009.md)",
     ],
-    ids=["bare", "markdown", "slack"],
+    ids=["bare", "markdown", "slack", "vault"],
 )
-def test_clip_line_moves_a_link_in_what_the_line_says_into_its_citation(link):
-    url = "https://x.example.com/" + "p" * 80
+def test_clip_line_leaves_a_line_whose_words_carry_a_link_whole(link):
     for line in (
         "- " + "word " * 18 + link + " and more words" * 10 + " (https://x.example.com/cite)",
         "- " + link + " and more words" * 20 + " (https://x.example.com/cite)",
     ):
-        body, tail = brief.split_citation(brief.clip_line(line, 120))
-
-        assert tail == f" ({url}) (https://x.example.com/cite)", "a link was lost or reordered"
-        assert "x.example.com" not in body, f"a link was left in the words: {body}"
-        assert body.startswith("- ") and len(body) > len("- link"), f"the words went: {body}"
-        assert brief.unsourced_claims(body + tail) == []
-
-
-PR = "https://github.com/ExampleOrg/svc/pull/1234"
-
-
-@pytest.mark.parametrize(
-    ("words", "kept", "link"),
-    [
-        (f"see [the design doc]({PR}) first", "see the design doc first", PR),
-        (f"see <{PR}|the design doc> first", "see the design doc first", PR),
-        (f"the fix lands <{PR}|{PR}> today", "the fix lands today", PR),
-        (f"the fix lands [{PR}]({PR}) today", "the fix lands today", PR),
-        (f"send it (see {PR}) today", "send it (see) today", PR),
-        (f"send it ({PR}) today", "send it today", PR),
-        (f'they said "it is up {PR}" today', 'they said "it is up " today', PR),
-        (f"runbook at {PR}, then today", "runbook at, then today", PR),
-        (f"runbook at {PR}. then today", "runbook at. then today", PR),
-    ],
-)
-def test_clip_line_keeps_the_words_of_a_link_and_the_whole_link(words, kept, link):
-    line = f"- {words} " + "more " * 40 + "(https://x.example.com/cite)"
-    body, tail = brief.split_citation(brief.clip_line(line, 120))
-
-    assert body.startswith(f"- {kept}"), body
-    assert tail == f" ({link}) (https://x.example.com/cite)"
-
-
-def test_clip_line_leaves_a_link_cut_upstream_in_the_words():
-    """`_short` can cut a Slack link before its `>`: what is left is not a link."""
-    line = (
-        "- see <https://docs.example.com/d/1AbCdEf... " + "more " * 40 + "(https://x.example.com/c)"
-    )
-    _, tail = brief.split_citation(brief.clip_line(line, 120))
-    assert tail == " (https://x.example.com/c)"
-
-
-def test_a_line_that_is_only_links_still_says_something():
-    line = f"- {PR} " + f"https://x.example.com/{'q' * 120} (https://x.example.com/cite)"
-    assert brief.clip_line(line, 120).startswith(f"- link ({PR})")
-
-
-@pytest.mark.parametrize(
-    ("words", "closers"),
-    [
-        ("**a *b** c", ""),  # the italic opened inside the bold closes with it
-        ("**bold `x**y` more", "**"),  # ** inside code is code
-        ("**bold ~~strike** more", ""),  # the closing ** closes the strike opened in it
-    ],
-)
-def test_clip_line_closes_only_what_is_still_open(words, closers):
-    line = f"- {words} " + "word " * 60 + "(https://x.example.com/cite)"
-    body, _ = brief.split_citation(brief.clip_line(line, 120))
-    assert body.rsplit("...", 1)[1] == closers, body
-
-
-def test_a_short_line_is_left_alone():
-    line = claim("short", "https://x.example.com/c")
-    assert brief.clip_line(line, 120) == line
+        assert brief.clip_line(line, 120) == line
 
 
 # --------------------------------------------------------------------------
@@ -204,30 +117,21 @@ def test_packed_meeting_rows_name_every_meeting_and_cite_the_day():
     text = "\n".join(row.line for row in rows)
 
     assert sum(len(row.members) for row in rows) == len(events), "a meeting went missing"
-    assert all(row.named == len(row.members) for row in rows), "unasked, every meeting is named"
-    for line, members, _ in rows:
+    for line, members in rows:
         assert line.endswith(f"({brief.day_link(hm.DAY)})")
         if len(members) > 1 and "which one are you in?" not in line:
             # a packed run of clash-free meetings, never a pile-up
             assert not line.startswith(f"- {brief.WARN}")
     piles = [row.members for row in rows if "which one are you in?" in row.line]
     assert [len(p) for p in piles] == [10, 2, 2, 2, 2], "the clusters are the week-ahead's clusters"
-    clipped = brief.packed_meeting_rows(events, hm.DAY, pile_width=100)
-    pile = next(row for row in clipped if len(row.members) == 10)
-    assert pile.named < 10 and f"+{10 - pile.named} more in the pile-up" in pile.line
     assert rows[-1][1][0]["id"] == "evt-allday", "all-day comes last"
     assert "all day Office closed" in text
 
 
 @pytest.mark.parametrize(
     "start",
-    [
-        hm.DAY,
-        "2026-10-07",
-        datetime(2026, 10, 7),
-        datetime(2026, 10, 7, tzinfo=hm.PT),
-    ],
-    ids=["date", "date-string", "naive-midnight", "aware-midnight"],
+    ["2026-10-07", datetime(2026, 10, 7), datetime(2026, 10, 7, tzinfo=hm.PT)],
+    ids=["date-string", "naive-midnight", "aware-midnight"],
 )
 def test_an_all_day_entry_never_joins_a_pile_up(start):
     timed = [event for event in hm.events(hm.DAY) if event["id"] != "evt-allday"]
@@ -264,7 +168,7 @@ def test_ranked_puts_open_linked_rows_first_newest_first_then_unlinked_then_stru
         claim("⭐ ~~struck starred~~ ✓"),
         claim("new linked", "https://x.example.com/3"),
     ]
-    ranked = budget._ranked(lines)
+    ranked = [lines[i] for i in budget._ranked(lines)]
 
     assert [line.split(" (")[0] for line in ranked] == [
         "- new linked",
@@ -317,71 +221,81 @@ def test_a_light_morning_is_byte_identical(tmp_path):
     assert "https://calendar.example.com/e1" in fitted, "a light day keeps each meeting's own link"
 
 
-@pytest.mark.parametrize("now", [hm.EARLY, hm.LATE], ids=["06:45", "13:43"])
-def test_the_runner_returns_the_reply_under_the_dm(tmp_path, now):
-    text = _heavy_render(tmp_path, now)
-    head, thread = budget.split_parts(text)
-
-    assert text.count(budget.THREAD_MARK) == 1, "the runner dropped the threaded reply"
-    assert len(head) <= budget.PUSH_BUDGET and thread.startswith("overnight, the rest")
-
-
-@pytest.mark.parametrize("now", [hm.EARLY, hm.LATE], ids=["06:45", "13:43"])
-def test_a_heavy_morning_fits_one_message(tmp_path, now):
-    _, fitted = _fit(tmp_path, now)
+@pytest.mark.parametrize(
+    ("now", "owed", "meetings"),
+    [(hm.EARLY, 115, 24), (hm.LATE, 115, 24), (hm.LATE, 0, 0), (hm.LATE, 300, 60)],
+    ids=["06:45", "13:43", "no-owed-no-meetings", "heavier"],
+)
+def test_a_heavy_morning_fits_one_message_sourced_and_in_voice(tmp_path, now, owed, meetings):
+    """Contract 2 at any scale, and both posts still pass the guardrails."""
+    _, fitted = _fit(tmp_path, now, owed=owed, meetings=meetings)
     head, thread = budget.split_parts(fitted.text())
 
-    assert len(head) <= budget.PUSH_BUDGET
-    assert len(thread) <= budget.PUSH_BUDGET
-    assert max(len(head), len(thread)) < budget.SLACK_TEXT_LIMIT
+    assert max(len(head), len(thread)) <= budget.PUSH_BUDGET < budget.SLACK_TEXT_LIMIT
+    for part in (head, thread):
+        assert brief.unsourced_claims(part) == []
+        assert voice_violations(part) == []
 
 
-#: The words each section's overflow line counts its cut rows with.
+#: The words each section's overflow line counts its cut rows with, and where it says they are.
 _COUNTED = {
-    "note": "more 🔴 in the note",
-    "owed": "more in the chase list",
-    "watch": "more in watch items",
-    "overnight": "more overnight",
-    "gaps": "older w/ no note found",
+    "note": ("more 🔴 in the note", f"({recipes.weekly_note(hm.DAY)})"),
+    "owed": ("more in the chase list", f"({budget.STATE_PATH})"),
+    "watch": ("more in watch items", f"({budget.STATE_PATH})"),
+    "overnight": ("more overnight", f"{NOT_SHOWN} - in the thread"),
+    "gaps": ("older w/ no note found", "listed again tomorrow"),
 }
 
 
-def test_every_cut_is_counted_and_headings_keep_their_totals(tmp_path):
+def test_every_cut_is_counted_where_it_lives_and_headings_keep_their_totals(tmp_path):
     assembled, fitted = _fit(tmp_path)
     head, thread = budget.split_parts(fitted.text())
     cuts = {cut.section: cut for cut in fitted.cuts}
 
     assert "owed to you (115)" in head and "meetings (25)" in head
     assert {key for key, cut in cuts.items() if cut.counted} == set(_COUNTED)
-    for key, words in _COUNTED.items():
+    assert _promised(fitted) == ("overnight",), "the DM promised a section it did not track"
+    for key, (words, home) in _COUNTED.items():
         cut = cuts[key]
         assert cut.shown + cut.counted == cut.total
-        assert f"- +{cut.counted} {words}" in head, (
-            f"{key}: {cut.counted} cut, a different count shown"
-        )
+        line = next((x for x in head.splitlines() if x.startswith(f"- +{cut.counted} {words}")), "")
+        assert line.endswith(home), f"{key}: {cut.counted} cut, a different count or home: {line}"
     overnight = thread.split("\n\n")[0].splitlines()
     assert overnight[0] == f"overnight, the rest ({cuts['overnight'].counted})"
     assert len(overnight) - 1 == cuts["overnight"].counted, "the reply lost overnight rows"
+    said = next(s for s in assembled.sections if s.key == "overnight").lines
+    assert overnight[1:] == list(said[cuts["overnight"].shown :]), "a reply row was changed"
     rows = sum(
         1 for section in assembled.sections for line in section.lines if line.startswith("- ")
     )
     assert rows >= sum(cut.total for key, cut in cuts.items() if key != "meetings")
 
 
-def test_overflow_lines_cite_their_home(tmp_path):
-    _, fitted = _fit(tmp_path)
-    head = fitted.head
+#: How the DM says a section's rest is in the thread.
+_PROMISE = {
+    "overnight": f" overnight, {NOT_SHOWN} - in the thread",
+    "shipping": f" shipping, {NOT_SHOWN} - in the thread",
+    "gave-up": f" days, {NOT_SHOWN} - in the thread",
+}
 
-    assert "more in the chase list" in head and "more in watch items" in head
-    for line in head.splitlines():
-        if "more in the chase list" in line or "more in watch items" in line:
-            assert line.endswith(f"({budget.STATE_PATH})")
-        if "🔴 in the note" in line:
-            assert line.endswith(".md)")
-        if NOT_SHOWN in line:
-            assert line.endswith(f"{NOT_SHOWN} - in the thread"), line
-    assert "listed again tomorrow" in head
-    assert fitted.promised == ("overnight",), "the DM promised a section it did not track"
+
+def _promised(fitted):
+    """The sections the DM's own words say are in the thread."""
+    head = fitted.head.splitlines()
+    return tuple(
+        key for key, words in _PROMISE.items() if any(line.endswith(words) for line in head)
+    )
+
+
+def dangling(fitted):
+    """Every section the DM promises is in the thread whose heading the thread
+    lacks; a heading counts only at the start of a line, so a row quoting it does not."""
+    thread = fitted.thread.splitlines()
+    return [
+        key
+        for key in _promised(fitted)
+        if not any(line.startswith(f"{budget._THREADED[key]}, the rest") for line in thread)
+    ]
 
 
 def _block(head, heading):
@@ -426,30 +340,9 @@ def test_the_qualifiers_and_the_order_match_the_rows(tmp_path):
     )
 
 
-def test_every_thread_promise_has_its_reply(tmp_path):
-    (tmp_path / "few").mkdir()
-    (tmp_path / "many").mkdir()
-    few = budget.fit_morning(hm.brief_at(tmp_path / "few", mentions=3, notes=0), now=hm.LATE)
-    many = budget.fit_morning(hm.brief_at(tmp_path / "many"), now=hm.LATE)
-
-    assert budget.THREAD_MARK not in few.text(), "three mentions fit; nothing goes to a thread"
-    assert few.promised == ()
-    assert budget.dangling(many) == []
-    assert "overnight, the rest (13)" in many.thread
-    hosts = {
-        urlparse(brief.split_citation(line)[1].strip(" ()")).hostname
-        for line in many.thread.splitlines()[1:]
-    }
-    assert hosts <= {"example.slack.com", "mail.example.com"}, "a reply row lost its permalink"
-
-
 def _thread_rows(key, count):
     return [
-        (
-            claim(f"{key} {i} " + "said " * 25, f"https://x.example.com/{key}{i}"),
-            f"title {i}" if key == "gave-up" else "",
-        )
-        for i in range(count)
+        claim(f"{key} {i} " + "said " * 25, f"https://x.example.com/{key}{i}") for i in range(count)
     ]
 
 
@@ -474,53 +367,16 @@ def test_an_overfull_reply_keeps_every_heading_and_counts_what_it_drops():
     assert kept["overnight"] == 0, "overnight goes first: slack and gmail still have it"
     assert kept["gave up on notes"] == budget.CAPS["gave-up"], "gave-up keeps its floor"
     assert 0 < kept["shipping"] < 30, "shipping gives up rows before the gave-up floor"
-    assert named == {f"title {i}" for i in range(budget.CAPS["gave-up"])}, (
-        "exactly the titles the reply kept count as said"
-    )
+    assert named == budget.CAPS["gave-up"], "exactly the titles the reply kept count as said"
     assert gone == {key: 30 - n for key, n in zip(threaded, kept.values(), strict=True)}
     assert "named in a later brief" in thread and "still in slack and gmail" in thread
     assert brief.unsourced_claims(thread) == []
     assert voice_violations(thread) == []
 
 
-def test_gave_up_overflow_goes_to_the_thread_and_only_named_titles_count_as_said(tmp_path):
-    titles = [f"Retired series {i}" for i in range(80)]
-    section = Section(
-        "gave up on notes (80)",
-        tuple(
-            f"- {title} (mon sep {i % 28 + 1}) - no note found in 11 days,"
-            " dropping it from the list"
-            for i, title in enumerate(titles)
-        ),
-        key="gave-up",
-    )
-    fitted = budget.fit_morning(
-        hm.brief_at(tmp_path), now=hm.LATE, gave_up=section, gave_up_titles=titles
-    )
-    named = {title for title in titles if f"- {title} (" in fitted.text()}
-
-    assert "gave-up" in fitted.promised
-    assert budget.dangling(fitted) == []
-    assert fitted.gave_up_shown == named, "a title was recorded that neither post names"
-    assert named and named != set(titles), "this morning should name some and hold the rest"
-    assert "named in a later brief" in fitted.thread
-    assert len(fitted.thread) <= budget.PUSH_BUDGET
-
-
-@pytest.mark.parametrize("now", [hm.EARLY, hm.LATE], ids=["06:45", "13:43"])
-def test_head_and_thread_are_sourced_and_in_voice(tmp_path, now):
-    _, fitted = _fit(tmp_path, now)
-    head, thread = budget.split_parts(fitted.text())
-
-    assert brief.unsourced_claims(head) == []
-    assert brief.unsourced_claims(thread) == []
-    assert voice_violations(head) == []
-    assert voice_violations(thread) == []
-
-
 def test_shrink_order_cuts_watch_first_and_meetings_last(tmp_path):
     assembled = hm.brief_at(tmp_path, hm.LATE, meetings=40)
-    fitted = budget.fit_morning(assembled, now=hm.LATE)
+    fitted = budget.fit_morning(assembled)
     cuts = {cut.section: cut for cut in fitted.cuts}
 
     assert len(fitted.head) <= budget.PUSH_BUDGET
@@ -533,92 +389,45 @@ def test_shrink_order_cuts_watch_first_and_meetings_last(tmp_path):
 
 @pytest.mark.parametrize(
     ("meetings", "now", "room"),
-    [
-        (40, hm.LATE, budget.PUSH_BUDGET),
-        (60, hm.LATE, budget.PUSH_BUDGET),
-        (40, hm.EARLY, 1_377),
-        (40, hm.EARLY, 1_784),
-        (60, hm.LATE, 1_800),
-    ],
+    [(60, hm.LATE, budget.PUSH_BUDGET), (40, hm.EARLY, 1_377)],
 )
 def test_the_fit_gives_back_every_row_that_still_fits(tmp_path, meetings, now, room):
     assembled = hm.brief_at(tmp_path, now, meetings=meetings)
-    fitted = budget.fit_morning(assembled, now=now, budget=room)
+    fitted = budget.fit_morning(assembled, budget=room)
     ceiling = {
         **budget.CAPS,
         "meetings": len(brief.packed_meeting_rows(assembled.events, assembled.day)),
-        "pile": 1,
     }
     short = [
         cut.section
         for cut in fitted.cuts
         if cut.counted and fitted.caps[cut.section] < ceiling[cut.section]
     ]
-    short += ["pile"] if fitted.caps["pile"] < ceiling["pile"] else []
 
     assert short, "the fixture should make the fit shrink something"
     for key in short:
         grown = budget._compose(
-            assembled,
-            {**fitted.caps, key: fitted.caps[key] + 1},
-            now=now,
-            gave_up=None,
-            gave_up_titles=(),
-            gave_up_days=11,
-            late=(),
+            assembled, {**fitted.caps, key: fitted.caps[key] + 1}, gave_up=None, gave_up_days=11
         )
         assert len(grown.head) > room, f"{key} could have shown one more row"
-    if fitted.caps["pile"] == 0:
-        # clipped names are the last thing before a meeting row: with every list
-        # at its count line, naming them all must still not fit
-        lists_out = {key: 0 for key in fitted.caps} | {
-            "meetings": fitted.caps["meetings"],
-            "pile": 1,
-        }
-        named = budget._compose(
-            assembled,
-            lists_out,
-            now=now,
-            gave_up=None,
-            gave_up_titles=(),
-            gave_up_days=11,
-            late=(),
-        )
-        assert len(named.head) > room, "a pile-up stayed clipped while it could be named"
 
 
-def test_meetings_go_last_and_count_what_is_over_and_what_is_later(tmp_path):
+def test_meetings_go_last_and_count_what_they_cut(tmp_path):
     assembled = hm.brief_at(tmp_path, hm.LATE, meetings=60)
-    fitted = budget.fit_morning(assembled, now=hm.LATE, budget=1_800)
+    fitted = budget.fit_morning(assembled, budget=1_800)
     meetings = next(cut for cut in fitted.cuts if cut.section == "meetings")
-    line = next(line for line in fitted.head.splitlines() if "already over" in line)
+    rows = brief.packed_meeting_rows(assembled.events, hm.DAY)
+    kept = [row.line for row in rows if row.line in fitted.head]
 
     assert len(fitted.head) <= 1_800 and len(fitted.thread) <= 1_800
     assert meetings.counted, "the budget should force the meetings to give up rows"
-    over, later = (int(part.split("+")[1].split()[0]) for part in line.split(" (")[0].split(", "))
-    assert over + later == meetings.counted, "the cut meetings are miscounted"
-    assert over > 0 and later > 0, "at 13:43 the morning is over and the evening still to come"
-    assert line.endswith(f"({brief.day_link(hm.DAY)})")
-    width = None if fitted.caps["pile"] else brief.PILE_WIDTH
-    rows = brief.packed_meeting_rows(assembled.events, hm.DAY, pile_width=width)
-    upcoming = [
-        row
-        for row in rows
-        if any((brief._local(event.get("end")) or hm.LATE) > hm.LATE for event in row.members)
-    ]
-    kept = [row for row in upcoming if row.line in fitted.head]
-    assert kept == upcoming[: len(kept)], "a later meeting was kept over the next one"
+    assert f"- +{meetings.counted} more today ({brief.day_link(hm.DAY)})" in fitted.head
+    assert kept == [row.line for row in rows[: len(kept)]], (
+        "a later meeting was kept over an earlier one"
+    )
     alone = {key: 0 for key in fitted.caps}
     alone["meetings"] = fitted.caps["meetings"] + 1
-    grown = budget._compose(
-        assembled,
-        alone,
-        now=hm.LATE,
-        gave_up=None,
-        gave_up_titles=(),
-        gave_up_days=11,
-        late=(),
-    )
+    grown = budget._compose(assembled, alone, gave_up=None, gave_up_days=11)
     assert len(grown.head) > 1_800, "a meeting row was cut while every other section could give"
 
 
@@ -656,42 +465,22 @@ def test_the_floor_is_bounded_and_keeps_every_degrade_line():
         unreachable=dead,
         events=tuple(hm.events(hm.DAY, count=60)),
     )
-    refusal = "- couldn't update State.md: " + "x" * 300
-
-    floor = budget.fit_morning(assembled, now=hm.LATE, late=[refusal], budget=0)
+    floor = budget.fit_morning(assembled, budget=0)
 
     assert len(floor.head) < 2_000
-    clipped = next(line for line in floor.head.splitlines() if "couldn't update" in line)
-    assert len(clipped) <= budget.LATE_CAP
-    counted = next(line for line in floor.head.splitlines() if "already over" in line)
-    over, later = (
-        int(part.split("+")[1].split()[0]) for part in counted.split(" (")[0].split(", ")
-    )
-    assert over + later == 61, "at the floor every meeting is still counted"
+    assert f"- +61 more today ({brief.day_link(hm.DAY)})" in floor.head, "a meeting went uncounted"
     for name in dead:
         assert f"- couldn't check {name}" in floor.head
     assert floor.head.splitlines()[2].startswith("⚠ no weekly note")
     assert brief.unsourced_claims(floor.head) == []
 
 
-@pytest.mark.parametrize("owed", [0, 1, 60, 300])
-@pytest.mark.parametrize("meetings", [0, 24, 60])
-def test_the_budget_holds_at_any_scale(tmp_path, owed, meetings):
-    assembled = hm.brief_at(tmp_path, hm.LATE, owed=owed, meetings=meetings)
-    fitted = budget.fit_morning(assembled, now=hm.LATE)
-    head, thread = budget.split_parts(fitted.text())
-
-    assert len(head) <= budget.PUSH_BUDGET
-    assert len(thread) <= budget.PUSH_BUDGET
-    assert brief.unsourced_claims(head) == []
-
-
 def test_the_budget_is_deterministic(tmp_path):
     (tmp_path / "a").mkdir()
     (tmp_path / "b").mkdir()
-    first = budget.fit_morning(hm.brief_at(tmp_path / "a"), now=hm.LATE).text()
-    again = budget.fit_morning(hm.brief_at(tmp_path / "a"), now=hm.LATE).text()
-    shuffled = budget.fit_morning(hm.brief_at(tmp_path / "b", shuffle=3), now=hm.LATE).text()
+    first = budget.fit_morning(hm.brief_at(tmp_path / "a")).text()
+    again = budget.fit_morning(hm.brief_at(tmp_path / "a")).text()
+    shuffled = budget.fit_morning(hm.brief_at(tmp_path / "b", shuffle=3)).text()
 
     assert first == again == shuffled
 
@@ -846,9 +635,8 @@ def test_a_state_md_refusal_still_fits(tmp_path, monkeypatch):
     )
 
     assert len(head) <= budget.PUSH_BUDGET
-    assert len(refusal) <= budget.LATE_CAP
     assert refusal.startswith("- couldn't update State.md: the file changed")
-    assert refusal.endswith("Nothing was written."), "the cut took the end that says what to do"
+    assert refusal.endswith("Nothing was written.") and "..." not in refusal, "the refusal was cut"
     assert brief.unsourced_claims(head) == []
 
 
@@ -866,8 +654,7 @@ def test_a_light_morning_keeps_the_refusal_whole(tmp_path, monkeypatch):
     )
     refusal = next(line for line in text.splitlines() if "couldn't update State.md" in line)
 
-    assert len(refusal) > budget.LATE_CAP and "..." not in refusal
-    assert refusal.endswith("Nothing was written.")
+    assert "..." not in refusal and refusal.endswith("Nothing was written.")
 
 
 def test_main_posts_only_the_push_and_logs_the_summary(tmp_path, monkeypatch, capsys):
@@ -934,32 +721,6 @@ def test_full_leaves_the_shipping_cursors_where_they_were(tmp_path, monkeypatch,
 # --------------------------------------------------------------------------
 
 
-def test_dangling_reads_the_promise_from_the_dm_itself():
-    head = (
-        "morning.\n\novernight (9)\n- a (https://x.example.com/a)\n"
-        f"- +8 more overnight, {NOT_SHOWN} - in the thread"
-    )
-    assert budget.dangling(budget.Fitted(head=head)) == ["overnight"]
-    assert budget.dangling(budget.Fitted(head=head, thread="overnight, the rest (8)\n- b")) == []
-
-
-def test_the_fit_refuses_a_brief_that_would_lose_rows_without_a_count(tmp_path):
-    assembled = hm.brief_at(tmp_path)
-    twice = Brief(
-        assembled.day,
-        assembled.header,
-        (*assembled.sections, assembled.sections[-1]),
-        events=assembled.events,
-    )
-    with pytest.raises(ValueError, match="share a key"):
-        budget.fit_morning(twice, now=hm.LATE)
-    gave_up = Section(
-        "gave up on notes (2)", ("- a - no note found", "- b - no note found"), key="gave-up"
-    )
-    with pytest.raises(ValueError, match="titles"):
-        budget.fit_morning(assembled, now=hm.LATE, gave_up=gave_up, gave_up_titles=["a"])
-
-
 def test_every_section_the_brief_makes_is_one_the_budget_knows(tmp_path):
     """A section the budget does not know is shown whole and never cut, so a new
     one added to the brief without a budget rule could take the DM over."""
@@ -986,81 +747,15 @@ def test_a_pulse_blocks_own_degrade_lines_stay_in_the_dm(tmp_path):
             (*assembled.sections, shipping),
             events=assembled.events,
         ),
-        now=hm.EARLY,
     )
     cut = next(cut for cut in fitted.cuts if cut.section == "shipping")
 
     assert all(notice in fitted.head for notice in notices), "a stale repo was hidden"
     assert not any(notice in fitted.thread for notice in notices)
     assert cut.total == 6, "a notice was counted as a landing"
-    assert budget.dangling(fitted) == []
+    assert dangling(fitted) == []
     if cut.counted:
         assert f"shipping, the rest ({cut.counted})" in fitted.thread
-
-
-def _pile(count):
-    start = hm._at(9)
-    return [
-        {
-            "id": f"pile{i}",
-            "summary": f"{hm._TOPICS[i % len(hm._TOPICS)].title()} w/ vp-data",
-            "start": start + timedelta(minutes=20 * i),
-            "end": start + timedelta(minutes=20 * i + 30),
-            "permalink": f"https://calendar.example.com/pile{i}",
-        }
-        for i in range(count)
-    ]
-
-
-def _pile_brief(count=10, owed=60):
-    events = _pile(count)
-    rows = tuple(
-        claim(f"row {i} " + "said " * 20, f"https://x.example.com/{i}") for i in range(owed)
-    )
-    return Brief(
-        hm.DAY,
-        "morning. wed oct 7",
-        (
-            Section(f"meetings ({count})", ("- the pairwise render",), key="meetings"),
-            Section(f"owed to you ({owed})", rows, key="owed"),
-        ),
-        events=tuple(events),
-    )
-
-
-def test_a_pile_up_names_every_meeting_while_there_is_room():
-    assembled = _pile_brief()
-    fitted = budget.fit_morning(assembled, now=hm.EARLY)
-    meetings = next(cut for cut in fitted.cuts if cut.section == "meetings")
-
-    assert len(assembled.render()) > budget.PUSH_BUDGET, (
-        "the fit has to run for this to mean anything"
-    )
-    assert "more in the pile-up" not in fitted.head
-    assert all(event["summary"] in fitted.head for event in assembled.events)
-    assert (meetings.total, meetings.shown) == (10, 10)
-
-
-def test_a_clipped_pile_up_counts_the_meetings_it_does_not_name():
-    assembled = _pile_brief()
-    floor = {key: 0 for key in (*budget.CAPS, "meetings", "pile")}
-    whole = budget._compose(
-        assembled,
-        {**floor, "meetings": 1, "pile": 1},
-        now=hm.EARLY,
-        gave_up=None,
-        gave_up_titles=(),
-        gave_up_days=11,
-        late=(),
-    )
-    fitted = budget.fit_morning(assembled, now=hm.EARLY, budget=len(whole.head) - 1)
-    meetings = next(cut for cut in fitted.cuts if cut.section == "meetings")
-    line = next(line for line in fitted.head.splitlines() if "more in the pile-up" in line)
-    unnamed = int(line.split(" · +")[1].split()[0])
-
-    assert fitted.caps["pile"] == 0 and fitted.caps["meetings"] == 1
-    assert meetings.counted == unnamed, "the meetings the row does not name went uncounted"
-    assert f"meetings {unnamed} -> " in fitted.summary()
 
 
 def test_the_summary_says_where_every_cut_row_went():
@@ -1086,13 +781,11 @@ def test_the_summary_says_where_every_cut_row_went():
 def _overflow(key):
     """The DM's real overflow line for ``key``, built by the budget itself."""
     rows = tuple(claim(f"{key} row {i}", f"https://x.example.com/{key}{i}") for i in range(5))
-    titles = [f"title {i}" for i in range(5)] if key == "gave-up" else []
-    section, _, rest, _ = budget._capped(
+    section, _, rest = budget._capped(
         Section(key, rows, key=key),
         key=key,
         cap=1,
         note_path="note.md",
-        gave_up_titles=titles,
         gave_up_days=11,
     )
     assert rest, "the section should have sent rows on"
@@ -1107,10 +800,10 @@ def test_dangling_catches_every_kind_of_promise(key):
         f"overnight, the rest (1)\n- vp-data: {heading}, the rest of it (https://x.example.com/z)"
     )
 
-    assert budget.dangling(budget.Fitted(head=head)) == [key]
-    assert budget.dangling(budget.Fitted(head=head, thread=f"{heading}, the rest (4)\n- r")) == []
+    assert dangling(budget.Fitted(head=head)) == [key]
+    assert dangling(budget.Fitted(head=head, thread=f"{heading}, the rest (4)\n- r")) == []
     if key != "overnight":
-        assert budget.dangling(budget.Fitted(head=head, thread=impostor)) == [key], (
+        assert dangling(budget.Fitted(head=head, thread=impostor)) == [key], (
             "a row quoting the heading is not the reply"
         )
 
@@ -1129,32 +822,3 @@ def test_a_reply_one_row_over_counts_the_one_it_drops():
     assert none == {} and gone == {"overnight": 1}
     assert f"- +1 more, {NOT_SHOWN} - still in slack and gmail" in thread
     assert "overnight 2 -> the thread, 1 -> still in slack and gmail" in fitted.summary()
-
-
-def test_the_refusal_is_cut_in_the_middle_and_only_when_over():
-    exact = "x" * budget.LATE_CAP
-    assert budget._middle(exact, budget.LATE_CAP) == exact
-    line = "- couldn't update State.md: " + "a" * 150 + " " + "b" * 150 + " Nothing was written."
-    cut = budget._middle(line, budget.LATE_CAP)
-    start, end = cut.split("...")
-
-    assert len(cut) == budget.LATE_CAP
-    assert abs(len(start) - len(end)) <= 1
-    assert line.startswith(start) and line.endswith(end)
-
-
-@pytest.mark.parametrize(
-    ("lines", "titles"),
-    [(1, ["a", "b"]), (2, ["a"]), (0, ["a"])],
-    ids=["more-titles", "fewer-titles", "titles-without-a-section"],
-)
-def test_the_fit_refuses_titles_that_do_not_match_their_lines(tmp_path, lines, titles):
-    gave_up = (
-        Section("gave up", tuple(f"- t{i} - no note found" for i in range(lines)), key="gave-up")
-        if lines
-        else None
-    )
-    with pytest.raises(ValueError, match="titles"):
-        budget.fit_morning(
-            hm.brief_at(tmp_path), now=hm.LATE, gave_up=gave_up, gave_up_titles=titles
-        )

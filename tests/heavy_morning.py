@@ -16,12 +16,11 @@ Imported by the tests as `heavy_morning` (tests/ is on the pytest path).
 from __future__ import annotations
 
 import random
-from collections.abc import Mapping, Sequence
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from daydag import brief, recipes
+from daydag import brief, recipes, run
 from daydag.brief import Brief
 from daydag.ledger import Ledger
 from daydag.state import StateFolder
@@ -268,28 +267,6 @@ def folder(root: Path, *, owed: int = 115, watch: int = 43) -> StateFolder:
     return made
 
 
-class _Sources:
-    """The brief's sources, served from one heavy morning."""
-
-    def __init__(self, data: Mapping[str, Any], events_: Sequence[Mapping[str, Any]]) -> None:
-        self._data, self._events = data, events_
-
-    def calendar(self, window: recipes.DayWindow) -> list[Mapping[str, Any]]:
-        return list(self._events)
-
-    def vault_note(self, path: str) -> str:
-        return ""
-
-    def weekly_note(self, path: str) -> str:
-        return str(self._data["vault"])
-
-    def slack(self, query: str) -> list[Mapping[str, Any]]:
-        return list(self._data["slack"])
-
-    def gmail(self, query: str) -> list[Mapping[str, Any]]:
-        return list(self._data["gmail"])
-
-
 def brief_at(
     root: Path,
     now: datetime = LATE,
@@ -297,20 +274,17 @@ def brief_at(
     owed: int = 115,
     watch: int = 43,
     meetings: int = 24,
-    mentions: int = 8,
-    notes: int = 9,
-    red: int = 11,
     shuffle: int | None = None,
 ) -> Brief:
-    """The assembled heavy Brief, for testing `daydag.budget` without the runner."""
+    """The assembled heavy Brief, for testing `daydag.budget` without the runner -
+    its payloads read through the runner's own adapter, as a real morning's are."""
     day = now.astimezone(PT).date()
-    data = payloads(day, meetings=meetings, mentions=mentions, notes=notes, red=red)
-    todays = events(day, count=meetings)
+    data = payloads(day, meetings=meetings)
     if shuffle is not None:
-        random.Random(shuffle).shuffle(todays)  # noqa: S311
+        random.Random(shuffle).shuffle(data["calendar"])  # noqa: S311
     return brief.assemble(
         now=now.astimezone(UTC),
-        sources=_Sources(data, todays),
+        sources=run._Payloads(data, weekly_path=recipes.weekly_note(day)),
         identities=IDENTITIES,
         state=folder(root, owed=owed, watch=watch),
         ledger=Ledger(),

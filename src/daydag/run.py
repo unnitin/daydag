@@ -66,7 +66,7 @@ from __future__ import annotations
 import json
 import sys
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any
@@ -1619,69 +1619,38 @@ def render(
             # the most conservative possible refusal.
             refusal = f"- couldn't update State.md: {unwritable}"
             if loop == "morning":
-                # whole when the morning fits; the budget clips it only in a fitted DM
+                # said whole: the fit leaves it room at the foot of the DM
                 late.append(refusal)
             else:
                 text += f"\n\n{refusal}"
     if assembled:
-        text = _fit_morning(
+        tail = "".join(f"\n\n{line}" for line in late)
+        if full:
+            text = assembled[0].render()
+            if gave_up_section is not None:
+                text += "\n\n" + gave_up_section.render()
+            return text + tail
+        # One DM plus at most one reply. Gave-up is said once, then recorded so
+        # it is not said again - but only for the titles the posts name (#185):
+        # one the budget counted instead comes back tomorrow, named then. The
+        # fit's summary goes to the log, so a cut can be explained afterwards.
+        fitted = budget.fit_morning(
             assembled[0],
-            now=now,
-            tz=tz,
-            gave_up=gave_up,
-            section=gave_up_section,
-            titles=gave_up_titles,
-            late=late,
-            events=records,
-            full=full,
-            on_fit=on_fit,
+            gave_up=gave_up_section,
+            gave_up_days=REPLAY_HORIZON.days,
+            budget=budget.PUSH_BUDGET - len(tail),
         )
+        fitted = replace(fitted, head=fitted.head + tail)
+        if events is not None:
+            said = set(gave_up_titles[: fitted.gave_up_said])
+            for row in gave_up:
+                if row.summary in said:
+                    events.record(GAVE_UP, id=row.event_id, start=row.start.isoformat())
+            events.record(MORNING_FIT, summary=fitted.summary())
+        if on_fit is not None:
+            on_fit(fitted.summary())
+        text = fitted.text()
     return text
-
-
-def _fit_morning(
-    assembled: brief.Brief,
-    *,
-    now: datetime,
-    tz: Any,
-    gave_up: Sequence[Row],
-    section: brief.Section | None,
-    titles: Sequence[str],
-    late: Sequence[str],
-    events: EventLog | None,
-    full: bool,
-    on_fit: Callable[[str], None] | None,
-) -> str:
-    """The morning as one DM plus at most one reply, gave-up recorded for what it names.
-
-    Gave-up is said once, then recorded so it is not said again - but only for
-    the titles the DM actually names (#185). A title the budget counted instead
-    is not recorded, so `_gave_up` returns it tomorrow and the brief names it
-    then. `full` is the unfitted render for a terminal and records nothing.
-    The fit's summary goes to the log as `MORNING_FIT`, so a cut can be
-    explained after the fact without reading stderr.
-    """
-    if full:
-        text = assembled.render()
-        if section is not None:
-            text += "\n\n" + section.render()
-        return text + "".join(f"\n\n{line}" for line in late)
-    fitted = budget.fit_morning(
-        assembled,
-        now=now,
-        gave_up=section,
-        gave_up_titles=titles,
-        gave_up_days=REPLAY_HORIZON.days,
-        late=late,
-    )
-    if events is not None:
-        for row in gave_up:
-            if row.summary in fitted.gave_up_shown:
-                events.record(GAVE_UP, id=row.event_id, start=row.start.isoformat())
-        events.record(MORNING_FIT, summary=fitted.summary())
-    if on_fit is not None:
-        on_fit(fitted.summary())
-    return fitted.text()
 
 
 def _observe_past(
