@@ -320,6 +320,10 @@ def _blocks(text: str, name: str) -> dict[str, str]:
 
 #: A gmail thread or message id: sixteen lowercase hex digits, standing alone.
 _GMAIL_ID = re.compile(r"(?<![0-9A-Za-z])[0-9a-f]{16}(?![0-9A-Za-z])")
+#: The same thread in a mail permalink: `#all/thread-f:<the id in decimal>`.
+#: Every row ingest files cites its note this way, and his reply's `threadId`
+#: is the hex form - read as two ids, the strongest evidence never matched.
+_GMAIL_PERMALINK_ID = re.compile(r"thread-f:(\d{1,20})")
 #: A Slack permalink: the conversation, and `p` + the ts with its dot removed.
 _SLACK_LINK = re.compile(r"archives/(?P<channel>[CDG][A-Z0-9]+)/p(?P<sec>\d{10})(?P<frac>\d{6})")
 #: `owner/name`, optionally as a github url, optionally with `/pull/N`. Loose
@@ -342,6 +346,7 @@ def _anchors(block: str, *, head: str = "") -> frozenset[str]:
     """
     text = str(block or "")
     found: set[str] = {f"gmail:{gid}" for gid in _GMAIL_ID.findall(text)}
+    found |= {f"gmail:{int(dec):016x}" for dec in _GMAIL_PERMALINK_ID.findall(text)}
     for link in _SLACK_LINK.finditer(text):
         found.add(f"slack:{link['channel']}:{link['sec']}.{link['frac']}")
     for link in _SLACK_LINK.finditer(str(head or "")):

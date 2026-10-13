@@ -284,3 +284,136 @@ def test_the_mark_survives_a_fitted_morning(tmp_path):
 
     assert len(head) <= budget.PUSH_BUDGET, "this morning is fitted"
     assert _line(head, "silver-layer").startswith("- ✓ looks answered, strike it? eng-2")
+
+
+# --------------------------------------------------------------------------
+# evidence for rows no thread can settle: his sent messages, and theirs to him
+# --------------------------------------------------------------------------
+
+GEMINI = "https://mail.example.com/mail/#all/thread-f:1880000000000000001"
+_ROWS = (
+    ("vp-data · Prepare Pros and Cons · (from DE Standup)", "2026-09-04"),
+    ("Alex Rivera · Confirm Discovery access · (from Discovery demo)", "2026-09-05"),
+    ("Alex Rivera · Share Transcripts · (from a 1:1)", "2026-09-06"),
+)
+NOTED = "# State\n\n## Chase list\n\n" + "".join(
+    f"- {row} · asked-on {asked} · status open · [source]({GEMINI})\n" for row, asked in _ROWS
+)
+
+
+def _said(text, stamp, *, channel="CPOD000001", **extra):
+    return {
+        "text": text,
+        "ts": f"{stamp}.000000",
+        "permalink": _slack(channel, f"p{stamp}000000"),
+        **extra,
+    }
+
+
+def test_the_plan_reads_evidence_since_the_oldest_shown_row(tmp_path):
+    identities, _ = _vault(tmp_path, NOTED)
+    steps = run.plan("morning", now=NOW, identities=identities).steps
+    by = {}
+    for step in steps:
+        by.setdefault(step.source, []).append(step.detail)
+
+    assert by["morning_sent"][0]["filters"] == "from:<@UPRINCIPAL1> after:2026-09-03"
+    assert by["morning_mail_sent"][0]["query"] == "in:sent after:2026/09/04"
+    dms, mentions = by["morning_to_him"]
+    assert (
+        dms["filters"] == "-from:<@UPRINCIPAL1> after:2026-09-03"
+        and dms["channel_types"] == "im,mpim"
+    )
+    assert mentions["keywords"] == ["<@UPRINCIPAL1>"], "the mention is a keyword"
+    for detail in (*by["morning_sent"], dms, mentions):
+        assert detail["sort_dir"] == "desc"
+
+
+def test_evidence_reaches_back_at_most_two_weeks(tmp_path):
+    identities, _ = _vault(tmp_path, NOTED.replace("2026-09-04", "2026-06-01"))
+    (sent,) = [
+        s.detail
+        for s in run.plan("morning", now=NOW, identities=identities).steps
+        if s.source == "morning_sent"
+    ]
+    assert sent["filters"] == "from:<@UPRINCIPAL1> after:2026-08-23"
+
+
+def _evidenced(tmp_path, **payloads):
+    identities, folder = _vault(tmp_path, NOTED)
+    full = {"calendar": [], "slack": [], "gmail": [], "vault": "", "closure": {}, **payloads}
+    return run.render("morning", now=NOW, identities=identities, payloads=full, state=folder)
+
+
+def test_his_message_about_his_own_row_is_discussed_with_its_quote(tmp_path):
+    asked = _said(
+        "can you confirm both are on that team and anyone who needs in has access", 1757100000
+    )
+    text = _evidenced(tmp_path, morning_sent=[asked])
+
+    line = _line(text, "Confirm Discovery access")
+    assert line.startswith("- discussed since: Alex Rivera · Confirm Discovery access")
+    assert '"can you confirm both' in line and line.endswith(f"({GEMINI}) ({asked['permalink']})")
+    assert _line(text, "Share Transcripts").startswith("- couldn't verify: "), (
+        "no evidence, no claim"
+    )
+
+
+def test_one_word_in_common_is_not_evidence(tmp_path):
+    text = _evidenced(
+        tmp_path, morning_sent=[_said("look at the standup transcripts for context", 1757100000)]
+    )
+    assert _line(text, "Share Transcripts").startswith("- couldn't verify: ")
+
+
+def test_his_reply_on_the_notes_thread_looks_closed(tmp_path):
+    reply = {
+        "threadId": f"{1880000000000000001:016x}",  # the API's hex for the permalink's id
+        "snippet": "here are the transcripts",
+        "subject": "Re: notes",
+        "to": "vp-data",
+        "date": "2026-09-06",
+        "permalink": "https://mail.example.com/r1",
+    }
+    text = _evidenced(tmp_path, morning_mail_sent=[reply])
+    assert _line(text, "Share Transcripts").startswith(
+        "- looks closed, confirm? Alex Rivera · Share Transcripts"
+    )
+
+
+def test_a_row_owed_to_him_is_evidenced_by_the_owners_message_to_him(tmp_path):
+    theirs = _said(
+        "pros and cons doc is ready, prepare to review",
+        1757100000,
+        channel="DVPDATA001",
+        user="UVPDATA001",
+    )
+    text = _evidenced(tmp_path, morning_to_him=[theirs])
+    assert _line(text, "Prepare Pros and Cons").startswith(
+        "- discussed since: vp-data · Prepare Pros and Cons"
+    )
+
+
+def test_his_own_message_is_not_evidence_for_a_row_owed_to_him(tmp_path):
+    mine = _said("vp-data please prepare the pros and cons", 1757100000)
+    text = _evidenced(tmp_path, morning_sent=[mine])
+    assert _line(text, "Prepare Pros and Cons").startswith("- couldn't verify: ")
+
+
+def test_a_read_thread_outranks_word_evidence(tmp_path):
+    identities, folder = _vault(tmp_path)
+    talk = _said(
+        "the compute plan is coming, will share the plan friday", 1757100000, channel="DVPDATA001"
+    )
+    payloads = {
+        "calendar": [],
+        "slack": [],
+        "gmail": [],
+        "vault": "",
+        "closure": {UNREAD: []},
+        "morning_to_him": [talk],
+    }
+    text = run.render("morning", now=NOW, identities=identities, payloads=payloads, state=folder)
+    assert _line(text, "the compute plan") == f"- vp-data · the compute plan ({UNREAD})", (
+        "read and still open: the thread is the verdict"
+    )

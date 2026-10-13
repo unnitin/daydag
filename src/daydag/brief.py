@@ -999,12 +999,24 @@ def _owned_by_him(owner: str, owns: Callable[[str], bool] | None) -> bool:
 
 @dataclass(frozen=True)
 class RowCheck:
-    """What reading a chase row's thread this run established (#187):
-    ``answered`` (with the closing message), ``open``, or ``unchecked``."""
+    """What this run established about a chase row (#187): from its thread,
+    ``answered`` (with the closing message), ``open`` or ``unchecked``; from
+    his sent messages or the messages to him, ``closing`` or ``discussed``
+    (with the evidence) - proposals for him to confirm, never a closure."""
 
     status: str
     quote: str = ""
     permalink: str = ""
+
+
+#: How a row reads when something was found about it (#187), strongest first:
+#: the owner answered in the ask's thread; then, from the live sources, a
+#: reply or delivery that looks like closure; then a mention that is only talk.
+_EVIDENCED = {
+    "answered": "✓ looks answered, strike it?",
+    "closing": "looks closed, confirm?",
+    "discussed": "discussed since:",
+}
 
 
 def row_citation(body: str, subs: Sequence[str] = ()) -> str | None:
@@ -1023,19 +1035,17 @@ def _line_from_state(body: str, subs: Sequence[str] = (), check: RowCheck | None
     read says so. A row read and still open is shown as it is.
     """
     text, link = split_link(body)[0], row_citation(body, subs)
+    # The mark LEADS the line: a fitted morning clips a long row's words from
+    # the end, and a mark at the end was the first thing it cut.
+    if check is not None and check.status in _EVIDENCED:
+        evidence = check.permalink if check.permalink != link else None
+        return claim(
+            f"{_EVIDENCED[check.status]} {text}", link, evidence, quote=check.quote or None
+        )
     # A row with no link already says it cannot be sourced; checked or not,
-    # there is nothing more to say about it. The mark LEADS the line: a fitted
-    # morning clips a long row's words from the end, and a mark at the end was
-    # the first thing it cut.
+    # there is nothing more to say about it.
     if check is None or check.status == "open" or link is None:
         return claim(text, link)
-    if check.status == "answered":
-        return claim(
-            f"✓ looks answered, strike it? {text}",
-            link,
-            check.permalink if check.permalink != link else None,
-            quote=check.quote or None,
-        )
     return claim(f"couldn't verify: {text}", link)
 
 

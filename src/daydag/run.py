@@ -64,6 +64,7 @@ KNOWN LIMIT
 from __future__ import annotations
 
 import json
+import re
 import sys
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
@@ -310,7 +311,7 @@ def plan(
         ),
         *_extra_notes(loop, day),
         *_evening_sweep(loop, day, principal=principal, identities=identities),
-        *_morning_check_steps(loop, identities),
+        *_morning_check_steps(loop, identities, day),
     ]
     if loop == "chase":
         # The chaser reads the file he corrects by hand and then READS THE
@@ -332,7 +333,7 @@ def plan(
 
 def _morning_checks(
     written: str, identities: Mapping[str, str]
-) -> list[tuple[tuple[str, str], closure.Ask]]:
+) -> list[tuple[tuple[str, str], closure.Ask, tuple[str, ...]]]:
     """The chase rows the morning will SHOW, each as an ask whose reply can be read.
 
     Open is a verdict, not a default (#187). The brief shows the first few rows
@@ -342,7 +343,7 @@ def _morning_checks(
     head. A row cites a Slack thread or it cannot be checked; its ask says so.
     """
     owns = call_notes.Principal.from_identities(identities).is_him
-    checks: list[tuple[tuple[str, str], closure.Ask]] = []
+    checks: list[tuple[tuple[str, str], closure.Ask, tuple[str, ...]]] = []
     sides = (("owed", "Chase list"), ("owed-by", "Owed by you"))
     for rows, (key, section) in zip(brief.chase_rows(written, owns), sides, strict=True):
         lines = [brief.line_from_state(head, subs) for head, subs in rows]
@@ -359,7 +360,7 @@ def _morning_checks(
                 thread_ts=thread_ts,
                 permalink=link,
             )
-            checks.append(((head, citation), ask))
+            checks.append(((head, citation), ask, subs))
     return checks
 
 
@@ -380,22 +381,99 @@ def _state_text(identities: Mapping[str, str], folder: StateFolder | None = None
         return None
 
 
-def _morning_check_steps(loop: str, identities: Mapping[str, str]) -> list[Step]:
-    """One read per Slack-cited chase row the morning will show (#187)."""
+#: How far back the morning looks for evidence on a row it shows (#187).
+_EVIDENCE_DAYS = 14
+_ASKED_ON = re.compile(r"asked-on (\d{4}-\d{2}-\d{2})")
+
+
+def _evidence_since(heads: Iterable[str], day: date) -> date:
+    """The oldest asked-on among the rows shown, never more than
+    `_EVIDENCE_DAYS` back; a week when no row carries one."""
+    dates = []
+    for head in heads:
+        found = _ASKED_ON.search(head)
+        if found:
+            try:
+                dates.append(date.fromisoformat(found[1]))
+            except ValueError:
+                continue
+    return max(min(dates, default=day - timedelta(days=7)), day - timedelta(days=_EVIDENCE_DAYS))
+
+
+def _morning_check_steps(loop: str, identities: Mapping[str, str], day: date) -> list[Step]:
+    """What the morning reads to say something true about the rows it shows (#187).
+
+    One read of the thread under each Slack-cited row; and, for rows a thread
+    cannot settle - most cite the meeting note they came from - his own sent
+    Slack and mail since the oldest row was asked (evidence for HIS rows), and
+    the DMs and mentions to him since then (evidence for the rows owed TO him).
+    """
     if loop != "morning":
         return []
     written = _state_text(identities)
     if written is None:
         return []
-    asks = [ask for _, ask in _morning_checks(written, identities)]
-    return [
+    checks = _morning_checks(written, identities)
+    if not checks:
+        return []
+    steps = [
         Step(
             "closure",
             f"{read.how} Put it under `closure` in the payloads, keyed by the permalink.",
             read.to_dict(),
         )
-        for read in closure.closure_steps(asks)
+        for read in closure.closure_steps([ask for _, ask, _ in checks])
     ]
+    principal = identities.get("SLACK_USER_PRINCIPAL", "")
+    since = _evidence_since((head for (head, _), _, _ in checks), day)
+    try:
+        sent = recipes.slack_search(sender=principal, after=since, identities=identities)
+        dms, mentions = recipes.slack_to_him_since(
+            since, principal=principal, identities=identities
+        )
+    except recipes.RecipeError:
+        return steps
+    keep = "Keep text, ts, user, channel, channel_name, thread_ts and permalink"
+    steps.append(
+        Step(
+            "morning_sent",
+            f"his own messages since {since}; {recipes.SLACK_SEARCH_HOW}. At most max_pages"
+            f" pages. {keep}",
+            {"query": sent, "max_pages": _SWEEP_MAX_PAGES, **recipes.slack_fields(sent)},
+        )
+    )
+    steps.append(
+        Step(
+            "morning_mail_sent",
+            "search, then one record per SENT message (not per thread) with threadId, id,"
+            " snippet, subject, to, date and the permalink (viewUrl)",
+            {"query": recipes.gmail_sent_since(since)},
+        )
+    )
+    to_him = (
+        f"{recipes.SLACK_SEARCH_HOW}. At most max_pages pages; concatenate both steps'"
+        f" records into ONE `morning_to_him` list. {keep}"
+    )
+    steps.append(
+        Step(
+            "morning_to_him",
+            f"DMs to him since {since}; {to_him}",
+            {
+                "query": dms,
+                "channel_types": "im,mpim",
+                "max_pages": _SWEEP_MAX_PAGES,
+                **recipes.slack_fields(dms),
+            },
+        )
+    )
+    steps.append(
+        Step(
+            "morning_to_him",
+            f"mentions of him since {since}; {to_him}",
+            {"query": mentions, "max_pages": _SWEEP_MAX_PAGES, **recipes.slack_fields(mentions)},
+        )
+    )
+    return steps
 
 
 def _thread_replies(ask: closure.Ask, messages: Any) -> list[Mapping[str, Any]] | None:
@@ -451,20 +529,69 @@ def _morning_marks(
     fetched = payloads.get("closure")
     read: dict[str, Any] = {}
     if isinstance(fetched, Mapping):
-        for _, ask in checks:
+        for _, ask, _ in checks:
             replies = _thread_replies(ask, fetched.get(ask.key))
             if replies is not None:
                 read[ask.key] = replies
     verdicts = closure.judge(
-        [ask for _, ask in checks],
+        [ask for _, ask, _ in checks],
         read if isinstance(fetched, Mapping) else None,
         principal=identities.get("SLACK_USER_PRINCIPAL", ""),
         owners=_owner_ids(directory),
     )
-    return {
+    marks = {
         row: brief.RowCheck(verdict.status, verdict.quote, verdict.permalink)
-        for (row, _), verdict in zip(checks, verdicts, strict=True)
+        for (row, _, _), verdict in zip(checks, verdicts, strict=True)
     }
+    unsettled = [
+        (row, ask, subs)
+        for (row, ask, subs), verdict in zip(checks, verdicts, strict=True)
+        if verdict.status == "unchecked"
+    ]
+    marks.update(_morning_evidence(unsettled, payloads))
+    return marks
+
+
+def _morning_evidence(
+    unsettled: Sequence[tuple[tuple[str, str], closure.Ask, tuple[str, ...]]],
+    payloads: Mapping[str, Any],
+) -> dict[tuple[str, str], brief.RowCheck]:
+    """Evidence from the live sources for rows no thread could settle (#187).
+
+    His rows are matched against HIS sent Slack and mail; rows owed to him
+    against the DMs and mentions to him - `movement.detect`, the same matcher
+    the wrap uses, so ids beat words and words need two in common. What it
+    finds is a proposal for him to confirm, never a closure.
+    """
+    items: dict[str, tuple[tuple[str, str], bool]] = {}
+    mine: list[movement.OpenItem] = []
+    theirs: list[movement.OpenItem] = []
+    for row, ask, subs in unsettled:
+        head = row[0]
+        key = f"{row[0]}\x00{row[1]}"
+        item = movement.OpenItem(
+            key=key,
+            text=ask.text,
+            owner=brief.row_owner(head),
+            source="DayDAG/State.md",
+            anchors=movement._anchors("\n".join([head, *subs]), head=head),
+            counterparts=movement._counterparts(head),
+        )
+        his = ask.waiting_on == "principal"
+        (mine if his else theirs).append(item)
+        items[key] = (row, his)
+    found = movement.detect(
+        open_items=mine,
+        slack_sent=payloads.get("morning_sent", ()),
+        gmail_sent=payloads.get("morning_mail_sent", ()),
+    ) + movement.detect(open_items=theirs, slack_sweep=payloads.get("morning_to_him", ()))
+    marks: dict[tuple[str, str], brief.RowCheck] = {}
+    for hit in found:
+        row, _ = items[hit.item.key]
+        lead = hit.evidence[0]
+        status = "closing" if hit.proposed in movement.Movement.CLOSING else "discussed"
+        marks[row] = brief.RowCheck(status, lead.quote, lead.permalink)
+    return marks
 
 
 def _prep_ahead_rules(identities: Mapping[str, str]) -> prep_ahead.Rules:

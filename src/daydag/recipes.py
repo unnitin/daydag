@@ -87,6 +87,7 @@ __all__ = [
     "gh_reviewed_on",
     "gmail_gemini_notes",
     "gmail_sent_on",
+    "gmail_sent_since",
     "is_user_id",
     "jira_moved_on",
     "meeting_prep",
@@ -98,6 +99,7 @@ __all__ = [
     "slack_overnight",
     "slack_search",
     "slack_sent_on",
+    "slack_to_him_since",
     "title_from_gemini_subject",
     "vault_path",
     "vault_relative",
@@ -526,6 +528,24 @@ def slack_dms_on(day: date, *, principal: str, identities: Mapping[str, str] | N
     """
     user = _slack_id(principal, _USER_ID, identities, "principal")
     return f"-from:<@{user}> after:{day - _DAY} before:{day + _DAY}"
+
+
+def slack_to_him_since(
+    since: date, *, principal: str, identities: Mapping[str, str] | None = None
+) -> tuple[str, str]:
+    """DMs to him and mentions of him since ``since`` - the owner's side of an
+    ask the morning shows (#187). Run the first with ``channel_types=im,mpim``.
+
+    Both without his own messages: his side is `slack_search(sender=...)`.
+    """
+    user = _slack_id(principal, _USER_ID, identities, "principal")
+    after = f"after:{since - _DAY}"
+    return f"-from:<@{user}> {after}", f"<@{user}> -from:<@{user}> {after}"
+
+
+def gmail_sent_since(since: date) -> str:
+    """His sent mail since ``since``, open-ended - see `gmail_sent_on`."""
+    return f"in:sent after:{since.strftime('%Y/%m/%d')}"
 
 
 def gmail_sent_on(day: date) -> str:
