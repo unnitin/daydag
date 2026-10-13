@@ -150,7 +150,9 @@ def test_items_are_appended_to_the_chase_list_through_the_one_writer(tmp_path, f
     assert "Run Data Checks" in chase
     assert "(from Pod Standup - not sure you were in it)" in chase
     assert "asked-on 2026-09-25" in chase and "status open" in chase
-    assert "[source](https://mail.example.com/#all/m1)" in chase
+    # the source on the head line, where the brief reads it (#184)
+    head = next(line for line in chase.splitlines() if "Run Data Checks" in line)
+    assert head.startswith("- ") and head.endswith("· [source](https://mail.example.com/#all/m1)")
 
 
 def test_two_sweeps_append_each_item_exactly_once(tmp_path, folder):

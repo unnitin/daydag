@@ -98,6 +98,7 @@ ITEM_CAP = 120
 CAPS: Mapping[str, int] = {
     "note": 3,
     "owed": 3,
+    "owed-by": 2,
     "overnight": 4,
     "shipping": 3,
     "watch": 2,
@@ -112,6 +113,7 @@ SHRINK_ORDER = (
     "gaps",
     "gave-up",
     "shipping",
+    "owed-by",
     "owed",
     "note",
     "overnight",
@@ -148,6 +150,7 @@ _ORDER = (
     "meetings",
     "note",
     "owed",
+    "owed-by",
     "overnight",
     "shipping",
     "watch",
@@ -225,24 +228,18 @@ def split_parts(text: str) -> tuple[str, str]:
 # --------------------------------------------------------------------------
 
 
-def _struck(line: str) -> bool:
-    body = line[2:] if line.startswith("- ") else line
-    while body[:1] in {"⭐", "⚠", " "} and body:
-        body = body[1:]
-    return body.startswith("~~")
-
-
 def _unlinked(line: str) -> bool:
     return line.endswith(f"({UNSOURCED})")
 
 
 def _ranked(lines: Sequence[str]) -> list[int]:
-    """Open rows with a link first, newest-appended first; unlinked next; struck last.
+    """Rows with a link first, newest-appended first; unlinked after. A struck
+    row never gets here: the brief leaves it out (#188).
 
     File position is the honest stand-in for "moved": rows are appended as they
     are learned, and nothing records what the last brief showed.
     """
-    return sorted(range(len(lines)), key=lambda i: (_struck(lines[i]), _unlinked(lines[i]), -i))
+    return sorted(range(len(lines)), key=lambda i: (_unlinked(lines[i]), -i))
 
 
 def _clip(line: str) -> str:
@@ -254,10 +251,7 @@ def _clip(line: str) -> str:
 
 def _qualifiers(rows: Sequence[str]) -> str:
     unlinked = sum(1 for row in rows if _unlinked(row))
-    struck = sum(1 for row in rows if _struck(row))
-    parts = [f"{unlinked} w/ no link yet"] if unlinked else []
-    parts += [f"{struck} struck"] if struck else []
-    return "".join(f", {part}" for part in parts)
+    return f", {unlinked} w/ no link yet" if unlinked else ""
 
 
 # --------------------------------------------------------------------------
@@ -314,7 +308,7 @@ def _capped(
         return section, Cut(key or "other", len(lines), len(lines), ""), []
     pulse = key in {"overnight", "shipping"}
     rows = [i for i, line in enumerate(lines) if not pulse or _is_row(line)]
-    if key in {"owed", "watch"}:
+    if key in {"owed", "owed-by", "watch"}:
         rows = _ranked(lines)
     elif key == "gaps":
         rows.reverse()  # newest first
@@ -325,6 +319,7 @@ def _capped(
     overflow, home = {
         "note": (f"{lead} 🔴 in the note ({note_path})", note_path),
         "owed": (f"{lead} in the chase list{_qualifiers(rest)} ({STATE_PATH})", STATE_PATH),
+        "owed-by": (f"{lead} owed by you{_qualifiers(rest)} ({STATE_PATH})", STATE_PATH),
         "watch": (f"{lead} in watch items{_qualifiers(rest)} ({STATE_PATH})", STATE_PATH),
         "overnight": (f"{lead} overnight, {NOT_SHOWN} - in the thread", "the thread"),
         "shipping": (f"{lead} shipping, {NOT_SHOWN} - in the thread", "the thread"),

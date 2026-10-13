@@ -55,9 +55,9 @@ from typing import Any, NamedTuple, Protocol
 
 from daydag import recipes
 from daydag.config import resolve_reference
-from daydag.ledger import Ledger, title_from_gemini_subject
+from daydag.ledger import DISQUALIFYING_RESPONSES, Ledger, title_from_gemini_subject
 from daydag.pulse import Pulse
-from daydag.state import StateFolder, read_section, split_link
+from daydag.state import StateFolder, is_struck, link_only, read_rows, row_owner, split_link
 from daydag.voice import Push, clipped, render
 
 __all__ = [
@@ -422,17 +422,25 @@ def _instant(event: Mapping[str, Any]) -> float:
     return moment.timestamp() if moment else float("inf")
 
 
-def _meeting_lines(events: Sequence[Mapping[str, Any]]) -> list[str]:
+def _meeting_lines(events: Sequence[Mapping[str, Any]], day: date) -> list[str]:
     ordered = sorted(events, key=_instant)
     lines = [
         claim(f"{_clock(event.get('start'))} {event.get('summary', 'untitled')}", _link(event))
         for event in ordered
     ]
-    lines += _overlap_flags(ordered)
+    lines += _overlap_flags(ordered, day)
     return lines
 
 
-def _overlap_flags(ordered: Sequence[Mapping[str, Any]]) -> list[str]:
+def _firm(event: Mapping[str, Any]) -> bool:
+    """He said yes to it, or it is his own: a clash between two of these is his
+    call. A payload that carries no response is read as a yes, so a missing
+    field shows a clash rather than hiding one."""
+    status = event.get("response_status")
+    return status in (None, "accepted") or bool(event.get("organizer_is_self"))
+
+
+def _overlap_flags(ordered: Sequence[Mapping[str, Any]], day: date) -> list[str]:
     """Duplicate slots, surfaced and left unresolved (invariant 5).
 
     Every earlier meeting against every later one, not just adjacent pairs: a
@@ -443,26 +451,52 @@ def _overlap_flags(ordered: Sequence[Mapping[str, Any]]) -> list[str]:
     Half-open comparison, so 9:00-10:00 and 10:00-11:00 are back-to-back rather
     than a collision. Choosing between two real invites is his call; the agent's
     job is to make sure he sees there are two.
+
+    Only a clash between two meetings he accepted or owns gets its own line,
+    citing the later one - each meeting's own line above already cites it.
+    One with an invite he has not answered is counted on a single line: on
+    10/1 six of six flags were that kind, each carrying two calendar URLs (#189).
     """
     flags: list[str] = []
+    unanswered = 0
+    for earlier, later in _clashes(ordered):
+        if not (_firm(earlier) and _firm(later)):
+            unanswered += 1
+            continue
+        flags.append(
+            claim(
+                f"{WARN} {earlier.get('summary') or 'untitled'} and"
+                f" {later.get('summary') or 'untitled'} overlap"
+                f" - which one are you in?",
+                _link(later),
+            )
+        )
+    if unanswered:
+        flags.append(_unanswered_line(unanswered, day))
+    return flags
+
+
+def _clashes(
+    ordered: Sequence[Mapping[str, Any]],
+) -> list[tuple[Mapping[str, Any], Mapping[str, Any]]]:
+    """Every (earlier, later) pair that overlaps, half-open, in time order."""
+    pairs = []
     for index, later in enumerate(ordered):
         start = _local(later.get("start"))
         if start is None:
             continue
         for earlier in ordered[:index]:
             end = _local(earlier.get("end"))
-            if end is None or start >= end:
-                continue
-            flags.append(
-                claim(
-                    f"{WARN} {earlier.get('summary') or 'untitled'} and"
-                    f" {later.get('summary') or 'untitled'} overlap"
-                    f" - which one are you in?",
-                    _link(earlier),
-                    _link(later),
-                )
-            )
-    return flags
+            if end is not None and start < end:
+                pairs.append((earlier, later))
+    return pairs
+
+
+def _unanswered_line(count: int, day: date) -> str:
+    plural = "s" if count != 1 else ""
+    return claim(
+        f"{WARN} {count} more overlap{plural} w/ invites you haven't accepted", day_link(day)
+    )
 
 
 def _link(record: Mapping[str, Any]) -> str | None:
@@ -674,13 +708,16 @@ class MeetingRow(NamedTuple):
 def packed_meeting_rows(events: Sequence[Mapping[str, Any]], day: date) -> list[MeetingRow]:
     """The day's meetings in about a tenth of the space, each row citing the day.
 
-    Every meeting is in a row, in time order. A pile-up - the same
-    `overlap_clusters` the week-ahead uses, so the two never disagree on what
-    a clash is - is ONE line ending "which one are you in?", where the
-    pairwise flags spent a line per pair. Meetings that clash with nothing
-    share ``·``-joined rows up to `PACK_WIDTH`. All-day and undated entries
-    never join a pile-up and come last. Each row carries its meetings, so the
-    budget can cut whole rows and count every meeting it did not show.
+    Every meeting is in a row, in time order. A pile-up of meetings he
+    accepted or owns - the same `overlap_clusters` the week-ahead uses, so the
+    two never disagree on what a clash is - is ONE line ending "which one are
+    you in?", where the pairwise flags spent a line per pair. An invite he has
+    not answered never joins one: it packs like any other meeting, and its
+    clashes are counted on one line, the rule `_overlap_flags` applies (#189).
+    Meetings that clash with nothing share ``·``-joined rows up to
+    `PACK_WIDTH`. All-day and undated entries never join a pile-up and come
+    last. Each row carries its meetings, so the budget can cut whole rows and
+    count every meeting it did not show.
     """
     link = day_link(day)
     rows: list[MeetingRow] = []
@@ -698,8 +735,10 @@ def packed_meeting_rows(events: Sequence[Mapping[str, Any]], day: date) -> list[
             flush()
         run.append(event)
 
-    timed = [event for event in events if not _is_all_day(event)]
-    for cluster in overlap_clusters(timed):
+    timed = sorted((e for e in events if not _is_all_day(e)), key=_instant)
+    units = overlap_clusters([e for e in timed if _firm(e)])
+    units += [[event] for event in timed if not _firm(event)]
+    for cluster in sorted(units, key=lambda unit: _instant(unit[0])):
         if len(cluster) > 1:
             flush()
             names = " · ".join(_packed_title(event) for event in cluster)
@@ -708,6 +747,9 @@ def packed_meeting_rows(events: Sequence[Mapping[str, Any]], day: date) -> list[
             continue
         add(cluster[0])
     flush()
+    unanswered = sum(1 for a, b in _clashes(timed) if not (_firm(a) and _firm(b)))
+    if unanswered:
+        rows.append(MeetingRow(_unanswered_line(unanswered, day), ()))
     for event in events:
         if _is_all_day(event):
             add(event)
@@ -792,6 +834,8 @@ def assemble(
     state: StateFolder | None = None,
     ledger: Ledger | None = None,
     pulse: Pulse | None = None,
+    owns: Callable[[str], bool] | None = None,
+    who: Callable[[str], str | None] | None = None,
 ) -> Brief:
     """Build the morning brief for ``now``'s local day.
 
@@ -799,6 +843,11 @@ def assemble(
     caller owns*, not sources: a run without a pulse has no shipping block, and
     that is silence rather than a failure. A source that raises is the other
     case, and it lands in :attr:`Brief.unreachable`.
+
+    ``owns`` says whether a chase row's owner is him, so his own steps read as
+    owed BY him (#186); ``who`` names a Slack user id when a mention carries no
+    name (#190). The runner builds both. Without ``owns`` only a ``X → you``
+    row is his; without ``who`` an unnamed sender is "someone".
     """
     if now.tzinfo is None or now.utcoffset() is None:
         raise BriefError(
@@ -836,9 +885,13 @@ def assemble(
             )
         )
 
-    if events:
+    # What he reads leaves out the invites he declined - he already answered
+    # "which one are you in?" (#189). The ledger still gets every event: a
+    # decline is how it retracts a row seeded earlier in the day (#169).
+    shown = [e for e in events if e.get("response_status") not in DISQUALIFYING_RESPONSES]
+    if shown:
         sections.append(
-            Section(f"meetings ({len(events)})", tuple(_meeting_lines(events)), key="meetings")
+            Section(f"meetings ({len(shown)})", tuple(_meeting_lines(shown, day)), key="meetings")
         )
 
     red = red_items(note)
@@ -854,17 +907,27 @@ def assemble(
     # -- chase and watch, read out of the file he corrects by hand --------
     if state is not None:
         written = read("the chase list", state.read_state, "")
-        chase = [
-            _line_from_state(body) for body in read_section(written, "Chase list", top_level=True)
-        ]
+        chase: list[str] = []
+        owed_by: list[str] = []
+        # A struck row is done - `~~…~~ ✓` is the file's own convention - and
+        # striking it is how he takes it out of the push (#188). A row he owns
+        # is what he owes, not what is owed to him (#186).
+        for head, subs in read_rows(written, "Chase list"):
+            if not is_struck(head):
+                mine = _owned_by_him(row_owner(head), owns)
+                (owed_by if mine else chase).append(_line_from_state(head, subs))
         watch = [
-            _line_from_state(body) for body in read_section(written, "Watch items", top_level=True)
+            _line_from_state(head, subs)
+            for head, subs in read_rows(written, "Watch items")
+            if not is_struck(head)
         ]
         if chase:
             sections.append(Section(f"owed to you ({len(chase)})", tuple(chase), key="owed"))
+        if owed_by:
+            sections.append(Section(f"owed by you ({len(owed_by)})", tuple(owed_by), key="owed-by"))
 
     # -- the overnight delta ----------------------------------------------
-    overnight = _overnight_lines(now, principal, sources, read)
+    overnight = _overnight_lines(now, principal, sources, read, who)
     if overnight:
         sections.append(Section(f"overnight ({len(overnight)})", tuple(overnight), key="overnight"))
 
@@ -901,7 +964,7 @@ def assemble(
             # Not `len(events)` when the read failed: zero events and an unread
             # calendar are the same number and not the same fact, and the header
             # is not a `- ` line, so `unsourced_claims` never sees it assert one.
-            "count": "?" if "calendar" in read.unreachable else len(events),
+            "count": "?" if "calendar" in read.unreachable else len(shown),
         },
     )
     return Brief(
@@ -909,7 +972,7 @@ def assemble(
         header=header,
         sections=tuple(sections),
         unreachable=tuple(read.unreachable),
-        events=tuple(events),
+        events=tuple(shown),
     )
 
 
@@ -917,8 +980,25 @@ def _day_label(day: date) -> str:
     return f"{day:%a %b} {day.day}".lower()
 
 
-def _line_from_state(body: str) -> str:
+#: "Boris → you": the file's own way of saying the actions are his.
+_TO_HIM = re.compile(r"→\s*you\b", re.IGNORECASE)
+
+
+def _owned_by_him(owner: str, owns: Callable[[str], bool] | None) -> bool:
+    """Whether a chase row's owner column names him - alone, in a list, joined
+    with ``+`` or ``&`` as the hand-written rows do, or as ``X → you``."""
+    if _TO_HIM.search(owner):
+        return True
+    return owns is not None and owns(re.sub(r"\s*[+&]\s*", ", ", owner))
+
+
+def _line_from_state(body: str, subs: Sequence[str] = ()) -> str:
+    """A State.md row as a claim, cited by the link on its head line or, when
+    the head has none, by a sub-bullet that is a link and nothing else - the
+    shape the writer used until #184. His prose comments are never read."""
     text, link = split_link(body)
+    if link is None:
+        link = next((url for url in map(link_only, subs) if url), None)
     return claim(text, link)
 
 
@@ -987,7 +1067,33 @@ def _is_overnight(record: Mapping[str, Any], window: recipes.OvernightWindow) ->
     return True
 
 
-def _overnight_lines(now: datetime, principal: str, sources: Sources, read: Reader) -> list[str]:
+#: Where a Slack record may carry its sender's name. `who` is the payload
+#: contract's; the rest are what agents and the connector have handed over.
+_SENDER_FIELDS = ("who", "from", "user_name", "username", "sender", "author")
+
+
+def _sender(message: Mapping[str, Any], who: Callable[[str], str | None] | None) -> str:
+    """The sender's name, or the directory's name for their Slack id, or
+    "someone". Every overnight line read "someone" on 10/1 while each record
+    carried the name under a field nothing read (#190)."""
+    for field in _SENDER_FIELDS:
+        if message.get(field):
+            return str(message[field])
+    user = message.get("user")
+    if user and who is not None:
+        named = who(str(user))
+        if named:
+            return named
+    return "someone"
+
+
+def _overnight_lines(
+    now: datetime,
+    principal: str,
+    sources: Sources,
+    read: Reader,
+    who: Callable[[str], str | None] | None = None,
+) -> list[str]:
     """Slack since 6pm yesterday, plus the Gemini notes that landed with it.
 
     Two steps on purpose, for both halves. Slack search resolves to whole days
@@ -1001,10 +1107,11 @@ def _overnight_lines(now: datetime, principal: str, sources: Sources, read: Read
     for message in read("slack", lambda: list(sources.slack(window.query)), []):
         if not _is_overnight(message, window):
             continue
-        who = message.get("who") or message.get("from") or "someone"
         # `or ""`: a file-only Slack message carries `"text": null`, and str(None)
         # is the word None, quoted as if he had said it.
-        lines.append(claim(str(who), _link(message), quote=str(message.get("text") or "")))
+        lines.append(
+            claim(_sender(message, who), _link(message), quote=str(message.get("text") or ""))
+        )
 
     # `after` is the evening the window opens, not today: a note that landed
     # at 7pm yesterday is overnight mail, and today-only would miss all of it.

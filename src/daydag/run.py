@@ -920,6 +920,19 @@ class _Payloads:
 MEETING = "meeting"
 
 
+def _namer(directory: People | None) -> Callable[[str], str | None] | None:
+    """A Slack id -> the name the directory knows them by, for a mention that
+    arrived without one (#190). None without a directory."""
+    if directory is None:
+        return None
+
+    def name(user: str) -> str | None:
+        person = directory.resolve(user)
+        return (person.display_name or person.key) if person is not None else None
+
+    return name
+
+
 def _vault(identities: Mapping[str, str]) -> StateFolder | None:
     """The `DayDAG/` folder, or None when no vault is configured.
 
@@ -1596,6 +1609,8 @@ def render(
                 state=folder,
                 ledger=ledger,
                 pulse=pulse,
+                owns=call_notes.Principal.from_identities(identities).is_him,
+                who=_namer(directory),
             )
             assembled.append(morning)
             return morning.render()

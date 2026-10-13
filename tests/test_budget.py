@@ -111,8 +111,13 @@ def test_clip_line_leaves_a_line_whose_words_carry_a_link_whole(link):
 # --------------------------------------------------------------------------
 
 
+def _accepted(events):
+    """Every meeting answered yes, so a test of clustering is not one of #189."""
+    return [{**event, "response_status": "accepted"} for event in events]
+
+
 def test_packed_meeting_rows_name_every_meeting_and_cite_the_day():
-    events = hm.events(hm.DAY)
+    events = _accepted(hm.events(hm.DAY))
     rows = brief.packed_meeting_rows(events, hm.DAY)
     text = "\n".join(row.line for row in rows)
 
@@ -134,7 +139,7 @@ def test_packed_meeting_rows_name_every_meeting_and_cite_the_day():
     ids=["date-string", "naive-midnight", "aware-midnight"],
 )
 def test_an_all_day_entry_never_joins_a_pile_up(start):
-    timed = [event for event in hm.events(hm.DAY) if event["id"] != "evt-allday"]
+    timed = [event for event in _accepted(hm.events(hm.DAY)) if event["id"] != "evt-allday"]
     end = start if isinstance(start, str) else start + timedelta(days=1)
     allday = {"id": "allday", "summary": "Offsite", "start": start, "end": end}
     rows = brief.packed_meeting_rows([allday, *timed], hm.DAY)
@@ -143,6 +148,29 @@ def test_an_all_day_entry_never_joins_a_pile_up(start):
     assert piles == [10, 2, 2, 2, 2], "the all-day entry folded the day into one pile-up"
     assert rows[-1][1][-1]["id"] == "allday"
     assert "all day Offsite" in rows[-1][0]
+
+
+def test_an_unanswered_invite_never_joins_a_pile_up_and_its_clashes_are_counted():
+    """#189 on the path that ships: a heavy morning is fitted, and the fitted
+    meetings are these rows, not the pairwise flags."""
+    a = {"id": "a", "summary": "Standup", "start": hm._at(9), "end": hm._at(9, 30)}
+    b = {"id": "b", "summary": "Optional sync", "start": hm._at(9, 15), "end": hm._at(9, 45)}
+    c = {"id": "c", "summary": "Planning", "start": hm._at(14), "end": hm._at(15)}
+    d = {"id": "d", "summary": "Deep dive", "start": hm._at(14, 30), "end": hm._at(15)}
+    events = [
+        {**a, "response_status": "accepted"},
+        {**b, "response_status": "needsAction"},
+        {**c, "response_status": "accepted"},
+        {**d, "response_status": "accepted"},
+    ]
+    rows = brief.packed_meeting_rows(events, hm.DAY)
+    piles = [[e["id"] for e in row.members] for row in rows if "which one" in row.line]
+
+    assert piles == [["c", "d"]], "only two meetings he said yes to are his call"
+    assert sum(len(row.members) for row in rows) == 4, "the unanswered invite is still listed"
+    count = [row for row in rows if "haven't accepted" in row.line]
+    assert len(count) == 1 and count[0].members == ()
+    assert count[0].line.startswith("- ⚠ 1 more overlap w/ invites you haven't accepted (")
 
 
 def test_back_to_back_meetings_are_not_a_pile_up():
@@ -160,12 +188,11 @@ def test_back_to_back_meetings_are_not_a_pile_up():
 # --------------------------------------------------------------------------
 
 
-def test_ranked_puts_open_linked_rows_first_newest_first_then_unlinked_then_struck():
+def test_ranked_puts_linked_rows_first_newest_first_then_unlinked():
     lines = [
         claim("old linked", "https://x.example.com/1"),
-        claim("~~struck linked~~ ✓", "https://x.example.com/2"),
-        claim("unlinked"),
-        claim("⭐ ~~struck starred~~ ✓"),
+        claim("old unlinked"),
+        claim("new unlinked"),
         claim("new linked", "https://x.example.com/3"),
     ]
     ranked = [lines[i] for i in budget._ranked(lines)]
@@ -173,9 +200,8 @@ def test_ranked_puts_open_linked_rows_first_newest_first_then_unlinked_then_stru
     assert [line.split(" (")[0] for line in ranked] == [
         "- new linked",
         "- old linked",
-        "- unlinked",
-        "- ~~struck linked~~ ✓",  # struck last; among struck rows, linked still first
-        "- ⭐ ~~struck starred~~ ✓",
+        "- new unlinked",
+        "- old unlinked",
     ]
 
 
@@ -241,6 +267,7 @@ def test_a_heavy_morning_fits_one_message_sourced_and_in_voice(tmp_path, now, ow
 _COUNTED = {
     "note": ("more 🔴 in the note", f"({recipes.weekly_note(hm.DAY)})"),
     "owed": ("more in the chase list", f"({budget.STATE_PATH})"),
+    "owed-by": ("more owed by you", f"({budget.STATE_PATH})"),
     "watch": ("more in watch items", f"({budget.STATE_PATH})"),
     "overnight": ("more overnight", f"{NOT_SHOWN} - in the thread"),
     "gaps": ("older w/ no note found", "listed again tomorrow"),
@@ -252,13 +279,16 @@ def test_every_cut_is_counted_where_it_lives_and_headings_keep_their_totals(tmp_
     head, thread = budget.split_parts(fitted.text())
     cuts = {cut.section: cut for cut in fitted.cuts}
 
-    assert "owed to you (115)" in head and "meetings (25)" in head
+    # three struck rows and three declined meetings are not his to read (#188, #189)
+    assert "owed to you (96)" in head and "owed by you (16)" in head and "meetings (22)" in head
     assert {key for key, cut in cuts.items() if cut.counted} == set(_COUNTED)
     assert _promised(fitted) == ("overnight",), "the DM promised a section it did not track"
     for key, (words, home) in _COUNTED.items():
         cut = cuts[key]
         assert cut.shown + cut.counted == cut.total
-        line = next((x for x in head.splitlines() if x.startswith(f"- +{cut.counted} {words}")), "")
+        # "+N more" while some rows show, "N" once the section shows none
+        leads = (f"- +{cut.counted} {words}", f"- {cut.counted} {words.removeprefix('more ')}")
+        line = next((x for x in head.splitlines() if x.startswith(leads)), "")
         assert line.endswith(home), f"{key}: {cut.counted} cut, a different count or home: {line}"
     overnight = thread.split("\n\n")[0].splitlines()
     assert overnight[0] == f"overnight, the rest ({cuts['overnight'].counted})"
@@ -309,21 +339,21 @@ def test_the_qualifiers_and_the_order_match_the_rows(tmp_path):
     assembled, fitted = _fit(tmp_path)
     by_key = {section.key: section for section in assembled.sections}
 
-    owed = _block(fitted.head, "owed to you")
-    shown = [line for line in owed if not line.startswith("- +")]
-    unlinked = sum(line.endswith(f"({UNSOURCED})") for line in by_key["owed"].lines)
-    struck = sum("~~" in line for line in by_key["owed"].lines)
-    unlinked -= sum(line.endswith(f"({UNSOURCED})") for line in shown)
-    struck -= sum("~~" in line for line in shown)
-    assert owed[-1].endswith(f", {unlinked} w/ no link yet, {struck} struck ({budget.STATE_PATH})")
-
-    watch = _block(fitted.head, "watch")
-    shown = [line for line in watch if not line.startswith("- +")]
-    unlinked = sum(line.endswith(f"({UNSOURCED})") for line in by_key["watch"].lines)
-    struck = sum("~~" in line for line in by_key["watch"].lines)
-    unlinked -= sum(line.endswith(f"({UNSOURCED})") for line in shown)
-    struck -= sum("~~" in line for line in shown)
-    assert watch[-1].endswith(f", {unlinked} w/ no link yet, {struck} struck ({budget.STATE_PATH})")
+    for heading, key in (("owed to you", "owed"), ("owed by you", "owed-by"), ("watch", "watch")):
+        block = _block(fitted.head, heading)
+        shown = [line for line in block if not line.startswith("- +")]
+        unlinked = sum(line.endswith(f"({UNSOURCED})") for line in by_key[key].lines)
+        unlinked -= sum(line.endswith(f"({UNSOURCED})") for line in shown)
+        assert unlinked, f"the fixture should leave some {key} rows with no link"
+        if key != "watch":  # watch is the first to give up its rows on this day
+            linked = [line for line in by_key[key].lines if not line.endswith(f"({UNSOURCED})")]
+            newest = [brief.split_citation(line)[1] for line in reversed(linked)]
+            assert shown, f"{key} got no room"
+            assert [brief.split_citation(line)[1] for line in shown] == newest[: len(shown)], (
+                f"{key} shows its newest linked rows first"
+            )
+        assert block[-1].endswith(f", {unlinked} w/ no link yet ({budget.STATE_PATH})"), block[-1]
+        assert not any("~~" in line for line in by_key[key].lines), "a struck row reached the brief"
     for line in _block(fitted.head, "overnight"):
         if not line.startswith("- +"):
             assert len(brief.split_citation(line)[0]) - 2 <= budget.ITEM_CAP, f"unclipped: {line}"
