@@ -156,7 +156,8 @@ def read_section(text: str, name: str, *, top_level: bool = False) -> list[str]:
         top_level: return only bullets at column zero. An indented bullet is
             HIS COMMENT on the item above it - "expect comments from me in
             sub-bullets" (2026-09-15) - and since #130 it is also the quote
-            and the permalink `_render_chase` writes under each row. Without
+            `_render_chase` writes under each row (the permalink too, until
+            #184 moved it to the head line). Without
             this, one appended chase item reads back as three, and the brief
             announced "owed to you (3)" with two of the three being a quote
             and a bare link. The live file's 4 chase items read back as 22
@@ -183,6 +184,73 @@ def read_section(text: str, name: str, *, top_level: bool = False) -> list[str]:
     return bodies
 
 
+#: What a hand-written row may open with before its words: a star, a warning
+#: glyph, bold or italic markers.
+_ROW_LEAD = re.compile(r"^[\s*_\u2b50\u26a0\ufe0f]*")
+
+
+def is_struck(body: str) -> bool:
+    """Whether he struck the row out - ``~~…~~ ✓``, the file's own convention
+    for "done" (its header says so). Read past a leading star, warning glyph
+    or bold, which is how the struck rows in the live file open (#188)."""
+    return _ROW_LEAD.sub("", body).startswith("~~")
+
+
+def row_owner(body: str) -> str:
+    """The owner column of a ``owner · ask · ...`` row, decorations stripped."""
+    return _ROW_LEAD.sub("", body).split(" · ", 1)[0].strip(" *_~")
+
+
+def read_rows(text: str, name: str) -> list[tuple[str, tuple[str, ...]]]:
+    """Each top-level bullet under the heading ``name``, with the bodies of
+    the bullets indented under it.
+
+    `read_section(top_level=True)` gives the heads alone, and the sub-bullets
+    are not noise: the writer puts each row's quote there (and, before #184,
+    its permalink as a link-only bullet), and he puts his comments there.
+    `link_only` tells the two apart for a reader that wants the row's source.
+    A sub-bullet never attaches across a heading.
+    """
+    wanted = name.casefold()
+    collecting = False
+    section_level = 0
+    rows: list[tuple[str, list[str]]] = []
+    attach = False
+    for line in text.splitlines():
+        heading = _HEADING.match(line)
+        if heading:
+            level = len(heading["hashes"])
+            if heading["name"].casefold() == wanted:
+                collecting, section_level = True, level
+            elif collecting and level <= section_level:
+                collecting = False
+            attach = False
+            continue
+        bullet = _BULLET.match(line)
+        if not collecting or not bullet:
+            continue
+        if not line[:1].isspace():
+            rows.append((bullet["body"], []))
+            attach = True
+        elif attach:
+            rows[-1][1].append(bullet["body"])
+    return [(head, tuple(subs)) for head, subs in rows]
+
+
+#: A sub-bullet that is a link and nothing else - ``[source](url)``, the shape
+#: the writer used before #184, or a pasted URL.
+_LINK_ONLY = re.compile(
+    r"^(?:\[[^\]]*\]\((?P<md>https?://[^)\s]+)\)|<?(?P<bare>https?://[^\s>]+)>?)$"
+)
+
+
+def link_only(body: str) -> str | None:
+    """The URL when ``body`` is a link and nothing else, else None. His comments
+    are prose; a bare link under a row is the row's source (#184)."""
+    found = _LINK_ONLY.match(body.strip())
+    return (found["md"] or found["bare"]) if found else None
+
+
 def split_link(body: str) -> tuple[str, str | None]:
     """A hand-written line's text and the link in it, if there is one.
 
@@ -193,7 +261,13 @@ def split_link(body: str) -> tuple[str, str | None]:
     """
     link = _MD_LINK.search(body)
     if link:
-        return (body[: link.start()] + link["label"] + body[link.end() :]).strip(" -·"), link["url"]
+        before, after = body[: link.start()], body[link.end() :]
+        # `· [source](url)` or `· [slack](url)` closing the row is a citation,
+        # not words: keeping the label left "· source" on every filed row.
+        words = link["label"]
+        if before.rstrip().endswith("·") and not after.strip(" -·") and " " not in words.strip():
+            words = ""
+        return (before + words + after).strip(" -·"), link["url"]
     bare = _BARE_URL.search(body)
     if bare:
         # Drop a bracket left wrapping nothing. Excluding `)` from the URL kept
@@ -779,11 +853,14 @@ def _render_chase(item: ChaseItem) -> list[str]:
         )
         if part
     )
+    # The link on the head line, where every reader of the row finds it: on a
+    # sub-bullet the brief's top-level read never saw it and tagged every
+    # filed row unsourced (#184). The quote stays the one writer sub-bullet.
+    if item.permalink:
+        head += f" · [source]({item.permalink})"
     lines = [f"- {head}"]
     if item.quote:
         lines.append(f'\t- *"{item.quote}"*')
-    if item.permalink:
-        lines.append(f"\t- [source]({item.permalink})")
     return [*lines, ""]
 
 

@@ -34,7 +34,9 @@ PRINCIPAL = "UPRINCIPAL1"
 IDENTITIES = {"SLACK_USER_PRINCIPAL": PRINCIPAL}
 
 
-def _event(event_id, summary, hour, minute=0, *, minutes=60, link=None, attendees=None):
+def _event(
+    event_id, summary, hour, minute=0, *, minutes=60, link=None, attendees=None, status="accepted"
+):
     start = datetime(2026, 9, 7, hour, minute, tzinfo=PT)
     return {
         "id": event_id,
@@ -42,7 +44,7 @@ def _event(event_id, summary, hour, minute=0, *, minutes=60, link=None, attendee
         "start": start,
         "end": start + timedelta(minutes=minutes),
         "attendees": list(attendees or ["nitin", "vp-data"]),
-        "response_status": "needsAction",
+        "response_status": status,
         "kind": "meeting",
         "permalink": link or f"https://calendar.example.com/e/{event_id}",
     }

@@ -428,7 +428,9 @@ def test_an_appended_item_reads_back_as_one_item_not_three(folder):
 
     bodies = read_section(folder.read_state(), "Chase list", top_level=True)
 
-    assert bodies == ["vp-ai · the wave 2 rollout date · status open"], bodies
+    assert bodies == [
+        "vp-ai · the wave 2 rollout date · status open · [source](https://example.com/p1)"
+    ], bodies
 
 
 # -- the write goes through `vault`: atomic, placeholder-refusing, CAS --------

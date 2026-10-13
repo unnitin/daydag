@@ -3,10 +3,10 @@
 The real render that day was 59,510 characters against a Slack message of about
 5,000, so every brief since 21 Sep was rewritten by hand. This builds a morning
 of about the same SIZE and shape - 24 meetings with a 10-meeting pile-up and
-four two-way clashes (the real day had 8 and five), 115 chase rows (111 with
-the link on a sub-bullet, 3 struck), 43 watch rows (7 struck), an 11-item red
-list with one 700-character item, 8 Slack mentions and 9 Gemini notes
-overnight - and none of its content. Every name is a
+four two-way clashes (the real day had 8 and five), 115 chase rows (most with the
+link on a sub-bullet, some with none, 3 struck), 43 watch rows (7 struck), an
+11-item red list with one 700-character item, 8 Slack mentions and 9 Gemini
+notes overnight - and none of its content. Every name is a
 role token, every link points at example.com, and every id is a placeholder the
 secret scanner lets through.
 
@@ -20,7 +20,7 @@ from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from daydag import brief, recipes, run
+from daydag import brief, call_notes, recipes, run
 from daydag.brief import Brief
 from daydag.ledger import Ledger
 from daydag.state import StateFolder
@@ -176,32 +176,47 @@ def events(day: date = DAY, *, count: int = 24, seed: int = 7) -> list[dict[str,
 _ROW_LENGTHS = (40, 60, 80, 100, 120, 160, 200, 300, 520)
 
 
-def _state_row(rng: random.Random, index: int, *, linked_inline: bool, struck: bool) -> list[str]:
+def _state_row(
+    rng: random.Random, index: int, *, linked: str, struck: bool, mine: bool = False
+) -> list[str]:
+    """One row; ``linked`` is "inline", "sub" (the live file's usual shape, the
+    citation on a link-only sub-bullet) or "none"."""
     role, topic = rng.choice(_ROLES), _TOPICS[index % len(_TOPICS)]
+    if mine:
+        role = "principal"
     said = _sentence(rng, rng.choice(_ROW_LENGTHS))
     text = f'{role} · {topic} · "{said}"'
     if struck:
         text = f"~~{text}~~ ✓"
     if rng.random() < 0.2:
         text = f"⭐ {text}"
-    if linked_inline:
+    if linked == "inline":
         return [f"- {text} · [slack]({_slack_link(rng)})"]
-    # the live file's shape: the citation on a sub-bullet, which a top-level read drops (#184)
+    if linked == "none":
+        return [f"- {text}", "  - his comment on it, no link here"]
     return [f"- {text}", f"  - [slack]({_slack_link(rng)})"]
 
 
+def _chase_link(owed: int, i: int) -> str:
+    if i in (owed - 1, owed - 5, 7, 40):
+        return "inline"
+    return "none" if i % 9 == 4 else "sub"
+
+
 def state_md(*, owed: int = 115, watch: int = 43, seed: int = 11) -> str:
-    """State.md with ``owed`` chase rows (all but four linked on a sub-bullet,
-    three struck) and ``watch`` watch rows (seven struck, a third unlinked)."""
+    """State.md with ``owed`` chase rows (four linked inline, one in nine with
+    no link at all, the rest on a link-only sub-bullet; three struck; one in
+    seven his own, which the brief reads as owed by him) and
+    ``watch`` watch rows (seven struck, a third with no link)."""
     rng = random.Random(seed)  # noqa: S311 - a fixed seed, not a secret
     lines = ["# State", "", "## Chase list", ""]
     for i in range(owed):
         lines += _state_row(
-            rng, i, linked_inline=i in (owed - 1, owed - 5, 7, 40), struck=i in (2, 30, 60)
+            rng, i, linked=_chase_link(owed, i), struck=i in (2, 30, 60), mine=i % 7 == 3
         )
     lines += ["", "## Watch items", ""]
     for i in range(watch):
-        lines += _state_row(rng, i, linked_inline=i % 3 != 0, struck=i % 6 == 1)
+        lines += _state_row(rng, i, linked="sub" if i % 3 else "none", struck=i % 6 == 1)
     return "\n".join(lines) + "\n"
 
 
@@ -289,4 +304,5 @@ def brief_at(
         state=folder(root, owed=owed, watch=watch),
         ledger=Ledger(),
         pulse=None,
+        owns=call_notes.Principal.from_identities(IDENTITIES).is_him,
     )
