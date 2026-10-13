@@ -321,7 +321,16 @@ U+26A0 the vault actually uses, not the emoji-presentation variant.
   AFTER the ask and the thread UNDER it have been read this run. `python -m
   daydag.run plan chase` lists exactly those reads, keyed by permalink; pass what
   you read back as `{"closure": {"<permalink>": [messages]}}` and `render chase`
-  sorts every line into open / answered-strike? / couldn't verify. An ask you did
+  sorts every line into open / answered-strike? / couldn't verify. The MORNING
+  does the same for the rows it will show (#187): `plan morning` adds one
+  `closure` step per Slack-cited "owed to you" / "owed by you" row the brief
+  shows, and those lines render answered (closing quote, strike it?), as-is
+  (read, still open) or "couldn't verify". Rows a thread cannot settle - most
+  cite the meeting note they came from - are matched against `morning_sent` /
+  `morning_mail_sent` (his own Slack and mail, for HIS rows) and
+  `morning_to_him` (DMs and mentions to him, for rows owed to him), since the
+  oldest shown row was asked: "looks closed, confirm?" or "discussed since:",
+  each with its quote and link. Proposals, never closures. An ask you did
   not read renders as "couldn't verify", never as open - on 2026-09-18 three
   items were reported open that he had already answered in the thread, because
   the ask text was matched and the reply never read. His words: *"these are

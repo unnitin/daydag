@@ -64,6 +64,7 @@ KNOWN LIMIT
 from __future__ import annotations
 
 import json
+import re
 import sys
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
@@ -310,6 +311,7 @@ def plan(
         ),
         *_extra_notes(loop, day),
         *_evening_sweep(loop, day, principal=principal, identities=identities),
+        *_morning_check_steps(loop, identities, day),
     ]
     if loop == "chase":
         # The chaser reads the file he corrects by hand and then READS THE
@@ -327,6 +329,316 @@ def plan(
         # for nothing, the same waste `_NO_CALENDAR` exists to prevent.
         steps = [step for step in steps if step.source in {"calendar", "slack"}]
     return Plan(loop=loop, at=now.isoformat(), steps=tuple(steps))
+
+
+def _morning_checks(
+    written: str, identities: Mapping[str, str]
+) -> list[tuple[tuple[str, str], closure.Ask, tuple[str, ...]]]:
+    """The chase rows the morning will SHOW, each as an ask whose reply can be read.
+
+    Open is a verdict, not a default (#187). The brief shows the first few rows
+    of "owed to you" and "owed by you", ranked the way `budget` ranks them,
+    and only those are worth a read. Each is keyed by (head line, citation) -
+    the row's identity in both plan and render - since two rows can share a
+    head. A row cites a Slack thread or it cannot be checked; its ask says so.
+    """
+    owns = call_notes.Principal.from_identities(identities).is_him
+    checks: list[tuple[tuple[str, str], closure.Ask, tuple[str, ...]]] = []
+    sides = (("owed", "Chase list"), ("owed-by", "Owed by you"))
+    for rows, (key, section) in zip(brief.chase_rows(written, owns), sides, strict=True):
+        lines = [brief.line_from_state(head, subs) for head, subs in rows]
+        for index in budget._ranked(lines)[: budget.CAPS[key]]:
+            head, subs = rows[index]
+            citation = brief.row_citation(head, subs) or ""
+            conversation, ts, thread_ts, link = closure.slack_permalink(citation)
+            ask = closure.Ask(
+                text=closure._clean(head),
+                section=section,
+                waiting_on=closure.SECTIONS[section],
+                conversation=conversation,
+                ts=ts,
+                thread_ts=thread_ts,
+                permalink=link,
+            )
+            checks.append(((head, citation), ask, subs))
+    return checks
+
+
+def _state_text(identities: Mapping[str, str], folder: StateFolder | None = None) -> str | None:
+    """State.md's text for the morning checks, or None. Never creates the vault
+    folder - a plan must not scaffold one - and never raises: an unreadable
+    file costs the checks, and the brief's own read reports it (guardrail 6)."""
+    if folder is None:
+        root = identities.get("VAULT_ROOT")
+        if not root:
+            return None
+        path = Path(root) / "DayDAG" / "State.md"
+    else:
+        path = folder.state_path
+    try:
+        return path.read_text(encoding="utf-8")
+    except Exception:
+        return None
+
+
+#: How far back the morning looks for evidence on a row it shows (#187).
+_EVIDENCE_DAYS = 14
+_ASKED_ON = re.compile(r"asked-on (\d{4}-\d{2}-\d{2})")
+
+
+def _evidence_since(heads: Iterable[str], day: date) -> date:
+    """The oldest asked-on among the rows shown, never more than
+    `_EVIDENCE_DAYS` back; a week when no row carries one."""
+    dates = []
+    for head in heads:
+        found = _ASKED_ON.search(head)
+        if found:
+            try:
+                dates.append(date.fromisoformat(found[1]))
+            except ValueError:
+                continue
+    dates = [found for found in dates if found <= day]  # a future date is a typo, not a window
+    return max(min(dates, default=day - timedelta(days=7)), day - timedelta(days=_EVIDENCE_DAYS))
+
+
+def _morning_check_steps(loop: str, identities: Mapping[str, str], day: date) -> list[Step]:
+    """What the morning reads to say something true about the rows it shows (#187).
+
+    One read of the thread under each Slack-cited row; and, for rows a thread
+    cannot settle - most cite the meeting note they came from - his own sent
+    Slack and mail since the oldest row was asked (evidence for HIS rows), and
+    the DMs and mentions to him since then (evidence for the rows owed TO him).
+    """
+    if loop != "morning":
+        return []
+    written = _state_text(identities)
+    if written is None:
+        return []
+    checks = _morning_checks(written, identities)
+    if not checks:
+        return []
+    steps = [
+        Step(
+            "closure",
+            f"{read.how} Put it under `closure` in the payloads, keyed by the permalink.",
+            read.to_dict(),
+        )
+        for read in closure.closure_steps([ask for _, ask, _ in checks])
+    ]
+    principal = identities.get("SLACK_USER_PRINCIPAL", "")
+    since = _evidence_since((head for (head, _), _, _ in checks), day)
+    try:
+        sent = recipes.slack_search(sender=principal, after=since, identities=identities)
+        dms, mentions = recipes.slack_to_him_since(
+            since, principal=principal, identities=identities
+        )
+    except recipes.RecipeError:
+        return steps
+    keep = "Keep text, ts, user, channel, channel_name, thread_ts and permalink"
+    steps.append(
+        Step(
+            "morning_sent",
+            f"his own messages since {since}; {recipes.SLACK_SEARCH_HOW}. At most max_pages"
+            f" pages. {keep}",
+            {"query": sent, "max_pages": _SWEEP_MAX_PAGES, **recipes.slack_fields(sent)},
+        )
+    )
+    steps.append(
+        Step(
+            "morning_mail_sent",
+            "search, then one record per SENT message (not per thread) with threadId, id,"
+            " snippet, subject, to, date and the permalink (viewUrl)",
+            {"query": recipes.gmail_sent_since(since)},
+        )
+    )
+    to_him = (
+        f"{recipes.SLACK_SEARCH_HOW}. At most max_pages pages; concatenate both steps'"
+        f" records into ONE `morning_to_him` list. {keep}"
+    )
+    steps.append(
+        Step(
+            "morning_to_him",
+            f"DMs to him since {since}; {to_him}",
+            {
+                "query": dms,
+                "channel_types": "im,mpim",
+                "max_pages": _SWEEP_MAX_PAGES,
+                **recipes.slack_fields(dms),
+            },
+        )
+    )
+    steps.append(
+        Step(
+            "morning_to_him",
+            f"mentions of him since {since}; {to_him}",
+            {"query": mentions, "max_pages": _SWEEP_MAX_PAGES, **recipes.slack_fields(mentions)},
+        )
+    )
+    return steps
+
+
+def _thread_replies(ask: closure.Ask, messages: Any) -> list[Mapping[str, Any]] | None:
+    """The messages read for ``ask`` that can answer it, or None if not read.
+
+    A value that is not a list of messages was not a read - a single dict, an
+    error string - and is treated as one, never as "read, nothing there". Only
+    replies in the ask's own thread count when the payload says which thread a
+    message is in: a later top-level post in a busy channel ("lunch is here")
+    is not an answer to it.
+    """
+    if not isinstance(messages, list):
+        return None
+    records = [m for m in messages if isinstance(m, Mapping)]
+    if messages and not records:
+        return None
+    thread = ask.thread_ts or ask.ts
+    if any("thread_ts" in m for m in records):
+        records = [m for m in records if str(m.get("thread_ts") or "") == thread]
+    return records
+
+
+def _owner_ids(directory: People | None) -> dict[str, str]:
+    """Owner token -> Slack id, so a chase row is answered by its OWNER, not by
+    whoever posted next. Keys and display names, casefolded, as rows write them."""
+    if directory is None:
+        return {}
+    ids: dict[str, str] = {}
+    for person in directory.all():
+        if person.slack_id:
+            for name in (person.key, person.display_name):
+                if name:
+                    ids[name.casefold()] = person.slack_id
+    return ids
+
+
+def _morning_marks(
+    folder: StateFolder | None,
+    identities: Mapping[str, str],
+    payloads: Mapping[str, Any],
+    directory: People | None = None,
+) -> dict[tuple[str, str], brief.RowCheck] | None:
+    """What the morning's closure reads established, per shown row.
+
+    Recomputed from the same State.md the plan read, so plan and render name
+    the same rows; a row the plan named but the agent did not read is
+    `unchecked`, never open (closure contract 1). None when there is no
+    State.md to check - the brief then marks nothing."""
+    written = _state_text(identities, folder)
+    if written is None:
+        return None
+    checks = _morning_checks(written, identities)
+    fetched = payloads.get("closure")
+    read: dict[str, Any] = {}
+    if isinstance(fetched, Mapping):
+        for _, ask, _ in checks:
+            replies = _thread_replies(ask, fetched.get(ask.key))
+            if replies is not None:
+                read[ask.key] = replies
+    verdicts = closure.judge(
+        [ask for _, ask, _ in checks],
+        read if isinstance(fetched, Mapping) else None,
+        principal=identities.get("SLACK_USER_PRINCIPAL", ""),
+        owners=_owner_ids(directory),
+    )
+    marks = {
+        row: brief.RowCheck(verdict.status, verdict.quote, verdict.permalink)
+        for (row, _, _), verdict in zip(checks, verdicts, strict=True)
+    }
+    unsettled = [
+        (row, ask, subs)
+        for (row, ask, subs), verdict in zip(checks, verdicts, strict=True)
+        if verdict.status == "unchecked"
+    ]
+    marks.update(_morning_evidence(unsettled, payloads))
+    return marks
+
+
+def _morning_evidence(
+    unsettled: Sequence[tuple[tuple[str, str], closure.Ask, tuple[str, ...]]],
+    payloads: Mapping[str, Any],
+) -> dict[tuple[str, str], brief.RowCheck]:
+    """Evidence from the live sources for rows no thread could settle (#187).
+
+    His rows are matched against HIS sent Slack and mail; rows owed to him
+    against the DMs and mentions to him - `movement.detect`, the same matcher
+    the wrap uses, so ids beat words and words need two in common. Per row:
+    only what was said on or after the row's own asked-on counts, and the
+    "(from <meeting>)" marker is not part of what the row asks - one message
+    about a recurring meeting must not evidence every row filed from it.
+    What it finds is a proposal for him to confirm, never a closure.
+    """
+    marks: dict[tuple[str, str], brief.RowCheck] = {}
+    for row, ask, subs in unsettled:
+        head = row[0]
+        item = movement.OpenItem(
+            key=f"{row[0]}\x00{row[1]}",
+            text=_FROM_MARKER.sub("", ask.text),
+            owner=brief.row_owner(head),
+            source="DayDAG/State.md",
+            anchors=movement._anchors("\n".join([head, *subs]), head=head),
+            counterparts=movement._counterparts(head),
+        )
+        asked = _ASKED_ON.search(head)
+        since = _start_of(asked[1]) if asked else None
+
+        def after(records: Any, since: float | None = since) -> list[Mapping[str, Any]]:
+            kept = (
+                [r for r in records if isinstance(r, Mapping)] if isinstance(records, list) else []
+            )
+            return kept if since is None else [r for r in kept if _said_at(r) >= since]
+
+        if ask.waiting_on == "principal":
+            found = movement.detect(
+                open_items=[item],
+                slack_sent=after(payloads.get("morning_sent")),
+                gmail_sent=after(payloads.get("morning_mail_sent")),
+            )
+        else:
+            found = movement.detect(
+                open_items=[item], slack_sweep=after(payloads.get("morning_to_him"))
+            )
+        if found:
+            lead = found[0].evidence[0]
+            closing = found[0].proposed in movement.Movement.CLOSING
+            marks[row] = brief.RowCheck(
+                "closing" if closing else "discussed", lead.quote, lead.permalink
+            )
+    return marks
+
+
+#: The provenance marker ingest writes on a row - not part of what it asks.
+_FROM_MARKER = re.compile(r"\(from [^)]*\)")
+
+
+def _start_of(day: str) -> float | None:
+    """Epoch seconds at the start of ``day`` in his zone, or None if unreadable."""
+    try:
+        return datetime.combine(date.fromisoformat(day), time(), tzinfo=recipes.PACIFIC).timestamp()
+    except ValueError:
+        return None
+
+
+def _said_at(record: Mapping[str, Any]) -> float:
+    """When a Slack or mail record was said, in epoch seconds; 0 if it says
+    nothing readable - an undated record cannot be shown to be after the ask."""
+    for name in ("ts", "internalDate", "date"):
+        value = record.get(name)
+        if value in (None, ""):
+            continue
+        text = str(value)
+        try:
+            number = float(text)
+            return number / 1000 if name == "internalDate" else number
+        except ValueError:
+            pass
+        try:
+            when = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=recipes.PACIFIC)
+        return when.timestamp()
+    return 0.0
 
 
 def _prep_ahead_rules(identities: Mapping[str, str]) -> prep_ahead.Rules:
@@ -1621,6 +1933,7 @@ def render(
                 pulse=pulse,
                 owns=call_notes.Principal.from_identities(identities).is_him,
                 who=_namer(directory),
+                checks=_morning_marks(folder, identities, payloads, directory),
             )
             assembled.append(morning)
             return morning.render()
