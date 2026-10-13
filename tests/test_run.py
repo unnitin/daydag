@@ -59,6 +59,35 @@ def test_the_plan_names_every_source_the_loop_reads(identities):
     assert {step.source for step in plan.steps} == {"calendar", "slack", "gmail", "vault"}
 
 
+def test_every_slack_search_step_orders_by_its_own_fields(identities, tmp_path):
+    """#183: four call shapes, four behaviours, on the same night. The one that
+    works passes the query bare and the order as the tool's parameters."""
+    morning = run.plan("morning", now=MONDAY_PT, identities=identities)
+    evening = run.plan("eod", now=datetime(2026, 9, 7, 23, 40, tzinfo=UTC), identities=identities)
+    searches = [
+        step
+        for step in (*morning.steps, *evening.steps)
+        if step.source in {"slack", "slack_sent", "slack_sweep"} and "query" in step.detail
+    ]
+
+    assert len(searches) >= 3
+    for step in searches:
+        detail = step.detail
+        assert "sort" not in detail["query"], detail["query"]
+        assert (detail["sort"], detail["sort_dir"]) == ("timestamp", "desc")
+        assert detail == {
+            **detail,
+            **recipes.slack_fields(detail["query"], after=detail.get("after")),
+        }
+        for field in ("`keywords`", "`filters`", "`sort`/`sort_dir`", "`after`"):
+            assert field in step.how, f"the step does not name {field}"
+        assert "no such field" in step.how and "Never put sort" in step.how
+    overnight = next(step for step in morning.steps if step.source == "slack")
+    assert overnight.detail["keywords"] == ["<@UPRINCIPAL1>"], "the mention is a keyword"
+    assert overnight.detail["filters"].startswith("after:")
+    assert overnight.detail["after"] == int(overnight.detail["min_ts"]), "the cutoff, server-side"
+
+
 def test_the_calendar_step_is_one_day_never_a_range(identities):
     """SPEC's measured rule: a 5-day pull returned 156,681 chars and never
     arrived. The plan carries the same bound the recipe does, so an agent

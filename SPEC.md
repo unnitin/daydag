@@ -176,7 +176,7 @@ Substrate note: the existing `morning-sync` skill already does the open-PR/CI ha
 
 - **sweep** — full pending-items pass across Slack/Gmail/Notion/Obsidian (the pattern from the Sep 3 session), returned as a triaged list with permalinks.
 - **prep <meeting|person>** — ad-hoc talking points.
-- **find <question>** — retrieval forensics ("when did VP-AI first flag Vendor-Contact" pattern): person-scoped Slack search (`from:<@ID>`, `sort:timestamp asc`), Gmail, thread reads; answer with quote + link.
+- **find <question>** — retrieval forensics ("when did VP-AI first flag Vendor-Contact" pattern): person-scoped Slack search (`from:<@ID>` in the connector's `filters`, oldest first as its own `sort=timestamp`, `sort_dir=asc` - never `sort:` tokens in a search, #183), Gmail, thread reads; answer with quote + link.
 - **draft <what>** — comms in his voice (voice profile already stored in preferences).
 - **status <workstream>** — read Workstreams block + freshest Slack/notes evidence, report deltas.
 - **ship <repo|workstream>** — engineering-pulse view on demand: what merged, what's stuck, board state, CI (§3.7).

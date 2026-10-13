@@ -69,7 +69,14 @@ from daydag import brief
 from daydag.ledger import attendee_parts, is_resource, qualifies, title_from_gemini_subject
 from daydag.prep import MAX_POINTS, Point, PrepError, point
 from daydag.pulse import _BOLD_HEADING, _BULLET, _HEADING, _RULE
-from daydag.recipes import RecipeError, gmail_gemini_notes, next_working_day, slack_search
+from daydag.recipes import (
+    SLACK_SEARCH_HOW,
+    RecipeError,
+    gmail_gemini_notes,
+    next_working_day,
+    slack_fields,
+    slack_search,
+)
 from daydag.voice import WARN
 
 __all__ = [
@@ -513,13 +520,9 @@ def plan_reads(
             window = {"after": today - timedelta(days=SLACK_DAYS), "before": today}
             try:
                 if getattr(person, "dm", None):
-                    query = slack_search(
-                        channel=person.dm, ascending=False, identities=identities, **window
-                    )
+                    query = slack_search(channel=person.dm, identities=identities, **window)
                 elif getattr(person, "slack_id", None):
-                    query = slack_search(
-                        sender=person.slack_id, ascending=False, identities=identities, **window
-                    )
+                    query = slack_search(sender=person.slack_id, identities=identities, **window)
                 else:
                     continue
             except RecipeError:
@@ -527,12 +530,12 @@ def plan_reads(
             steps.append(
                 _step(
                     "slack",
-                    "search verbatim, newest first; follow any thread with replies. keep text"
-                    " and permalink",
+                    f"{SLACK_SEARCH_HOW}. Follow any thread with replies; keep text and permalink",
                     event_id=eid,
                     put_under="slack",
                     role=person.key,
                     query=query,
+                    **slack_fields(query),
                 )
             )
         ideas = (

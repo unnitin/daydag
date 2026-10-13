@@ -286,7 +286,7 @@ def test_slack_queries_are_channel_scoped_by_id(identities):
     plan = prep.sources(row, MONDAY_9AM, identities=identities, channels=("${SLACK_CH_POD}",))
     assert len(plan.slack) == 1
     assert "in:<#CPODCHANNEL>" in plan.slack[0]
-    assert "sort:timestamp" in plan.slack[0]
+    assert "sort:" not in plan.slack[0]
 
 
 @pytest.mark.guardrail

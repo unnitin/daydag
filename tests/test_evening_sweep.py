@@ -58,7 +58,7 @@ def test_his_own_slack_messages_are_one_day_scoped_by_id():
 
     assert f"from:<@{PRINCIPAL}>" in query
     assert "after:2026-09-24" in query and "before:2026-09-26" in query
-    assert "sort:timestamp" in query
+    assert "sort:" not in query, "the order is the step's own fields (#183)"
 
 
 @pytest.mark.guardrail
@@ -215,6 +215,11 @@ def test_plan_eod_sweeps_each_watched_channel_and_his_dms(ids):
     dms = [step for step in sweep if step["detail"].get("channel_types") == "im,mpim"]
     assert dms and dms[0]["detail"]["query"] == recipes.slack_dms_on(DAY, principal=PRINCIPAL)
     assert all(step["detail"]["max_pages"] <= 3 for step in sweep)
+    # every sweep, the watched channels' too, newest first in the tool's own fields (#183)
+    for step in sweep:
+        detail = step["detail"]
+        assert (detail["sort"], detail["sort_dir"]) == ("timestamp", "desc"), detail
+        assert detail["filters"] and "sort" not in detail["filters"] + " ".join(detail["keywords"])
 
 
 def test_plan_eod_asks_jira_once_per_watched_project(ids):
