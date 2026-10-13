@@ -354,6 +354,11 @@ def test_with_the_calendar_the_plan_names_each_matched_meetings_reads(identities
 
     ceo = {s["source"]: s for s in for_event["jo-<>-principal-2026-09-28"]}
     assert "in:<#DCEO0001>" in ceo["slack"]["detail"]["query"], "the 1:1 dm, by id"
+    for slack in (labs["slack"], ceo["slack"]):
+        detail = slack["detail"]
+        assert detail["sort_dir"] == "desc" and "sort" not in detail["query"]
+        assert detail["filters"].startswith(("from:", "in:")), "person and dm scope are filters"
+        assert "`keywords` and `filters`" in slack["how"]
     assert "ideas" in ceo["prep_ahead"]["how"]
 
 

@@ -120,10 +120,46 @@ def test_person_scope_uses_the_angle_bracket_id_form():
     assert f"from:<@{PEER}>" in recipes.slack_search(sender=PEER)
 
 
-def test_order_is_pinned_explicitly():
-    """Slack's default is relevance, so chronology has to be asked for."""
-    assert "sort:timestamp sort_dir:asc" in recipes.slack_search(sender=PEER)
-    assert "sort:timestamp sort_dir:desc" in recipes.slack_search(sender=PEER, ascending=False)
+def test_order_is_asked_for_beside_the_query_never_inside_it():
+    """Slack's default is relevance, so chronology has to be asked for - as the
+    tool's own parameters. In the query the connector ignores it, and in both
+    places at once it returns nothing with no error (#183)."""
+    assert recipes.slack_order() == {"sort": "timestamp", "sort_dir": "desc"}
+    assert recipes.slack_order(ascending=True) == {"sort": "timestamp", "sort_dir": "asc"}
+    for query in (
+        recipes.slack_search(sender=PEER),
+        recipes.slack_dms_on(date(2026, 9, 25), principal=PEER),
+        recipes.slack_overnight(datetime(2026, 9, 25, 13, 40, tzinfo=UTC), mentioning=PEER).query,
+    ):
+        assert "sort" not in query, query
+
+
+@pytest.mark.parametrize(
+    ("query", "keywords", "filters"),
+    [
+        ("<@UPRINCIPAL1> after:2026-10-10", ["<@UPRINCIPAL1>"], "after:2026-10-10"),
+        (
+            'from:<@UPEER0001> in:<#CPOD00001> after:2026-09-24 "rollout date" before:2026-09-26',
+            ['"rollout date"'],
+            "from:<@UPEER0001> in:<#CPOD00001> after:2026-09-24 before:2026-09-26",
+        ),
+        ("-from:<@UPRINCIPAL1> after:2026-09-24", [], "-from:<@UPRINCIPAL1> after:2026-09-24"),
+    ],
+    ids=["mention", "person-and-phrase", "dms-to-him"],
+)
+def test_a_search_is_split_into_the_connectors_own_fields(query, keywords, filters):
+    """#183: the connector has no query field. A mention pasted into `filters`
+    returned every bot post in his channels; `from:` in `keywords` returned
+    nothing. Split once, here."""
+    fields = recipes.slack_fields(query, after=1_790_730_000)
+
+    assert fields == {
+        "keywords": keywords,
+        "filters": filters,
+        "sort": "timestamp",
+        "sort_dir": "desc",
+        "after": 1_790_730_000,
+    }
 
 
 def test_channel_scope_uses_the_channel_id():
