@@ -53,6 +53,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
+from typing import Any
 from zoneinfo import ZoneInfo
 
 # One parser for Gemini subjects, re-exported rather than reimplemented. The
@@ -70,6 +71,7 @@ __all__ = [
     "JIRA_MAX_RESULTS_CAP",
     "JIRA_MOVED_MAX_RESULTS",
     "PACIFIC",
+    "SLACK_SEARCH_HOW",
     "VAULT_PREFIX",
     "DayWindow",
     "OvernightWindow",
@@ -91,6 +93,8 @@ __all__ = [
     "next_week_label",
     "slack_channel_on",
     "slack_dms_on",
+    "slack_fields",
+    "slack_order",
     "slack_overnight",
     "slack_search",
     "slack_sent_on",
@@ -279,18 +283,21 @@ def slack_search(
     after: date | None = None,
     before: date | None = None,
     terms: Sequence[str] = (),
-    ascending: bool = True,
     identities: Mapping[str, str] | None = None,
 ) -> str:
-    """A scoped, chronologically ordered Slack search query.
+    """A scoped Slack search query. Its order travels beside it (`slack_order`).
 
     ``from:<@USER_ID>`` and ``in:<#CHANNEL_ID>`` beat keyword search, and both
     take ids: ``from:@display-name`` returns zero results *and no error*, which
     is the worst failure available - the brief then reports a silence it never
     checked. So a non-id raises here instead.
 
-    ``sort:timestamp`` is explicit because Slack's default is relevance, and a
-    relevance-ordered read of a conversation is not a chronology.
+    The order is not in the string. Slack's default is relevance, and a
+    relevance-ordered read of a conversation is not a chronology - but the
+    claude.ai connector ignores ``sort:`` tokens in a query, and returns NOTHING,
+    with no error, when they ride along with its own sort parameters (#183).
+    So the step carries `slack_order` as fields and the agent passes them as
+    the tool's parameters.
 
     ``after``/``before`` are the inclusive days the caller means; the emitted
     query widens each by one because Slack's own operators are exclusive.
@@ -307,8 +314,52 @@ def slack_search(
     for term in terms:
         # Quoted so a phrase stays one phrase; Slack ORs bare words.
         parts.append(f'"{_no_quotes(term, what="search term")}"')
-    parts.append(f"sort:timestamp sort_dir:{'asc' if ascending else 'desc'}")
     return " ".join(parts)
+
+
+def slack_order(*, ascending: bool = False) -> dict[str, str]:
+    """How a Slack search step orders its results: the tool's own ``sort`` and
+    ``sort_dir`` parameters, never tokens in the query (#183)."""
+    return {"sort": "timestamp", "sort_dir": "asc" if ascending else "desc"}
+
+
+#: Search modifiers the connector takes in its `filters` field. Anything else -
+#: a bare ``<@ID>`` mention, a quoted phrase - is a keyword.
+_FILTER_PREFIXES = ("from:", "-from:", "in:", "-in:", "after:", "before:", "on:", "is:", "has:")
+_SEARCH_TOKEN = re.compile(r'"[^"]*"|\S+')
+
+
+def slack_fields(
+    query: str, *, ascending: bool = False, after: int | None = None
+) -> dict[str, Any]:
+    """``query`` as the claude.ai connector's own fields: ``keywords``,
+    ``filters``, and the order (`slack_order`), plus ``after`` when given.
+
+    The connector has no `query` field (#183). Pasted whole into `filters`, a
+    mention search matched every message in his channels - bot posts and all;
+    as one keyword it found one hit. Split here, the agent maps nothing.
+    """
+    tokens = _SEARCH_TOKEN.findall(query)
+    fields: dict[str, Any] = {
+        "keywords": [t for t in tokens if not t.startswith(_FILTER_PREFIXES)],
+        "filters": " ".join(t for t in tokens if t.startswith(_FILTER_PREFIXES)),
+        **slack_order(ascending=ascending),
+    }
+    if after is not None:
+        fields["after"] = after
+    return fields
+
+
+#: What every Slack search step tells the agent (#183): four call shapes on one
+#: night gave four answers - nothing, relevance order, the right set, and bot spam.
+SLACK_SEARCH_HOW = (
+    "pass `keywords` and `filters` exactly as given as the search tool's own fields,"
+    " with `sort`/`sort_dir` (and `after`, when the step has one) as its parameters."
+    " `query` is the same search written out for reading - the connector has no such"
+    " field: pasted whole into `filters` it returns bot posts, as one keyword it finds"
+    " one hit. Never put sort in either. Zero results with no error can be a malformed"
+    " call: check the shape and retry once before reporting nothing"
+)
 
 
 @dataclass(frozen=True)
@@ -379,18 +430,13 @@ def slack_overnight(
             # then skipped the exact 6pm-to-midnight hours it exists to capture,
             # while min_ts still claimed them. The two disagreed silently.
             f"after:{after_day.isoformat()}",
-            # DESCENDING, and this is load-bearing rather than cosmetic.
-            # `after:` resolves to a whole day, so the query returns from
-            # midnight while the window opens at 6pm - and Slack pages the
-            # results. Ascending therefore fills page one with the OLDEST
-            # messages in the range, every one of which this window discards,
-            # and puts the ones it wants on a page nobody fetches. Measured on
-            # a real day: all 20 ascending results predated the cutoff, so the
-            # overnight section was structurally empty on any busy day.
-            # Descending starts at the recent end, which is where the window is.
-            "sort:timestamp sort_dir:desc",
         ]
     )
+    # Newest first is load-bearing, not cosmetic: `after:` resolves to
+    # midnight while the window opens at 6pm, and Slack pages the results, so
+    # ascending fills page one with messages the window discards (measured: all
+    # 20 predated the cutoff). The order rides on the plan step as
+    # `slack_order()`, not in this string - see `SLACK_SEARCH_HOW` (#183).
     return OvernightWindow(query=query, min_ts=cutoff.timestamp(), max_ts=now.timestamp())
 
 
@@ -460,18 +506,14 @@ def slack_sent_on(day: date, *, principal: str, identities: Mapping[str, str] | 
     on the thread an ask came from, a doc dropped in the DM of the person
     waiting on it.
     """
-    return slack_search(
-        sender=principal, after=day, before=day, ascending=False, identities=identities
-    )
+    return slack_search(sender=principal, after=day, before=day, identities=identities)
 
 
 def slack_channel_on(
     day: date, *, channel: str, identities: Mapping[str, str] | None = None
 ) -> str:
     """One watched channel's traffic on ``day``, whoever wrote it."""
-    return slack_search(
-        channel=channel, after=day, before=day, ascending=False, identities=identities
-    )
+    return slack_search(channel=channel, after=day, before=day, identities=identities)
 
 
 def slack_dms_on(day: date, *, principal: str, identities: Mapping[str, str] | None = None) -> str:
@@ -483,7 +525,7 @@ def slack_dms_on(day: date, *, principal: str, identities: Mapping[str, str] | N
     the connector takes it as its own parameter.
     """
     user = _slack_id(principal, _USER_ID, identities, "principal")
-    return f"-from:<@{user}> after:{day - _DAY} before:{day + _DAY} sort:timestamp sort_dir:desc"
+    return f"-from:<@{user}> after:{day - _DAY} before:{day + _DAY}"
 
 
 def gmail_sent_on(day: date) -> str:

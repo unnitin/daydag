@@ -266,9 +266,10 @@ def test_slack_is_asked_by_id_and_ordered_by_time():
     # window discards, and leaves the ones it wants on a page nobody fetches.
     # Measured against a real day: all 20 ascending results predated the cutoff,
     # so the overnight section was structurally empty on any busy day.
-    assert "sort:timestamp sort_dir:desc" in query, (
-        "ascending puts the wanted messages on a page the plan never requests"
-    )
+    # The order rides on the plan step as the tool's own parameters, never in
+    # the query: on the claude.ai connector in-query sort tokens are ignored,
+    # and with the tool params set too they return nothing at all (#183).
+    assert "sort:" not in query
 
 
 def test_the_overnight_delta_is_cut_at_6pm_not_at_midnight():
@@ -953,3 +954,62 @@ def test_a_message_from_after_now_is_not_overnight():
     text = _assemble(sources).render()
 
     assert "twelve hours after" not in text, f"the brief reported its own future:\n{text}"
+
+
+def test_his_own_message_is_not_a_mention_of_him():
+    """A DM he sent that carries a link matched the search for his id (#183)."""
+    late = NOW.replace(hour=5)
+    sources = FakeSources(
+        messages=[
+            {**_message("sir please look here today", late), "user": PRINCIPAL},
+            _message("the numbers are in", late),
+        ]
+    )
+    text = _assemble(sources).render()
+
+    assert "the numbers are in" in text
+    assert "please look here" not in text
+
+
+def _gemini(minutes_ago):
+    landed = NOW.timestamp() - minutes_ago * 60
+    return {
+        "subject": 'Notes: "Pod Steering" Sep 6, 2026',
+        "internalDate": str(int(landed * 1000)),
+        "permalink": "https://mail.example.com/#all/n1",
+    }
+
+
+def test_no_slack_at_all_on_a_night_notes_landed_is_said_not_shown_as_quiet():
+    """Shape A of #183 returned "No results found" with no error and rendered
+    exactly like a quiet night."""
+    quiet = _assemble(FakeSources(messages=[], mail=[_gemini(600)]))
+
+    assert any(name.startswith("slack for sure") for name in quiet.unreachable)
+    assert "- couldn't check slack for sure - no mentions came back" in quiet.render()
+
+
+def test_a_quiet_night_with_no_notes_is_just_quiet():
+    assert _assemble(FakeSources(messages=[], mail=[])).unreachable == ()
+
+
+def test_a_weekend_night_with_notes_and_no_mentions_is_just_quiet():
+    saturday = NOW.replace(day=12)  # 2026-09-12
+    landed = {**_gemini(0), "internalDate": str(int((saturday.timestamp() - 3600) * 1000))}
+    quiet = _assemble(FakeSources(messages=[], mail=[landed]), now=saturday)
+    assert quiet.unreachable == ()
+
+
+def test_slack_down_is_said_once():
+    down = _assemble(FakeSources(messages=[], mail=[_gemini(600)], broken=("slack",)))
+    assert [line for line in down.render().splitlines() if "couldn't check slack" in line] == [
+        "- couldn't check slack"
+    ]
+
+
+def test_a_search_that_found_only_his_own_message_worked():
+    """The call returned something - his own DM - so it was not malformed,
+    even though nothing in it is a mention of him."""
+    own = {**_message("sir please look here today", NOW.replace(hour=5)), "user": PRINCIPAL}
+    worked = _assemble(FakeSources(messages=[own], mail=[_gemini(600)]))
+    assert worked.unreachable == ()

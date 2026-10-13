@@ -1156,8 +1156,13 @@ def _overnight_lines(
     """
     window = recipes.slack_overnight(now, mentioning=principal)
     lines: list[str] = []
-    for message in read("slack", lambda: list(sources.slack(window.query)), []):
+    mentions = read("slack", lambda: list(sources.slack(window.query)), [])
+    for message in mentions:
         if not _is_overnight(message, window):
+            continue
+        # His own message matches a search for his id - a DM he sent with a
+        # link in it - and is not a mention of him (#183).
+        if str(message.get("user") or "") == principal:
             continue
         # `or ""`: a file-only Slack message carries `"text": null`, and str(None)
         # is the word None, quoted as if he had said it.
@@ -1176,4 +1181,14 @@ def _overnight_lines(
         title = title_from_gemini_subject(subject)
         who = "notes landed" if title else str(mail.get("who") or mail.get("from") or "mail")
         lines.append(claim(who, _link(mail), quote=title or subject))
+    # Nothing from slack on a working night that DID have meetings is how a
+    # malformed call reads - "No results found", no error - and it renders as
+    # a quiet night (#183). Said, not shown as silence.
+    landed = any(line.startswith("- notes landed") for line in lines)
+    working = now.astimezone(recipes.PACIFIC).weekday() < 5
+    if not mentions and landed and working and "slack" not in read.unreachable:
+        read.unreachable.append(
+            "slack for sure - no mentions came back on a night notes landed, and a"
+            " malformed search reads the same; re-run it if that looks wrong"
+        )
     return lines

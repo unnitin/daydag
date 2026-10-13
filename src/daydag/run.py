@@ -266,10 +266,15 @@ def plan(
     ] + [
         Step(
             "slack",
-            "search with this query verbatim (the id is already resolved), newest first;"
-            " page until a result's ts falls below min_ts, or the older edge of the"
-            " window is silently missing on a busy night",
-            {"query": overnight.query, "min_ts": overnight.min_ts},
+            f"{recipes.SLACK_SEARCH_HOW}. The id is already resolved; page until a"
+            " result's ts falls below min_ts, or the older edge of the window is"
+            " silently missing on a busy night",
+            {
+                "query": overnight.query,
+                "min_ts": overnight.min_ts,
+                # the connector's `after` takes a unix ts: the 6pm cutoff, server-side
+                **recipes.slack_fields(overnight.query, after=int(overnight.min_ts)),
+            },
         ),
         Step(
             "gmail",
@@ -641,18 +646,18 @@ def _evening_sweep(
     path = _watchlist_path(identities)
     watchlist = _watchlist_text(path)
     sweep_how = (
-        "search with this query verbatim, newest first, at most max_pages pages; "
+        f"{recipes.SLACK_SEARCH_HOW}. At most max_pages pages; "
         "concatenate every step's records into ONE `slack_sweep` list"
     )
+    sent = recipes.slack_sent_on(day, principal=principal, identities=identities)
+    dms = recipes.slack_dms_on(day, principal=principal, identities=identities)
     steps = [
         Step(
             "slack_sent",
-            "his own messages today, every conversation type; newest first, at most "
-            "max_pages pages. Keep channel, channel_name, thread_ts and permalink",
-            {
-                "query": recipes.slack_sent_on(day, principal=principal, identities=identities),
-                "max_pages": _SWEEP_MAX_PAGES,
-            },
+            "his own messages today, every conversation type; "
+            f"{recipes.SLACK_SEARCH_HOW}. At most max_pages pages. Keep channel,"
+            " channel_name, thread_ts and permalink",
+            {"query": sent, "max_pages": _SWEEP_MAX_PAGES, **recipes.slack_fields(sent)},
         ),
         Step(
             "gmail_sent",
@@ -664,9 +669,10 @@ def _evening_sweep(
             "slack_sweep",
             sweep_how,
             {
-                "query": recipes.slack_dms_on(day, principal=principal, identities=identities),
+                "query": dms,
                 "channel_types": "im,mpim",
                 "max_pages": _SWEEP_MAX_PAGES,
+                **recipes.slack_fields(dms),
             },
         ),
     ]
@@ -675,11 +681,15 @@ def _evening_sweep(
             "slack_sweep",
             sweep_how,
             {
-                "query": recipes.slack_channel_on(day, channel=channel, identities=identities),
+                "query": query,
                 "max_pages": _SWEEP_MAX_PAGES,
+                **recipes.slack_fields(query),
             },
         )
-        for channel in recipes.watched_channels(watchlist)
+        for query in (
+            recipes.slack_channel_on(day, channel=channel, identities=identities)
+            for channel in recipes.watched_channels(watchlist)
+        )
     ]
     steps += _jira_steps(path if watchlist else None, day)
     steps += _github_steps(path if watchlist else None, day)
