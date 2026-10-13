@@ -18,7 +18,8 @@ counted was rewritten by hand, because the render overflows a Slack message
 (#185), so it re-runs once the render is what ships. Nothing runs on a
 schedule. See [USAGE.md](USAGE.md) for the per-loop split and how to run one.
 
-Not built yet, each an issue: the schedule (#25), the chaser's clocks and nudge
+Only the morning brief runs on a schedule (USAGE.md, "The scheduled morning");
+the other loops' schedule is #25. Not built yet, each an issue: the chaser's clocks and nudge
 drafts (#18), write-back to the vault (#16), the ingestion digest (#17), most
 on-demand commands (#22), the section 8 measurements (#27), and the pulse's PR
 review and CI half (#145).

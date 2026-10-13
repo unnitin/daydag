@@ -473,3 +473,26 @@ def test_a_future_asked_on_does_not_push_the_window_forward(tmp_path):
         if s.source == "morning_sent"
     ]
     assert sent["filters"] == "from:<@UPRINCIPAL1> after:2026-08-30", "a week back, not December"
+
+
+def test_daydags_own_brief_is_not_evidence(tmp_path):
+    """Posted to his DM under his name, an earlier brief comes back in his sent
+    Slack quoting the very rows it lists (the 2026-10-13 dry run)."""
+    echo = _said(
+        "morning. mon sep 7 - 15 meetings\n- Alex Rivera · Confirm Discovery access · asked-on"
+        " 2026-09-05 · status open",
+        1788714000,
+    )
+    text = _evidenced(tmp_path, morning_sent=[echo])
+    assert _line(text, "Confirm Discovery access").startswith("- couldn't verify: ")
+
+
+def test_nothing_in_his_dm_with_himself_is_evidence(tmp_path):
+    """Every push lands there; a hand-reworked brief carries no DayDAG mark."""
+    note_to_self = _said(
+        "confirm discovery access is done, worked it out with the team",
+        1788714000,
+        channel_name="DM with Alex Rivera, Alex Rivera",
+    )
+    text = _evidenced(tmp_path, morning_sent=[note_to_self])
+    assert _line(text, "Confirm Discovery access").startswith("- couldn't verify: ")
