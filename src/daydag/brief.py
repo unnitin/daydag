@@ -1012,6 +1012,9 @@ class RowCheck:
 #: How a row reads when something was found about it (#187), strongest first:
 #: the owner answered in the ask's thread; then, from the live sources, a
 #: reply or delivery that looks like closure; then a mention that is only talk.
+#: How much of the evidence a marked row quotes, so the row is still named.
+_EVIDENCE_QUOTE = 60
+
 _EVIDENCED = {
     "answered": "✓ looks answered, strike it?",
     "closing": "looks closed, confirm?",
@@ -1039,9 +1042,12 @@ def _line_from_state(body: str, subs: Sequence[str] = (), check: RowCheck | None
     # the end, and a mark at the end was the first thing it cut.
     if check is not None and check.status in _EVIDENCED:
         evidence = check.permalink if check.permalink != link else None
-        return claim(
-            f"{_EVIDENCED[check.status]} {text}", link, evidence, quote=check.quote or None
-        )
+        # The evidence leads, held short: a fitted morning clips a row's words
+        # from the end, and the quote is what makes the mark worth reading.
+        said = ""
+        if check.quote:
+            said = f' "{clipped(check.quote, _EVIDENCE_QUOTE, ellipsis="...")}" -'
+        return claim(f"{_EVIDENCED[check.status]}{said} {text}", link, evidence)
     # A row with no link already says it cannot be sourced; checked or not,
     # there is nothing more to say about it.
     if check is None or check.status == "open" or link is None:

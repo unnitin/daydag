@@ -397,6 +397,7 @@ def _evidence_since(heads: Iterable[str], day: date) -> date:
                 dates.append(date.fromisoformat(found[1]))
             except ValueError:
                 continue
+    dates = [found for found in dates if found <= day]  # a future date is a typo, not a window
     return max(min(dates, default=day - timedelta(days=7)), day - timedelta(days=_EVIDENCE_DAYS))
 
 
@@ -560,38 +561,84 @@ def _morning_evidence(
 
     His rows are matched against HIS sent Slack and mail; rows owed to him
     against the DMs and mentions to him - `movement.detect`, the same matcher
-    the wrap uses, so ids beat words and words need two in common. What it
-    finds is a proposal for him to confirm, never a closure.
+    the wrap uses, so ids beat words and words need two in common. Per row:
+    only what was said on or after the row's own asked-on counts, and the
+    "(from <meeting>)" marker is not part of what the row asks - one message
+    about a recurring meeting must not evidence every row filed from it.
+    What it finds is a proposal for him to confirm, never a closure.
     """
-    items: dict[str, tuple[tuple[str, str], bool]] = {}
-    mine: list[movement.OpenItem] = []
-    theirs: list[movement.OpenItem] = []
+    marks: dict[tuple[str, str], brief.RowCheck] = {}
     for row, ask, subs in unsettled:
         head = row[0]
-        key = f"{row[0]}\x00{row[1]}"
         item = movement.OpenItem(
-            key=key,
-            text=ask.text,
+            key=f"{row[0]}\x00{row[1]}",
+            text=_FROM_MARKER.sub("", ask.text),
             owner=brief.row_owner(head),
             source="DayDAG/State.md",
             anchors=movement._anchors("\n".join([head, *subs]), head=head),
             counterparts=movement._counterparts(head),
         )
-        his = ask.waiting_on == "principal"
-        (mine if his else theirs).append(item)
-        items[key] = (row, his)
-    found = movement.detect(
-        open_items=mine,
-        slack_sent=payloads.get("morning_sent", ()),
-        gmail_sent=payloads.get("morning_mail_sent", ()),
-    ) + movement.detect(open_items=theirs, slack_sweep=payloads.get("morning_to_him", ()))
-    marks: dict[tuple[str, str], brief.RowCheck] = {}
-    for hit in found:
-        row, _ = items[hit.item.key]
-        lead = hit.evidence[0]
-        status = "closing" if hit.proposed in movement.Movement.CLOSING else "discussed"
-        marks[row] = brief.RowCheck(status, lead.quote, lead.permalink)
+        asked = _ASKED_ON.search(head)
+        since = _start_of(asked[1]) if asked else None
+
+        def after(records: Any, since: float | None = since) -> list[Mapping[str, Any]]:
+            kept = (
+                [r for r in records if isinstance(r, Mapping)] if isinstance(records, list) else []
+            )
+            return kept if since is None else [r for r in kept if _said_at(r) >= since]
+
+        if ask.waiting_on == "principal":
+            found = movement.detect(
+                open_items=[item],
+                slack_sent=after(payloads.get("morning_sent")),
+                gmail_sent=after(payloads.get("morning_mail_sent")),
+            )
+        else:
+            found = movement.detect(
+                open_items=[item], slack_sweep=after(payloads.get("morning_to_him"))
+            )
+        if found:
+            lead = found[0].evidence[0]
+            closing = found[0].proposed in movement.Movement.CLOSING
+            marks[row] = brief.RowCheck(
+                "closing" if closing else "discussed", lead.quote, lead.permalink
+            )
     return marks
+
+
+#: The provenance marker ingest writes on a row - not part of what it asks.
+_FROM_MARKER = re.compile(r"\(from [^)]*\)")
+
+
+def _start_of(day: str) -> float | None:
+    """Epoch seconds at the start of ``day`` in his zone, or None if unreadable."""
+    try:
+        return datetime.combine(date.fromisoformat(day), time(), tzinfo=recipes.PACIFIC).timestamp()
+    except ValueError:
+        return None
+
+
+def _said_at(record: Mapping[str, Any]) -> float:
+    """When a Slack or mail record was said, in epoch seconds; 0 if it says
+    nothing readable - an undated record cannot be shown to be after the ask."""
+    for name in ("ts", "internalDate", "date"):
+        value = record.get(name)
+        if value in (None, ""):
+            continue
+        text = str(value)
+        try:
+            number = float(text)
+            return number / 1000 if name == "internalDate" else number
+        except ValueError:
+            pass
+        try:
+            when = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=recipes.PACIFIC)
+        return when.timestamp()
+    return 0.0
 
 
 def _prep_ahead_rules(identities: Mapping[str, str]) -> prep_ahead.Rules:

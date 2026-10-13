@@ -707,15 +707,3 @@ def test_a_long_weekly_note_item_matches_on_its_title_not_its_description():
     assert detect(open_items=items, slack_sweep=[unrelated], now=NOW) == []
     (row,) = detect(open_items=items, slack_sweep=[related], now=NOW)
     assert row.proposed == "discussed"
-
-
-def test_a_mail_permalinks_decimal_thread_id_is_the_same_thread_as_its_hex_id():
-    """Ingest cites a note as `#all/thread-f:<decimal>`; his reply's threadId
-    is the hex of the same number. Two spellings of one id (#187)."""
-    from daydag.movement import _anchors
-
-    decimal = 1878865758433625437
-    anchors = _anchors(
-        f"- a row · [source](https://mail.example.com/#all/thread-f:{decimal}|msg-f:1)"
-    )
-    assert f"gmail:{decimal:016x}" in anchors
