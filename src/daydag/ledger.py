@@ -316,6 +316,13 @@ class Ledger:
             if event.get("status") == CANCELLED or not qualifies(event):
                 self._retract(event)
                 continue
+            if not (isinstance(event["start"], datetime) and isinstance(event["end"], datetime)):
+                # An all-day entry - google's `{"date": ...}` or the bare date
+                # it flattens to - has no instant to key a row on, and Gemini
+                # writes no note for one, so there is no gap to report. Keyed
+                # anyway it raised inside render: unhashable as a dict, and
+                # incomparable with every timed row as a date (#156).
+                continue
             # The one place an attendee is parsed. Everything downstream reads
             # `attendees` as bare addresses and `attendee_names` beside them.
             # Rooms filtered HERE, not only in the qualifying count: stored, a

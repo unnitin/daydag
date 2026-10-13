@@ -20,7 +20,7 @@ from datetime import UTC, date, datetime
 
 import pytest
 
-from daydag import brief, run
+from daydag import brief, recipes, run
 from daydag.config import Identities
 from daydag.state import StateFolder
 
@@ -242,6 +242,149 @@ def test_an_unparseable_timestamp_stays_all_day_rather_than_guessing(identities)
     text = run.render("morning", now=MONDAY_PT, identities=identities, payloads=payloads)
 
     assert "Mystery" in text, "the meeting still ships"
+
+
+#: An all-day entry as the connector hands it over (google's nested date) and
+#: as an agent flattens it (a bare date). Both took render down (#156).
+_ALL_DAY = {
+    "google-date": {"start": {"date": "2026-09-07"}, "end": {"date": "2026-09-08"}},
+    "bare-date": {"start": "2026-09-07", "end": "2026-09-08"},
+}
+
+
+def _all_day(shape):
+    return {
+        "id": "offsite",
+        "summary": "Team offsite",
+        "attendees": ["principal@x.com", "a@example.com", "b@example.com"],
+        "permalink": "https://cal/offsite",
+        **_ALL_DAY[shape],
+    }
+
+
+@pytest.mark.parametrize("shape", list(_ALL_DAY))
+@pytest.mark.parametrize(
+    ("loop", "hour"), [("morning", 13), ("eod", 23), ("week-ahead", 1), ("prep", 15)]
+)
+def test_an_all_day_entry_with_attendees_never_takes_a_loop_down(
+    identities, tmp_path, shape, loop, hour
+):
+    """It raised inside render, before any text and with no degrade: unhashable
+    as a dict key, and a zoneless midnight compared with every real meeting."""
+    now = datetime(2026, 9, 7, hour, 40, tzinfo=UTC)
+    payloads = _payloads(
+        calendar=[_all_day(shape), _meeting("Pod Steering", "principal@x.com", "a@x.com")]
+    )
+
+    text = run.render(
+        loop, now=now, identities=identities, payloads=payloads, log=tmp_path / "events.db"
+    )
+
+    assert text
+    if loop == "morning":
+        assert "all day Team offsite" in text
+        assert "overlap" not in text, "an all-day entry is not a clash with every meeting"
+
+
+@pytest.mark.parametrize("shape", list(_ALL_DAY))
+def test_tomorrow_reads_back_an_all_day_entry_without_reporting_it(identities, tmp_path, shape):
+    """Replayed from the log the next morning, it is still no row: Gemini writes
+    no note for an all-day entry, so there is no gap to report."""
+    log = tmp_path / "events.db"
+    payloads = _payloads(
+        calendar=[_all_day(shape), _meeting("Pod Steering", "principal@x.com", "a@x.com")]
+    )
+    run.render("morning", now=MONDAY_PT, identities=identities, payloads=payloads, log=log)
+
+    tomorrow = datetime(2026, 9, 8, 13, 40, tzinfo=UTC)
+    text = run.render("morning", now=tomorrow, identities=identities, payloads=_payloads(), log=log)
+
+    assert "Pod Steering - no note found" in text
+    assert "Team offsite - no note" not in text
+
+
+def _gemini_note(title):
+    return {
+        "id": "m1",
+        "subject": f"Notes: \u201c{title}\u201d Sep 7, 2026",
+        "date": "2026-09-07T22:50:00Z",
+        "body": "Summary\nwe talked\n\nNext steps\n[principal] send the doc",
+        "permalink": "https://mail.example.com/#all/m1",
+    }
+
+
+@pytest.mark.parametrize("shape", list(_ALL_DAY))
+@pytest.mark.parametrize("loop", ["eod", "ingest"])
+@pytest.mark.parametrize("title", ["Pod Steering", "Pod Steering sync"], ids=["exact", "renamed"])
+def test_a_note_offered_beside_an_all_day_entry_never_takes_a_loop_down(
+    identities, tmp_path, shape, loop, title
+):
+    """A renamed meeting's note takes the fuzzy match, which compared the
+    all-day entry's zoneless midnight with the note's aware arrival."""
+    payloads = _payloads(
+        calendar=[_all_day(shape), _meeting("Pod Steering", "principal@x.com", "a@x.com")],
+        gmail=[_gemini_note(title)],
+    )
+    text = run.render(
+        loop,
+        now=datetime(2026, 9, 7, 23, 40, tzinfo=UTC),
+        identities=identities,
+        payloads=payloads,
+        log=tmp_path / "events.db",
+    )
+    assert text
+
+
+@pytest.mark.parametrize("shape", list(_ALL_DAY))
+def test_the_wrap_never_previews_todays_all_day_entry_as_tomorrows(identities, tmp_path, shape):
+    """Left unplaced, a bare date was served to every window, tomorrow's too."""
+    payloads = _payloads(
+        calendar=[_all_day(shape), _meeting("Pod Steering", "principal@x.com", "a@x.com")]
+    )
+    text = run.render(
+        "eod",
+        now=datetime(2026, 9, 7, 23, 40, tzinfo=UTC),
+        identities=identities,
+        payloads=payloads,
+        log=tmp_path / "events.db",
+    )
+    assert "Team offsite" not in text.partition("tomorrow")[2]
+
+
+@pytest.mark.parametrize("shape", list(_ALL_DAY))
+def test_an_all_day_entry_falls_on_every_day_it_spans_and_no_other(shape):
+    """A week-long out-of-office fetched on its last day starts on its first."""
+    span = {
+        "google-date": {"start": {"date": "2026-09-01"}, "end": {"date": "2026-09-08"}},
+        "bare-date": {"start": "2026-09-01", "end": "2026-09-08"},
+    }[shape]
+    sources = run._Payloads(_payloads(calendar=[{"id": "ooo", "summary": "OOO", **span}]))
+
+    def on(day):
+        return [r["id"] for r in sources.calendar(recipes.calendar_day(day))]
+
+    assert on(date(2026, 9, 1)) == ["ooo"] and on(date(2026, 9, 7)) == ["ooo"]
+    assert on(date(2026, 9, 8)) == [], "the end is exclusive, as google sends it"
+    assert on(date(2026, 8, 31)) == []
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("2026-09-07", "2026-09-07"),
+        ({"date": "2026-09-07"}, {"date": "2026-09-07"}),
+        ("2026-09-07T09:00:00-07:00", datetime.fromisoformat("2026-09-07T09:00:00-07:00")),
+        ("2026-09-07 09:00:00-07:00", datetime.fromisoformat("2026-09-07T09:00:00-07:00")),
+        ("2026-09-07T09:00:00", datetime(2026, 9, 7, 9, tzinfo=run.recipes.PACIFIC)),
+    ],
+    ids=["bare-date", "google-date", "offset", "space-separated", "zoneless"],
+)
+def test_an_instant_is_parsed_and_a_date_is_left_a_date(value, expected):
+    parsed = run._Payloads._instant(value)
+
+    assert parsed == expected
+    if isinstance(parsed, datetime):
+        assert parsed.tzinfo is not None, "a zoneless time is his wall clock, never bare"
 
 
 def test_the_ledger_gets_real_instants_for_both_ends_of_a_meeting(identities):

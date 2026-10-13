@@ -723,19 +723,30 @@ class _Payloads:
         datetimes directly.
 
         Google nests it as `{"dateTime": ...}`; an all-day event carries
-        `{"date": ...}` and has no instant, which stays untouched and renders
-        as the all-day it actually is. An unparseable string also stays put:
-        `_local` will read it as no instant, which is a meeting without a
-        time rather than a meeting at a guessed one.
+        `{"date": ...}` and has no instant, which stays untouched and the
+        brief renders as the all-day it actually is. A bare ``2026-10-12`` is the same
+        all-day date flattened, and stays a string for the same reason:
+        `fromisoformat` reads it as a zoneless midnight, which joined every
+        real meeting in one overlap and raised when the ledger compared it
+        with them (#156). An unparseable string also stays put: `_local` will
+        read it as no instant, which is a meeting without a time rather than
+        a meeting at a guessed one. A time with no offset is his wall clock,
+        the rule `brief._local` applies, so it never meets an aware one bare.
         """
         if isinstance(value, Mapping):
             value = value.get("dateTime") or value.get("date_time") or value
         if not isinstance(value, str):
             return value
         try:
-            return datetime.fromisoformat(value)
+            date.fromisoformat(value)
+            return value  # a date and nothing else: all day
+        except ValueError:
+            pass
+        try:
+            parsed = datetime.fromisoformat(value)
         except ValueError:
             return value
+        return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=recipes.PACIFIC)
 
     #: Every field on a calendar record that is an instant. `start` alone was
     #: parsed and `end` was not - one field, not its twin - so the ledger got a
@@ -767,10 +778,11 @@ class _Payloads:
         """The local date a `timed()` record starts on, or None if unplaceable.
 
         Reads only what `timed` leaves behind: a `datetime` for anything it
-        could parse, google's all-day `{"date": ...}` untouched, or a value
-        neither of them understood. It used to re-run the string parse `_instant`
-        had just done one line earlier - two parsers of one field in one class,
-        which an alias added to one would silently not reach in the other.
+        could parse, an all-day date untouched (google's `{"date": ...}` or the
+        bare string), or a value neither of them understood. It used to re-run
+        the string parse `_instant` had just done one line earlier - two parsers
+        of one field in one class, which an alias added to one would silently
+        not reach in the other.
         """
         start = record.get("start")
         if isinstance(start, datetime):
@@ -778,9 +790,17 @@ class _Payloads:
             return (start.astimezone(recipes.PACIFIC) if start.tzinfo else start).date()
         if isinstance(start, date):
             return start
-        if isinstance(start, Mapping):  # all-day: {"date": "YYYY-MM-DD"}
+        return _Payloads._all_day(start)
+
+    @staticmethod
+    def _all_day(value: Any) -> date | None:
+        """The date of an all-day start or end - google's `{"date": ...}` or the
+        bare string `_instant` leaves it as - or None for anything else."""
+        if isinstance(value, Mapping):
+            value = value.get("date")
+        if isinstance(value, str):
             try:
-                return date.fromisoformat(str(start.get("date", "")))
+                return date.fromisoformat(value)
             except ValueError:
                 return None
         return None
@@ -801,13 +821,28 @@ class _Payloads:
         because a missing one says so. Now an unfetched window comes back
         empty, which is a section omitted rather than a section that lies.
 
+        An all-day entry falls on every day it spans, end exclusive as google
+        sends it: a two-week out-of-office fetched on its eleventh day starts
+        on its first, and placing it by its start alone dropped it from every
+        brief after day one.
+
         A record whose start cannot be placed at all is returned for every
         window rather than dropped: an untimed meeting is still a meeting, and
         losing its ledger row loses a notes gap permanently. `Ledger.seed_day`
         keys on (id, start) and so absorbs the repeat.
         """
         records = [self.timed(record) for record in self._records("calendar")]
-        return [r for r in records if self._day_of(r) in (window.day, None)]
+        return [r for r in records if self._falls_on(r, window.day)]
+
+    @classmethod
+    def _falls_on(cls, record: Mapping[str, Any], day: date) -> bool:
+        first = cls._all_day(record.get("start"))
+        if first is None:
+            return cls._day_of(record) in (day, None)
+        last = cls._all_day(record.get("end"))
+        if last is None or last <= first:
+            last = first + timedelta(days=1)
+        return first <= day < last
 
     def slack(self, query: str) -> Sequence[Mapping[str, Any]]:
         return self._records("slack")
@@ -1714,6 +1749,8 @@ def _attach_notes(ledger: Ledger, payloads: Mapping[str, Any], now: datetime) ->
 
 def _seedable(payloads: Mapping[str, Any]) -> list[dict[str, Any]]:
     """Today's events, parsed, and only the ones `seed_day` can actually take.
+    An all-day entry passes through and `seed_day` skips it: it has no instant
+    to key a row on, and no note to wait for.
 
     Tolerant on purpose. This pre-seed exists so a note offered in the same run
     has a row to attach to; it is not the place that judges a malformed event.

@@ -4,7 +4,7 @@ The point is not that every meeting has notes. It is that a missing one is
 visible the next morning instead of discovered a month later.
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 
@@ -604,3 +604,31 @@ def test_the_replay_horizon_is_the_widest_arrival_window_plus_a_day():
     from daydag.ledger import ARRIVAL_WINDOW, REPLAY_HORIZON
 
     assert REPLAY_HORIZON == max(ARRIVAL_WINDOW.values()) + timedelta(days=1)
+
+
+@pytest.mark.parametrize(
+    "start", [{"date": "2026-09-07"}, "2026-09-07"], ids=["google-date", "bare-date"]
+)
+def test_an_untimed_entry_gets_no_row_and_the_timed_ones_still_do(start):
+    """No instant to key a row on, and no note to wait for (#156)."""
+    ledger = Ledger()
+    ledger.seed_day(
+        [
+            {
+                "id": "offsite",
+                "summary": "Team offsite",
+                "start": start,
+                "end": start,
+                "attendees": ["p@x.com", "a@x.com", "b@x.com"],
+            },
+            {
+                "id": "standup",
+                "summary": "Standup",
+                "start": datetime(2026, 9, 7, 9, tzinfo=UTC),
+                "end": datetime(2026, 9, 7, 9, 15, tzinfo=UTC),
+                "attendees": ["p@x.com", "a@x.com"],
+            },
+        ]
+    )
+
+    assert [row.summary for row in ledger.open_rows()] == ["Standup"]

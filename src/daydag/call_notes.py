@@ -413,16 +413,30 @@ class Note:
 
 
 def _instant(value: Any) -> datetime | None:
+    """A calendar or mail timestamp as an aware `datetime`, or None.
+
+    The same reading `run._Payloads._instant` gives the brief's ledger: an
+    all-day date - google's `{"date": ...}` or the bare ``2026-10-12`` it
+    flattens to - is no instant, and a time with no offset is his wall clock.
+    Read as a zoneless midnight, a bare date seeded a row the first fuzzy note
+    match compared with an aware arrival, and the wrap and ingest raised (#156).
+    """
     if isinstance(value, datetime):
         return value
     if isinstance(value, Mapping):
         value = value.get("dateTime") or value.get("date_time")
-    if isinstance(value, str):
-        try:
-            return datetime.fromisoformat(value.replace("Z", "+00:00"))
-        except ValueError:
-            return None
-    return None
+    if not isinstance(value, str):
+        return None
+    try:
+        date.fromisoformat(value)
+        return None  # a date and nothing else: all day
+    except ValueError:
+        pass
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=recipes.PACIFIC)
 
 
 def _field(record: Mapping[str, Any], *names: str) -> str:
