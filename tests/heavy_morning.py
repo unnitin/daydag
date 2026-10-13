@@ -162,8 +162,7 @@ def events(day: date = DAY, *, count: int = 24, seed: int = 7) -> list[dict[str,
         {
             "id": "evt-allday",
             "summary": "Office closed for the team offsite",
-            # one attendee: with two, the ledger raises on the date (#156, open)
-            "attendees": ["principal@example.com"],
+            "attendees": ["principal@example.com", "vp-data@example.com", "cto@example.com"],
             "start": day,
             "end": day + timedelta(days=1),
             "permalink": _calendar_link(rng),
