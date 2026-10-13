@@ -836,6 +836,7 @@ def assemble(
     pulse: Pulse | None = None,
     owns: Callable[[str], bool] | None = None,
     who: Callable[[str], str | None] | None = None,
+    checks: Mapping[tuple[str, str], RowCheck] | None = None,
 ) -> Brief:
     """Build the morning brief for ``now``'s local day.
 
@@ -847,7 +848,11 @@ def assemble(
     ``owns`` says whether a chase row's owner is him, so his own steps read as
     owed BY him (#186); ``who`` names a Slack user id when a mention carries no
     name (#190). The runner builds both. Without ``owns`` only a ``X → you``
-    row is his; without ``who`` an unnamed sender is "someone".
+    row is his; without ``who`` an unnamed sender is "someone". ``checks``
+    maps a chase row - (head line, citation) - to what reading its thread
+    established this run (#187). Given, every row it does not name renders
+    "couldn't verify": shown and not read is not open. Not given (no State.md
+    to check), rows render as they are.
     """
     if now.tzinfo is None or now.utcoffset() is None:
         raise BriefError(
@@ -907,15 +912,15 @@ def assemble(
     # -- chase and watch, read out of the file he corrects by hand --------
     if state is not None:
         written = read("the chase list", state.read_state, "")
-        chase: list[str] = []
-        owed_by: list[str] = []
-        # A struck row is done - `~~…~~ ✓` is the file's own convention - and
-        # striking it is how he takes it out of the push (#188). A row he owns
-        # is what he owes, not what is owed to him (#186).
-        for head, subs in read_rows(written, "Chase list"):
-            if not is_struck(head):
-                mine = _owned_by_him(row_owner(head), owns)
-                (owed_by if mine else chase).append(_line_from_state(head, subs))
+        owed_rows, owed_by_rows = chase_rows(written, owns)
+
+        def mark(head: str, subs: tuple[str, ...]) -> RowCheck | None:
+            if checks is None:
+                return None
+            return checks.get((head, row_citation(head, subs) or ""), RowCheck("unchecked"))
+
+        chase = [_line_from_state(h, s, mark(h, s)) for h, s in owed_rows]
+        owed_by = [_line_from_state(h, s, mark(h, s)) for h, s in owed_by_rows]
         watch = [
             _line_from_state(head, subs)
             for head, subs in read_rows(written, "Watch items")
@@ -992,14 +997,61 @@ def _owned_by_him(owner: str, owns: Callable[[str], bool] | None) -> bool:
     return owns is not None and owns(re.sub(r"\s*[+&]\s*", ", ", owner))
 
 
-def _line_from_state(body: str, subs: Sequence[str] = ()) -> str:
-    """A State.md row as a claim, cited by the link on its head line or, when
-    the head has none, by a sub-bullet that is a link and nothing else - the
+@dataclass(frozen=True)
+class RowCheck:
+    """What reading a chase row's thread this run established (#187):
+    ``answered`` (with the closing message), ``open``, or ``unchecked``."""
+
+    status: str
+    quote: str = ""
+    permalink: str = ""
+
+
+def row_citation(body: str, subs: Sequence[str] = ()) -> str | None:
+    """The link a State.md row is cited by: the one on its head line or, when
+    the head has none, a sub-bullet that is a link and nothing else - the
     shape the writer used until #184. His prose comments are never read."""
-    text, link = split_link(body)
-    if link is None:
-        link = next((url for url in map(link_only, subs) if url), None)
-    return claim(text, link)
+    link = split_link(body)[1]
+    return link or next((url for url in map(link_only, subs) if url), None)
+
+
+def _line_from_state(body: str, subs: Sequence[str] = (), check: RowCheck | None = None) -> str:
+    """A State.md row as a claim, marked by what this run read of its thread.
+
+    Open is a verdict, not a default (#187): a row whose reply was read and
+    found carries the closing quote for him to strike; one that could not be
+    read says so. A row read and still open is shown as it is.
+    """
+    text, link = split_link(body)[0], row_citation(body, subs)
+    # A row with no link already says it cannot be sourced; checked or not,
+    # there is nothing more to say about it. The mark LEADS the line: a fitted
+    # morning clips a long row's words from the end, and a mark at the end was
+    # the first thing it cut.
+    if check is None or check.status == "open" or link is None:
+        return claim(text, link)
+    if check.status == "answered":
+        return claim(
+            f"✓ looks answered, strike it? {text}",
+            link,
+            check.permalink if check.permalink != link else None,
+            quote=check.quote or None,
+        )
+    return claim(f"couldn't verify: {text}", link)
+
+
+def chase_rows(
+    written: str, owns: Callable[[str], bool] | None
+) -> tuple[list[tuple[str, tuple[str, ...]]], list[tuple[str, tuple[str, ...]]]]:
+    """The chase list's live rows, split into what is owed TO him and what he
+    owes: struck rows out (#188), his own rows by their owner column (#186).
+    One reading, shared by the brief and the morning plan that checks the rows
+    the brief will show (#187)."""
+    owed: list[tuple[str, tuple[str, ...]]] = []
+    owed_by: list[tuple[str, tuple[str, ...]]] = []
+    for head, subs in read_rows(written, "Chase list"):
+        if not is_struck(head):
+            (owed_by if _owned_by_him(row_owner(head), owns) else owed).append((head, subs))
+    return owed, owed_by
 
 
 #: Public names for the two helpers `run` and `week_ahead` were re-spelling -

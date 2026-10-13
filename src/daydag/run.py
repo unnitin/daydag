@@ -305,6 +305,7 @@ def plan(
         ),
         *_extra_notes(loop, day),
         *_evening_sweep(loop, day, principal=principal, identities=identities),
+        *_morning_check_steps(loop, identities),
     ]
     if loop == "chase":
         # The chaser reads the file he corrects by hand and then READS THE
@@ -322,6 +323,143 @@ def plan(
         # for nothing, the same waste `_NO_CALENDAR` exists to prevent.
         steps = [step for step in steps if step.source in {"calendar", "slack"}]
     return Plan(loop=loop, at=now.isoformat(), steps=tuple(steps))
+
+
+def _morning_checks(
+    written: str, identities: Mapping[str, str]
+) -> list[tuple[tuple[str, str], closure.Ask]]:
+    """The chase rows the morning will SHOW, each as an ask whose reply can be read.
+
+    Open is a verdict, not a default (#187). The brief shows the first few rows
+    of "owed to you" and "owed by you", ranked the way `budget` ranks them,
+    and only those are worth a read. Each is keyed by (head line, citation) -
+    the row's identity in both plan and render - since two rows can share a
+    head. A row cites a Slack thread or it cannot be checked; its ask says so.
+    """
+    owns = call_notes.Principal.from_identities(identities).is_him
+    checks: list[tuple[tuple[str, str], closure.Ask]] = []
+    sides = (("owed", "Chase list"), ("owed-by", "Owed by you"))
+    for rows, (key, section) in zip(brief.chase_rows(written, owns), sides, strict=True):
+        lines = [brief.line_from_state(head, subs) for head, subs in rows]
+        for index in budget._ranked(lines)[: budget.CAPS[key]]:
+            head, subs = rows[index]
+            citation = brief.row_citation(head, subs) or ""
+            conversation, ts, thread_ts, link = closure.slack_permalink(citation)
+            ask = closure.Ask(
+                text=closure._clean(head),
+                section=section,
+                waiting_on=closure.SECTIONS[section],
+                conversation=conversation,
+                ts=ts,
+                thread_ts=thread_ts,
+                permalink=link,
+            )
+            checks.append(((head, citation), ask))
+    return checks
+
+
+def _state_text(identities: Mapping[str, str], folder: StateFolder | None = None) -> str | None:
+    """State.md's text for the morning checks, or None. Never creates the vault
+    folder - a plan must not scaffold one - and never raises: an unreadable
+    file costs the checks, and the brief's own read reports it (guardrail 6)."""
+    if folder is None:
+        root = identities.get("VAULT_ROOT")
+        if not root:
+            return None
+        path = Path(root) / "DayDAG" / "State.md"
+    else:
+        path = folder.state_path
+    try:
+        return path.read_text(encoding="utf-8")
+    except Exception:
+        return None
+
+
+def _morning_check_steps(loop: str, identities: Mapping[str, str]) -> list[Step]:
+    """One read per Slack-cited chase row the morning will show (#187)."""
+    if loop != "morning":
+        return []
+    written = _state_text(identities)
+    if written is None:
+        return []
+    asks = [ask for _, ask in _morning_checks(written, identities)]
+    return [
+        Step(
+            "closure",
+            f"{read.how} Put it under `closure` in the payloads, keyed by the permalink.",
+            read.to_dict(),
+        )
+        for read in closure.closure_steps(asks)
+    ]
+
+
+def _thread_replies(ask: closure.Ask, messages: Any) -> list[Mapping[str, Any]] | None:
+    """The messages read for ``ask`` that can answer it, or None if not read.
+
+    A value that is not a list of messages was not a read - a single dict, an
+    error string - and is treated as one, never as "read, nothing there". Only
+    replies in the ask's own thread count when the payload says which thread a
+    message is in: a later top-level post in a busy channel ("lunch is here")
+    is not an answer to it.
+    """
+    if not isinstance(messages, list):
+        return None
+    records = [m for m in messages if isinstance(m, Mapping)]
+    if messages and not records:
+        return None
+    thread = ask.thread_ts or ask.ts
+    if any("thread_ts" in m for m in records):
+        records = [m for m in records if str(m.get("thread_ts") or "") == thread]
+    return records
+
+
+def _owner_ids(directory: People | None) -> dict[str, str]:
+    """Owner token -> Slack id, so a chase row is answered by its OWNER, not by
+    whoever posted next. Keys and display names, casefolded, as rows write them."""
+    if directory is None:
+        return {}
+    ids: dict[str, str] = {}
+    for person in directory.all():
+        if person.slack_id:
+            for name in (person.key, person.display_name):
+                if name:
+                    ids[name.casefold()] = person.slack_id
+    return ids
+
+
+def _morning_marks(
+    folder: StateFolder | None,
+    identities: Mapping[str, str],
+    payloads: Mapping[str, Any],
+    directory: People | None = None,
+) -> dict[tuple[str, str], brief.RowCheck] | None:
+    """What the morning's closure reads established, per shown row.
+
+    Recomputed from the same State.md the plan read, so plan and render name
+    the same rows; a row the plan named but the agent did not read is
+    `unchecked`, never open (closure contract 1). None when there is no
+    State.md to check - the brief then marks nothing."""
+    written = _state_text(identities, folder)
+    if written is None:
+        return None
+    checks = _morning_checks(written, identities)
+    fetched = payloads.get("closure")
+    read: dict[str, Any] = {}
+    if isinstance(fetched, Mapping):
+        for _, ask in checks:
+            replies = _thread_replies(ask, fetched.get(ask.key))
+            if replies is not None:
+                read[ask.key] = replies
+    verdicts = closure.judge(
+        [ask for _, ask in checks],
+        read if isinstance(fetched, Mapping) else None,
+        principal=identities.get("SLACK_USER_PRINCIPAL", ""),
+        owners=_owner_ids(directory),
+    )
+    return {
+        row: brief.RowCheck(verdict.status, verdict.quote, verdict.permalink)
+        for (row, _), verdict in zip(checks, verdicts, strict=True)
+    }
 
 
 def _prep_ahead_rules(identities: Mapping[str, str]) -> prep_ahead.Rules:
@@ -1611,6 +1749,7 @@ def render(
                 pulse=pulse,
                 owns=call_notes.Principal.from_identities(identities).is_him,
                 who=_namer(directory),
+                checks=_morning_marks(folder, identities, payloads, directory),
             )
             assembled.append(morning)
             return morning.render()
