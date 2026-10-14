@@ -585,6 +585,7 @@ def _morning_evidence(
             kept = (
                 [r for r in records if isinstance(r, Mapping)] if isinstance(records, list) else []
             )
+            kept = [r for r in kept if not _our_own_push(r)]
             return kept if since is None else [r for r in kept if _said_at(r) >= since]
 
         if ask.waiting_on == "principal":
@@ -604,6 +605,28 @@ def _morning_evidence(
                 "closing" if closing else "discussed", lead.quote, lead.permalink
             )
     return marks
+
+
+#: DayDAG's own posts land in his DM under his name, so they come back in his
+#: sent Slack - and a brief quotes the very rows it is checking. Recognised by
+#: what only DayDAG writes: a rendered row's `asked-on <date>`, or a push header.
+_OUR_ROWS = re.compile(r"asked-on \d{4}-\d{2}-\d{2}")
+_OUR_HEADERS = ("morning. ", "wrap: ", "week ahead - ", "logged from ")
+
+
+def _our_own_push(record: Mapping[str, Any]) -> bool:
+    """Whether ``record`` is one of DayDAG's own posts, or anything else in his
+    DM with himself - where every push lands, and where nothing is evidence
+    that he did something for someone. On the first dry run (2026-10-13) two
+    briefs read back as his messages were the only "evidence" for both of his
+    rows it showed; one was hand-reworked and carried no DayDAG signature."""
+    name = str(record.get("channel_name") or "")
+    if name.startswith("DM with "):
+        people = {part.strip().casefold() for part in name[len("DM with ") :].split(",")}
+        if len(people) == 1:
+            return True
+    text = str(record.get("text") or record.get("snippet") or "")
+    return bool(_OUR_ROWS.search(text)) or text.lstrip().startswith(_OUR_HEADERS)
 
 
 #: The provenance marker ingest writes on a row - not part of what it asks.

@@ -277,7 +277,29 @@ log - outside the vault, outside this public repo.
 - **Jira is read-only by construction** — the token carries `read:jira-work`,
   so there is no transition, comment or assignment path at all.
 - **Vault writes are additive or proposed diffs.** Never a wholesale rewrite.
-- **Nothing runs on a schedule.** Every run today is one you asked for.
+- **Only the morning runs on a schedule** (below). Every other run is one you
+  asked for.
+
+## The scheduled morning
+
+The morning brief runs itself at 06:43 on weekdays: a launchd job on this Mac
+starts one headless Claude Code run (`scripts/morning.sh`), which plans,
+fetches over your claude.ai connectors, renders, and posts to your DM - the
+message, and the thread reply when there is one. It can post only to your DM,
+and logs the soak day as shipped only when the post is byte-for-byte what
+render printed. Only the morning is scheduled (your call, 2026-10-12); the
+other loops stay on demand.
+
+```sh
+scripts/install-morning.sh             # install or update the 06:43 weekday job
+scripts/install-morning.sh --remove    # take it off
+DAYDAG_POST=no scripts/morning.sh      # a dry run now: renders, posts nothing
+```
+
+Each run appends to `~/.local/state/daydag/runs/morning-<date>.log`, with the
+payloads it fetched beside it. A Mac asleep at 06:43 runs it when it wakes.
+It runs on this machine, not in the cloud, because it reads your vault and the
+event log, which only this machine has.
 
 ## Honest status
 
