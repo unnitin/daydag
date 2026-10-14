@@ -38,6 +38,22 @@ PROMPT="Run DayDAG's morning brief unattended, following .claude/skills/daily-lo
 4. $DELIVER
 Never send anything to anyone but the principal's own DM. End with one line: posted, dry run, or failed and why."
 
+# One morning at a time, and one post a day. On 2026-10-14 launchd's catch-up
+# run, a dry run and a hand-run session overlapped, raced on the payloads file,
+# and the hand-run one posted first: a second post would have duplicated it.
+LOCK="$STATE/morning.lock"
+if ! mkdir "$LOCK" 2>/dev/null; then
+  echo "== $(date '+%F %T %Z') another morning run holds $LOCK - standing down" >>"$LOG"
+  exit 0
+fi
+trap 'rmdir "$LOCK" 2>/dev/null' EXIT
+if [[ "$POST" == "yes" ]] && [[ -f "$EVENTS" ]] && [[ "$(sqlite3 "$EVENTS" \
+    "select count(*) from events where kind = 'soak_shipped' and payload like '%\"$DAY\"%'" \
+    2>/dev/null || echo 0)" != "0" ]]; then
+  echo "== $(date '+%F %T %Z') today's brief already shipped - not posting it twice" >>"$LOG"
+  exit 0
+fi
+
 rc=0
 {
   echo "== $(date '+%F %T %Z') morning (post: $POST)"
