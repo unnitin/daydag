@@ -299,7 +299,11 @@ DAYDAG_POST=no scripts/morning.sh      # a dry run now: renders, posts nothing
 Each run appends to `~/.local/state/daydag/runs/morning-<date>.log`, with the
 payloads it fetched beside it. A Mac asleep at 06:43 runs it when it wakes.
 It runs on this machine, not in the cloud, because it reads your vault and the
-event log, which only this machine has.
+event log, which only this machine has. It opens in your terminal app
+(Ghostty by default; `DAYDAG_TERMINAL=<app>` at install picks another): macOS
+gives a bare launchd job no access to `~/Documents` or iCloud Drive, and the
+terminal you already use for this repo has both, so a window opens at 06:43
+and closes when the run ends.
 
 ## Honest status
 
