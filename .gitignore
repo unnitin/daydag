@@ -18,3 +18,10 @@ docs/api.md
 *.db
 *.db-wal
 *.db-shm
+
+# the expenses skill writes these beside the repo only by mistake; they carry addresses
+/batch.json
+/payloads.json
+/trip.json
+/calendar.json
+/confirmations.json

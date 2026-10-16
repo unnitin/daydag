@@ -60,11 +60,12 @@ the receipt. Amex, DoorDash and the like send nothing to the work mailbox, so
 a receipt that lives in another account has to reach Gmail first (a filter
 that forwards it to work is the simplest route).
 
-The forward, the `expensed` label and the log row are three connector writes
-(`mcp__claude_ai_Gmail__forward`, `create_label`, `label_message`); Claude
-Code asks for permission on each unless you allow them once in
-`.claude/settings.local.json`. The reasoning and what was verified about
-Rippling live in `reference/rippling-expenses.md`.
+The forward is a connector write (`mcp__claude_ai_Gmail__forward`); Claude
+Code asks for permission on it unless you allow it once in
+`.claude/settings.local.json`. The `expensed` label cannot be applied from
+here (the Gmail connector has no label-write scope), so the event log is the
+"already filed" guard. The reasoning and what was verified about Rippling
+live in `reference/rippling-expenses.md`.
 
 ## What actually works today
 

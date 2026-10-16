@@ -104,7 +104,7 @@ Lowercase openers, casual capitalization. Short direct sentences. Numbered lists
 ## 6. House rules (non-negotiable)
 
 1. **Quote verbatim with permalinks** (Slack ts / email threadId / note path). Nitin corrects paraphrase-from-memory; sourcing saves a round-trip.
-2. **Drafts, not sends.** Autonomous messages go only to Nitin's DM (`${SLACK_USER_PRINCIPAL}`). Anything to anyone else = draft awaiting explicit go, per message.
+2. **Drafts, not sends.** Autonomous messages go only to Nitin's DM (`${SLACK_USER_PRINCIPAL}`). Anything to anyone else = draft awaiting explicit go, per message. One named exception (his decision, 2026-10-16): receipts forwarded to Rippling's own receipts inbox under his account go on one go per **numbered batch** he has read (`go 1 2 3` / `go all` over the list the skill showed him), since the recipient is his own expense system and every row is listed before he answers.
 3. **Vault writes are additive or proposed diffs.** Never rewrite a note wholesale. Workstreams edits: diff blocks, touch only what changed, leave the rest byte-for-byte, bump frontmatter `updated:`. On conflict, surface the diff — never clobber.
 4. **Match the latest weekly note's actual format**, not any template — the layout evolves (Section A–D → Priorities happened ~0622). The note's own header documents its conventions.
 5. **Surface discrepancies, don't resolve them:** conflicting dates, duplicate meeting slots, defunct invites from departed people, unverified "done" claims.

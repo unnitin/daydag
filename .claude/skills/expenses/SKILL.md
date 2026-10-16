@@ -28,15 +28,15 @@ was verified about Rippling on 2026-10-15, what was not, and the shape of his
 mail. Do not re-derive it here. The mechanism is `src/daydag/expenses.py`;
 run the loop through it, not by hand.
 
-## First run: one receipt, then check
+## The route is verified - and how to tell if it breaks
 
-The forward path is Rippling's own documented route but it has **not yet been
-seen landing in his account**. So the first batch is ONE receipt. After the
-forward, tell him to open Rippling > Spend > Receipts (it lands within about a
-minute per the people who use this route). If it is there, batches are
-unbounded from then on; if it is not, stop - the cause is a From-address
-mismatch or a domain auth failure, both silent drops, and both his to settle
-with Rippling. Record which it was in the reference file.
+The forward path was verified end to end on 2026-10-15: nine receipts became
+nine draft reimbursements, each answered by `receipts@rippling.com` in the
+forward's own thread within a minute (`reference/rippling-expenses.md`). So
+batches are not held to one receipt. The tell that it has broken is step 8:
+a forward with no reply after a minute. Then stop sending, say so, and leave
+the cause to him - a From-address mismatch or a domain auth failure, both
+silent drops on Rippling's side.
 
 ## The run
 
@@ -59,9 +59,11 @@ with Rippling. Record which it was in the reference file.
    and the stay the travel desk booked are not his to claim; the render says
    so. He names the report; the trip name is a proposal.
 
-1. **Window.** From the trip; without one, the dates he named, else since the
-   last forward in the log, else 30 days. Never wider than the cap; the plan
-   refuses it.
+1. **Window.** From the trip, plus two days: Uber mails the receipt hours
+   after the ride, so a last-day ride's receipt arrives the next morning.
+   Placement still bounds by purchase date. Without a trip, the dates he
+   named, else since the last forward in the log, else 30 days. Never wider
+   than the cap; the plan refuses it.
 
    ```sh
    python -m daydag.expenses plan --trip trip.json
@@ -80,8 +82,13 @@ with Rippling. Record which it was in the reference file.
 
    ```sh
    python -m daydag.expenses review payloads.json --trip trip.json \
-     --log ~/.local/state/daydag/events.db --report "Trip to LA" --out batch.json
+     --log ~/.local/state/daydag/events.db --report "Trip to LA" \
+     --out <scratch dir>/batch.json
    ```
+
+   `--out` is required and must point outside the repo (the scratchpad):
+   the batch carries his home street and the card's last four, and the repo
+   is public.
 
    Every row says where the trip put it: *at the destination*, *at the
    hotel*, *airport leg (SEA)*, *in CA*, or *where? ...* for a receipt in the
@@ -115,7 +122,9 @@ with Rippling. Record which it was in the reference file.
    is the only guard and this step is one line: "couldn't label". He can make
    the `expensed` label by hand in Gmail; the plan already excludes it.
 
-7. **Mark.** The idempotency check outside Gmail, and today the only one:
+7. **Mark.** The idempotency check outside Gmail, and today the only one.
+   It takes the numbers that were actually sent, never `all`: a row marked
+   that was not sent hides itself from every later run.
 
    ```sh
    python -m daydag.expenses mark batch.json 1 2 3 --log ~/.local/state/daydag/events.db
@@ -129,8 +138,12 @@ with Rippling. Record which it was in the reference file.
    `from:receipts@rippling.com newer_than:1d`, save the answer, and:
 
    ```sh
-   python -m daydag.expenses check batch.json confirmations.json
+   python -m daydag.expenses check batch.json confirmations.json \
+     --log ~/.local/state/daydag/events.db
    ```
+
+   `--log` is what tells `check` which rows were forwarded; the batch file
+   still says NEW for a row that was sent after it was written.
 
    Paste the render. A forwarded row with no reply is **unconfirmed**, said
    as such, never assumed to be in Rippling; wait a minute and search again

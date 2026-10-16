@@ -146,7 +146,7 @@ def test_the_generic_source_reads_a_total_and_the_message_date():
     msg = message("d1", body, date="2026-10-07T01:15:00Z", subject="Order Confirmation")
     (receipt,) = ex.receipts_in("doordash", [msg]).receipts
     assert receipt.amount == Decimal("23.45")
-    assert receipt.purchased_on == date(2026, 10, 7)
+    assert receipt.purchased_on == date(2026, 10, 6)  # 01:15Z is the evening before, his time
     assert receipt.merchant == "DoorDash"
     assert receipt.category == "Meals"
     assert receipt.memo == "Order Confirmation"
@@ -662,11 +662,13 @@ def test_the_trip_command_writes_the_frame_and_plan_takes_its_window(tmp_path, c
     cal.write_text(json.dumps([calendar()]), encoding="utf-8")
     out = tmp_path / "trip.json"
     assert ex.main(["trip", str(cal), "--out", str(out), "--name", "Trip to LA"]) == 0
+    with pytest.raises(SystemExit):
+        ex.main(["review", str(cal)])  # --out is required: the batch carries his addresses
     assert 'trip "Trip to LA" - oct 5 to oct 8' in capsys.readouterr().out
     assert ex.main(["plan", "--trip", str(out)]) == 0
     printed = json.loads(capsys.readouterr().out)
     assert "after:2026/10/05" in printed["uber"]["query"]
-    assert "before:2026/10/09" in printed["uber"]["query"]
+    assert "before:2026/10/11" in printed["uber"]["query"]  # two days of receipt lag
 
 
 # --------------------------------------------------------------------------
@@ -772,4 +774,144 @@ def test_the_check_command_reads_both_files(tmp_path, capsys):
         json.dumps({"threads": [{"messages": [rippling_reply()]}]})
     )
     assert ex.main(["check", str(tmp_path / "batch.json"), str(tmp_path / "replies.json")]) == 0
+    assert "1 of 1 forwarded confirmed" in capsys.readouterr().out
+
+
+# --------------------------------------------------------------------------
+# after review: what the code was getting wrong on inputs shaped like his
+# --------------------------------------------------------------------------
+
+
+def test_the_newest_version_is_by_instant_not_by_string():
+    """A tip stamped with an offset sorts after a ride stamped in Z, as it should."""
+    ride = message("r1", uber_body("ride", total="19.94"), date="2026-10-09T08:08:23Z")
+    tip = message("t1", uber_body("tip", total="24.94"), date="2026-10-09T02:30:00-07:00")
+    (receipt,) = ex.receipts_in("uber", [ride, tip]).receipts
+    assert receipt.message_id == "t1"
+    assert receipt.amount == Decimal("24.94")
+
+
+def test_a_five_digit_street_number_is_not_a_zip():
+    assert ex._area("10000 Long Rd, Westvale, XA 30067, USA") == "300"
+    assert ex._area("100 Elm St   Westvale, Xania, USA 30003") == "300"
+
+
+def test_a_message_without_a_permalink_is_one_skipped_row():
+    bad = {"id": "r2", "date": "2026-10-09T08:08:23Z", "plaintextBody": uber_body()}
+    harvest = ex.receipts_in("uber", [message("r1", uber_body()), bad])
+    assert [r.message_id for r in harvest.receipts] == ["r1"]
+    assert [(s.message_id, s.reason) for s in harvest.skipped] == [
+        ("r2", "no permalink on the message")
+    ]
+
+
+def test_connector_keys_are_read_in_both_spellings():
+    msg = {
+        "id": "r1",
+        "thread_id": "t1",
+        "date": "2026-10-09T08:08:23Z",
+        "plaintext_body": uber_body(),
+        "view_url": LINK.format("r1"),
+    }
+    (receipt,) = ex.receipts_in("uber", [msg]).receipts
+    assert receipt.thread_id == "t1"
+    assert receipt.stops == (PICKUP, DROP)
+    assert receipt.permalink == LINK.format("r1")
+    assert ex._events_in({"items": [{"summary": "x", "start": {}}]}) != []
+
+
+def test_a_snippet_address_does_not_carry_the_time_before_it():
+    snippet = (
+        "Oct 8, 2026 2:08 PM Thanks for riding, Sam Total $97.93 Trip details "
+        f"2:13 PM {PICKUP} 2:48 PM {DROP}"
+    )
+    (receipt,) = ex.receipts_in("uber", [message("r1", snippet=snippet)]).receipts
+    assert receipt.stops == (PICKUP, DROP)
+    assert receipt.memo == "uber Northfield -> Southbank"
+
+
+@pytest.mark.parametrize(
+    ("address", "expected"),
+    [
+        ("1 Elm St, Washington, District of Columbia, USA 20001", "DC"),
+        ("1 Elm St, Charleston, West Virginia, USA 25301", "WV"),
+        ("1 Elm St, Kansas City, Missouri, USA 64106", "MO"),
+        ("100 Elm St, Westvale, XA 30003, USA", "XA"),
+    ],
+)
+def test_the_state_is_read_as_a_whole_field(address, expected):
+    stay = ex.Stay("H", address, date(2026, 10, 5), date(2026, 10, 8), "", CAL.format("h"))
+    assert ex.Trip("t", date(2026, 10, 5), date(2026, 10, 8), stay=stay).state() == expected
+
+
+def test_a_timezone_in_parentheses_is_not_an_airport():
+    assert ex._airports("Oct 8, 2026 (PDT) | Gate 1, Northfield Airport (NFD) |") == ("NFD",)
+
+
+def test_the_confirmation_line_is_never_the_stay_address():
+    hotel = event(
+        "Example Hotel - Confirmation number: 12345",
+        "2026-10-05",
+        "2026-10-09",
+        all_day=True,
+        description=(
+            "Confirmation number: 12345\n\nStarts:2026-10-05, Ends: 2026-10-08 \n"
+            "Example Hotel 100 Elm St   Westvale, Xania, USA 30003 Tel: 1"
+        ),
+        eid="h1",
+    )
+    trip = ex.trip_from_calendar({"events": [hotel]})
+    assert trip.stay.address == "100 Elm St   Westvale, Xania, USA 30003"
+    assert trip.stay.confirmation == "12345"
+    assert trip.area() == "300"
+
+
+def test_same_day_flights_sort_by_time_of_day():
+    late = event(
+        "Flight to Westvale (XA 124)",
+        "2026-10-05T10:55:00-07:00",
+        "2026-10-05T12:00:00-07:00",
+        location="Midfield MID",
+        eid="f2",
+    )
+    early = event(
+        "Flight to Midfield (XA 123)",
+        "2026-10-05T06:20:00-07:00",
+        "2026-10-05T09:06:00-07:00",
+        location="Northfield NFD",
+        eid="f1",
+    )
+    trip = ex.trip_from_calendar({"events": [late, early]})
+    assert [f.departs for f in trip.flights] == ["6:20 am", "10:55 am"]
+    assert trip.name == "Trip to Midfield"
+
+
+def test_go_takes_a_number_once_and_mark_refuses_what_was_not_sent(tmp_path, capsys):
+    batch = ex.review({"uber": ex.Harvest((receipt(), receipt(key="k2", message_id="m2")), ())})
+    assert len(ex.go(batch, [1, 1])) == 1
+    batch_path = tmp_path / "batch.json"
+    batch_path.write_text(batch.to_json(), encoding="utf-8")
+    log = str(tmp_path / "events.db")
+    assert ex.main(["mark", str(batch_path), "all", "--log", log]) == 2
+    assert ex.main(["mark", str(batch_path), "99", "--log", log]) == 2
+    assert ex.main(["mark", str(batch_path), "2", "2", "--log", log]) == 0
+    assert "logged 1 forward(s)" in capsys.readouterr().out
+    assert list(ex.forwarded_rows(EventLog.open(log))) == [batch.rows[1].receipt.key]
+
+
+def test_check_reads_the_log_when_the_batch_still_says_new(tmp_path, capsys):
+    """The batch is written before the forwards go out; the log is what knows."""
+    sent = receipt(thread_id="t1")
+    batch = ex.review({"uber": ex.Harvest((sent,), ())})
+    assert batch.rows[0].status == ex.NEW
+    log = EventLog.open(tmp_path / "events.db")
+    ex.mark_forwarded(log, [sent], report="R", now=datetime(2026, 10, 16, tzinfo=UTC))
+    result = ex.check(batch, ex.drafts_in([rippling_reply()]), filed=ex.forwarded_rows(log))
+    assert len(result.confirmed) == 1
+    batch_path = tmp_path / "batch.json"
+    batch_path.write_text(batch.to_json(), encoding="utf-8")
+    replies = tmp_path / "replies.json"
+    replies.write_text(json.dumps([rippling_reply()]), encoding="utf-8")
+    code = ex.main(["check", str(batch_path), str(replies), "--log", str(tmp_path / "events.db")])
+    assert code == 0
     assert "1 of 1 forwarded confirmed" in capsys.readouterr().out

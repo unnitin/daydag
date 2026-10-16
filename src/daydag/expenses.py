@@ -8,14 +8,14 @@ USING IT
     #   -> one Gmail query per source, bounded, already excluding `expensed`
     #   ... the agent runs each over the connector and saves the answers as
     #       {"uber": <search_threads result>, "doordash": ...} ...
-    python -m daydag.expenses review payloads.json --log events.db --out batch.json \
-        --trip trip.json
+    python -m daydag.expenses review payloads.json --log events.db --trip trip.json \
+        --out <outside the repo>/batch.json
     #   -> the numbered list for his DM; batch.json holds the rows behind it.
     #      With a trip, a receipt is offered only when it is placed INSIDE it
     python -m daydag.expenses go batch.json 1 3        # the forward calls for those rows
     #   ... the agent makes each call, then labels the message `expensed` ...
     python -m daydag.expenses mark batch.json 1 3 --log events.db
-    python -m daydag.expenses check batch.json confirmations.json
+    python -m daydag.expenses check batch.json confirmations.json --log events.db
     #   -> which forwards Rippling answered with "Draft reimbursement created",
     #      and the draft's link; confirmations.json is the search answer for
     #      from:receipts@rippling.com
@@ -101,11 +101,12 @@ import re
 import sys
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
+from daydag.config import timezone_for
 from daydag.state import EventLog
 
 __all__ = [
@@ -117,6 +118,7 @@ __all__ = [
     "MAX_WINDOW_DAYS",
     "NEW",
     "OUTSIDE",
+    "RECEIPT_LAG_DAYS",
     "RIPPLING_RECEIPTS_INBOX",
     "SOURCES",
     "UNPLACED",
@@ -170,6 +172,11 @@ FORWARDED = "expenses.forwarded"
 
 #: The connector call a `Forward` turns into. Named once, here.
 GMAIL_FORWARD_TOOL = "mcp__claude_ai_Gmail__forward"
+
+#: Days the search window runs past the trip: Uber mails the receipt hours
+#: after the ride, so a last-day ride's receipt arrives the next morning.
+#: Placement still bounds by purchase date.
+RECEIPT_LAG_DAYS = 2
 
 #: Widest window `plan` will build. A quarter, roughly: wide enough to catch a
 #: trip he forgot, narrow enough that the search answer arrives.
@@ -386,8 +393,14 @@ _AIRPORT_NAMES = {"seatac": "SEA"}
 _STATE_FEE = re.compile(r"\b([A-Z]{2}) Driver (?:Benefits|Resource)")
 
 
+#: Three capitals in parentheses that are not an airport.
+_NOT_AIRPORTS = frozenset(
+    {"PDT", "PST", "EDT", "EST", "CDT", "CST", "MDT", "MST", "UTC", "GMT", "USA", "LLC"}
+)
+
+
 def _airports(text: str) -> tuple[str, ...]:
-    found = [a or b for a, b in _AIRPORT_CODE.findall(text)]
+    found = [a or b for a, b in _AIRPORT_CODE.findall(text) if (a or b) not in _NOT_AIRPORTS]
     low = text.lower()
     found += [code for name, code in _AIRPORT_NAMES.items() if f"{name} airport" in low]
     return tuple(dict.fromkeys(found))
@@ -398,9 +411,33 @@ def _state(text: str) -> str:
     return match.group(1) if match else ""
 
 
+def _field(message: Mapping[str, Any], *names: str) -> str:
+    """The first of ``names`` the connector set. It spells its keys both ways."""
+    for name in names:
+        value = message.get(name)
+        if value:
+            return str(value)
+    return ""
+
+
 def _text(message: Mapping[str, Any]) -> str:
     """The body if the agent fetched it, else the search snippet. Both carry the total."""
-    return html.unescape(str(message.get("plaintextBody") or message.get("snippet") or ""))
+    body = _field(message, "plaintextBody", "plaintext_body") or _field(message, "snippet")
+    return html.unescape(body)
+
+
+#: What a snippet runs into an address: a clock, a total, an earlier address's USA.
+_STOP_JUNK = re.compile(r"\d{1,2}:\d{2} [AP]M|\$[\d,]+\.\d{2}|\bUSA\b")
+
+
+def _clean_stop(address: str) -> str:
+    """An address as matched, from the last clock, total or earlier address before it."""
+    address = address.strip()
+    cut = 0
+    for match in _STOP_JUNK.finditer(address):
+        if match.end() < len(address) - 3:  # the closing USA is the address's own
+            cut = match.end()
+    return address[cut:].strip(" ,")
 
 
 def _amount(text: str) -> Decimal | None:
@@ -419,8 +456,14 @@ def _city(address: str) -> str:
 
 
 def _area(address: str) -> str:
-    """The first three digits of the zip: one area, whatever Uber calls the city."""
-    match = re.search(r"\b(\d{3})\d{2}(?:-\d{4})?\b", address)
+    """The zip's first three digits: one area, whatever Uber calls the city.
+
+    Anchored on the state code or the end of the address: a street number can
+    have five digits too.
+    """
+    match = re.search(r"\b[A-Z]{2}\s+(\d{3})\d{2}(?:-\d{4})?\b", address) or re.search(
+        r"\b(\d{3})\d{2}(?:-\d{4})?\s*(?:,\s*USA)?\s*$", address.strip()
+    )
     return match.group(1) if match else _city(address)
 
 
@@ -432,8 +475,8 @@ def _place(address: str, *, same_city: bool) -> str:
     return street or _city(address)
 
 
-def _received(message: Mapping[str, Any]) -> datetime | None:
-    raw = str(message.get("date") or "")
+def _stamp(raw: str) -> datetime | None:
+    """An ISO stamp as the connector writes it (`...Z` or an offset), or None."""
     if not raw:
         return None
     try:
@@ -442,9 +485,23 @@ def _received(message: Mapping[str, Any]) -> datetime | None:
         return None
 
 
+def _received(message: Mapping[str, Any]) -> datetime | None:
+    return _stamp(str(message.get("date") or ""))
+
+
+def _clock_minutes(clock: str) -> int:
+    try:
+        when = datetime.strptime(clock, "%I:%M %p")
+    except ValueError:
+        return -1
+    return when.hour * 60 + when.minute
+
+
 def _uber(message: Mapping[str, Any], source: Source) -> Receipt | Skipped:
     mid = str(message.get("id") or "")
-    link = str(message.get("viewUrl") or "")
+    link = _field(message, "viewUrl", "view_url")
+    if not link:
+        return Skipped(mid, "no permalink on the message", "")
     text = _text(message)
     low = text.lower()
     if "not a payment receipt" in low or "charge summary" in low:
@@ -460,7 +517,7 @@ def _uber(message: Mapping[str, Any], source: Source) -> Receipt | Skipped:
     when = datetime.strptime(f"{stamp.group(1)} {stamp.group(2)}", "%b %d, %Y %I:%M %p")
     card = _CARD.search(text)
     paid = f"{card.group(1).strip()} {card.group(2).replace(' ', '')}" if card else ""
-    stops = list(dict.fromkeys(a.strip() for a in _ADDRESS.findall(text)))[:2]
+    stops = list(dict.fromkeys(_clean_stop(a) for a in _ADDRESS.findall(text)))[:2]
     memo = "uber"
     if len(stops) == 2:
         same = _area(stops[0]) == _area(stops[1])
@@ -480,14 +537,16 @@ def _uber(message: Mapping[str, Any], source: Source) -> Receipt | Skipped:
         stops=tuple(stops),
         airports=_airports(text),
         state=_state(text),
-        thread_id=str(message.get("threadId") or ""),
+        thread_id=_field(message, "threadId", "thread_id"),
     )
 
 
 def _generic(message: Mapping[str, Any], source: Source) -> Receipt | Skipped:
     """A Total line and the message date. Honest about being no more than that."""
     mid = str(message.get("id") or "")
-    link = str(message.get("viewUrl") or "")
+    link = _field(message, "viewUrl", "view_url")
+    if not link:
+        return Skipped(mid, "no permalink on the message", "")
     text = _text(message)
     amount = _amount(text)
     if amount is None:
@@ -495,20 +554,20 @@ def _generic(message: Mapping[str, Any], source: Source) -> Receipt | Skipped:
     received = _received(message)
     if received is None:
         return Skipped(mid, "no message date", link)
-    stops = tuple(dict.fromkeys(a.strip() for a in _ADDRESS.findall(text)))
+    stops = tuple(dict.fromkeys(_clean_stop(a) for a in _ADDRESS.findall(text)))
     return Receipt(
         source=source.name,
         key=f"{source.name}:{mid}",
         merchant=source.merchant,
         amount=amount,
-        purchased_on=received.date(),
+        purchased_on=received.astimezone(timezone_for()).date(),
         message_id=mid,
         permalink=link,
         memo=str(message.get("subject") or "")[:80],
         category=source.category,
         received_at=str(message.get("date") or ""),
         stops=stops,
-        thread_id=str(message.get("threadId") or ""),
+        thread_id=_field(message, "threadId", "thread_id"),
     )
 
 
@@ -531,7 +590,7 @@ def receipts_in(source_name: str, payload: Any) -> Harvest:
             versions.setdefault(got.key, []).append(got)
     receipts: list[Receipt] = []
     for found in versions.values():
-        found.sort(key=lambda r: r.received_at)
+        found.sort(key=lambda r: _stamp(r.received_at) or datetime.min.replace(tzinfo=UTC))
         newest = found[-1]
         receipts.append(replace(newest, supersedes=tuple(r.message_id for r in found[:-1])))
     receipts.sort(key=lambda r: (r.purchased_on, r.key))
@@ -741,8 +800,11 @@ class Trip:
         )
         if match:
             return match.group(1)
-        low = address.lower()
-        return next((code for name, code in _STATES.items() if name in low), "")
+        # From the end: the state follows the city, and a city can be Washington.
+        for part in (p.strip().lower() for p in reversed(address.split(","))):
+            if part in _STATES:
+                return _STATES[part]
+        return ""
 
     def line(self) -> str:
         """One line for a header: name, dates, flights, stay."""
@@ -836,7 +898,16 @@ _CONFIRMATION = re.compile(r"Confirmation number:\s*([A-Za-z0-9-]+)")
 _ENDS = re.compile(r"Ends:\s*(\d{4}-\d{2}-\d{2})")
 _STARTS = re.compile(r"Starts:\s*(\d{4}-\d{2}-\d{2})")
 _STREET = re.compile(r"(?<![\w-])\d+[A-Za-z]?\s+[A-Z][a-z]")
-_ZIP_LINE = re.compile(r"^.*\b\d{5}\b.*$", re.MULTILINE)
+
+
+def _address_line(description: str) -> str:
+    """The description line that carries the stay's zip, never the confirmation line."""
+    for line in description.splitlines():
+        if _CONFIRMATION.search(line):
+            continue
+        if re.search(r"\b(?:USA|[A-Z]{2})\s+\d{5}\b|,\s*\d{5}\b", line):
+            return line.strip()
+    return ""
 
 
 def _when(value: Any) -> tuple[date | None, str, bool]:
@@ -856,8 +927,9 @@ def _when(value: Any) -> tuple[date | None, str, bool]:
 def _events_in(payload: Any) -> list[Mapping[str, Any]]:
     """Every event in one or several `list_events` answers."""
     if isinstance(payload, Mapping):
-        if "events" in payload:
-            return [e for e in payload["events"] or () if isinstance(e, Mapping)]
+        for key in ("events", "items"):
+            if key in payload:
+                return [e for e in payload[key] or () if isinstance(e, Mapping)]
         return [payload] if "summary" in payload else []
     if isinstance(payload, list):
         return [e for item in payload for e in _events_in(item)]
@@ -919,8 +991,7 @@ def trip_from_calendar(payload: Any, *, name: str = "") -> Trip | None:
         if not (is_stay and all_day):
             continue
         location = str(e.get("location") or "").strip()
-        zipline = _ZIP_LINE.search(description)
-        with_zip = zipline.group(0).strip() if zipline else ""
+        with_zip = _address_line(description)
         address = location if re.search(r"\b\d{5}\b", location) else (with_zip or location)
         conf = _CONFIRMATION.search(description)
         starts, ends = _STARTS.search(description), _ENDS.search(description)
@@ -953,7 +1024,7 @@ def trip_from_calendar(payload: Any, *, name: str = "") -> Trip | None:
             continue
         anchors.append(Anchor(day, summary, loc, str(e.get("htmlLink") or "")))
     anchors.sort(key=lambda a: (a.day, a.title))
-    flights.sort(key=lambda f: (f.day, f.departs))
+    flights.sort(key=lambda f: (f.day, _clock_minutes(f.departs)))
     if not name:
         city = _city_of(stay.address) if stay and stay.address else ""
         city = city or (flights[0].to_city if flights else "")
@@ -1216,7 +1287,7 @@ def go(batch: Batch, picks: Sequence[int] | str) -> list[Forward]:
     else:
         by_n = {row.n: row for row in batch.rows}
         chosen = []
-        for n in picks:
+        for n in dict.fromkeys(picks):
             row = by_n.get(n)
             if row is None:
                 raise ExpenseError(f"no row {n} in this batch (rows 1-{len(batch.rows)}).")
@@ -1393,14 +1464,14 @@ def drafts_in(payload: Any) -> list[Draft]:
             when = None
         drafts.append(
             Draft(
-                thread_id=str(message.get("threadId") or ""),
+                thread_id=_field(message, "threadId", "thread_id"),
                 message_id=str(message.get("id") or ""),
                 amount=amount,
                 vendor=fields.group("vendor").strip(),
                 purchased_on=when,
                 category=fields.group("category").strip(),
                 link=link.group(1) if link else "",
-                permalink=str(message.get("viewUrl") or ""),
+                permalink=_field(message, "viewUrl", "view_url"),
             )
         )
     return drafts
@@ -1441,18 +1512,24 @@ class Check:
         return "\n".join(lines)
 
 
-def check(batch: Batch, drafts: Iterable[Draft]) -> Check:
-    """Pair each forwarded (FILED) row with Rippling's reply, by thread first.
+def check(
+    batch: Batch, drafts: Iterable[Draft], *, filed: Mapping[str, Any] | None = None
+) -> Check:
+    """Pair each forwarded row with Rippling's reply, by thread first.
 
-    A row and a draft in the same Gmail thread are the same receipt. Failing
-    that, the same amount on the same purchase date pairs them, which covers
-    a forward that went out in a thread of its own. Nothing else does.
+    A row counts as forwarded when the batch says FILED or its key is in
+    ``filed`` (`forwarded_rows(log)`): the batch file is written before the
+    forwards go out, so the log is what knows. A row and a draft in the same
+    Gmail thread are the same receipt. Failing that, the same amount on the
+    same purchase date pairs them, which covers a forward that went out in a
+    thread of its own. Nothing else does.
     """
+    sent = filed or {}
     pending = list(drafts)
     confirmed: list[tuple[Row, Draft]] = []
     unconfirmed: list[Row] = []
     for row in batch.rows:
-        if row.status != FILED:
+        if row.status != FILED and row.receipt.key not in sent:
             continue
         r = row.receipt
         match = next((d for d in pending if d.thread_id and d.thread_id == r.thread_id), None)
@@ -1654,7 +1731,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     p_review.add_argument("--log", type=Path, default=None)
     p_review.add_argument("--report", default="")
     p_review.add_argument("--trip", type=Path, default=None)
-    p_review.add_argument("--out", type=Path, default=Path("batch.json"))
+    p_review.add_argument(
+        "--out", type=Path, required=True, help="outside the repo: it carries his addresses"
+    )
 
     p_go = sub.add_parser("go", help="the forward calls for the rows he named")
     p_go.add_argument("batch", type=Path)
@@ -1668,6 +1747,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     p_check = sub.add_parser("check", help="forwarded rows against rippling's replies")
     p_check.add_argument("batch", type=Path)
     p_check.add_argument("confirmations", type=Path, help="rippling's replies, as searched")
+    p_check.add_argument("--log", type=Path, default=None, help="which rows were forwarded")
 
     p_report = sub.add_parser("report", help="the batch as an expense report, by day")
     p_report.add_argument("batch", type=Path)
@@ -1692,7 +1772,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             since, until = args.since, args.until
             if args.trip is not None:
                 trip = Trip.from_payload(json.loads(args.trip.read_text(encoding="utf-8")))
-                since, until = since or trip.start, until or trip.end
+                since = since or trip.start
+                until = until or trip.end + timedelta(days=RECEIPT_LAG_DAYS)
             if since is None:
                 raise ExpenseError("say --since, or --trip trip.json.")
             until = until or datetime.now().date()
@@ -1713,7 +1794,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         elif args.command == "mark":
             batch = Batch.from_json(args.batch.read_text(encoding="utf-8"))
             picks = _picks(args.rows)
-            rows = batch.offered() if picks == "all" else [r for r in batch.rows if r.n in picks]
+            if picks == "all":
+                raise ExpenseError("mark takes the numbers that were sent, never 'all'.")
+            by_n = {row.n: row for row in batch.rows}
+            missing = [n for n in picks if n not in by_n]
+            if missing:
+                raise ExpenseError(f"no row {missing[0]} in this batch (rows 1-{len(batch.rows)}).")
+            rows = [by_n[n] for n in dict.fromkeys(picks)]
             count = mark_forwarded(
                 EventLog.open(args.log),
                 (r.receipt for r in rows),
@@ -1724,7 +1811,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         elif args.command == "check":
             batch = Batch.from_json(args.batch.read_text(encoding="utf-8"))
             replies = json.loads(args.confirmations.read_text(encoding="utf-8"))
-            print(check(batch, drafts_in(replies)).render())
+            filed = forwarded_rows(EventLog.open(args.log)) if args.log else {}
+            print(check(batch, drafts_in(replies), filed=filed).render())
         elif args.command == "report":
             batch = Batch.from_json(args.batch.read_text(encoding="utf-8"))
             text = by_day(batch).render()
