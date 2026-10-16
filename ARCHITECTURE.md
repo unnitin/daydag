@@ -59,6 +59,8 @@ flowchart TB
 | GitHub repos, PRs, Projects | the pods | read (mirror + API); draft review comments for approval |
 | `DayDAG/` folder (State · Decisions · Watchlist · Proposals) | **DayDAG** | own it |
 | local event log | **DayDAG** | own it |
+| Gmail label `expensed` | `expenses` | own it: applied after a forward he approved, so the next plan hides the mail |
+| local event log, `expenses.forwarded` rows | `expenses` | own it; marked private, never projected into the vault |
 | decision queue | **DayDAG** | own it; Nitin answers in place |
 | Slack DM to Nitin | **DayDAG** | the one autonomous send |
 
