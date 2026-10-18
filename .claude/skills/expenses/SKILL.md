@@ -1,6 +1,6 @@
 ---
 name: expenses
-description: "File Nitin's receipts into Rippling Spend. Finds unfiled receipts in Gmail (Uber parsed against real mail; DoorDash and others by a generic Total-line rule), drops Uber's charge summaries and tip duplicates, lists them with permalinks, forwards each to Rippling's receipts inbox ONLY after he says go, labels and logs it so nothing is offered twice, and reconciles a trip against an Amex activity export. Use for \"file my receipts\", \"expense my uber rides\", \"what's not in rippling yet\", \"reconcile my amex\", \"expenses for the LA trip\". Do NOT use for approving other people's Spend requests (a Rippling task in his inbox, not a loop) or for anything that writes to the vault."
+description: "File Nitin's receipts into Ramp (Rippling until 2026-10-18). Finds unfiled receipts in Gmail (Uber parsed against real mail; DoorDash and others by a generic Total-line rule), drops Uber's charge summaries and tip duplicates, lists them with permalinks, forwards each to Rippling's receipts inbox ONLY after he says go, labels and logs it so nothing is offered twice, and reconciles a trip against an Amex activity export. Use for \"file my receipts\", \"expense my uber rides\", \"what's not in rippling yet\", \"reconcile my amex\", \"expenses for the LA trip\". Do NOT use for approving other people's Spend requests (a Rippling task in his inbox, not a loop) or for anything that writes to the vault."
 daydag:
   writes:
     # The marker on a forwarded mail, and its row in the event log. Nothing in
@@ -13,7 +13,14 @@ daydag:
   sensitivity: private
 ---
 
-# expenses - receipts out of Gmail, into Rippling, after his go
+# expenses - receipts out of Gmail, into Ramp (Rippling until 2026-10-18), after his go
+
+> **Since 2026-10-18 the sink is Ramp**: forwards go to `reimbursements@ramp.com`
+> (`RECEIPTS_INBOX`), Ramp replies from `do-not-reply@ramp.com` within seconds
+> with "Reimbursement created for this receipt", and `check` reads that reply.
+> Everything below that says Rippling describes the same loop against the old
+> sink; the mechanics did not change. `reference/rippling-expenses.md` has the
+> 2026-10-18 section with what was verified on Ramp.
 
 You are filing receipts for Nitin. He pays with a personal Amex, files one
 Rippling Spend reimbursement report per trip ("Trip to LA", "Steerco in LA")
@@ -157,6 +164,61 @@ silent drops on Rippling's side.
    `reference/rippling-expenses.md` has the field list and what Rippling
    accepts as proof.
 
+## Ramp, through the connector (since 2026-10-18)
+
+The "claude.ai Ramp" connector is installed in his workspace; `/mcp` ->
+"claude.ai Ramp" -> authenticate, once per machine. It is Ramp's own hosted
+server with write scopes: reimbursements, receipts, trips. Mechanics are in
+`src/daydag/expenses_ramp.py`; what was verified is in
+`reference/rippling-expenses.md`, 2026-10-18 section. Three things it changes:
+
+**1. Files can be filed from here.** Photographed slips, a hotel folio, the
+statement-line PDFs: `ramp_request_receipt_upload_link` gives a single-use URL
+(30 minutes), `curl -F file=@<path>` from the session puts the bytes in Ramp
+and answers 201 with a `receipt_uuid`, `ramp_create_reimbursement_from_receipt`
+makes the draft. The bytes never pass through the model, which is why email
+could not do this and this can. Write `files.json` from what he said each file
+is (the README beside the files), then:
+
+```sh
+python -m daydag.expenses ramp-stage files.json --trip-uuid <from ramp_get_user_trips>
+```
+
+prints the four steps per file. Run them **only after his numbered go**, in
+order, filling each placeholder from the previous answer. **Always pass
+amount, merchant and date on create**: they are draft-only fields and Ramp's
+OCR read a $1,203.77 folio total where $1,177.95 was paid, and named the hotel
+"Hotel Tonnelle". Mail receipts keep the forward route (step 5 above): Ramp
+answers from `do-not-reply@ramp.com` within seconds, and `check` reads it.
+
+**2. The check reads Ramp, not mail.** Call
+`ramp_get_user_recent_reimbursements` with `include_drafts: true`,
+`limit: null`, `up_to_days` covering the trip; save the answer; then
+
+```sh
+python -m daydag.expenses ramp-check batch.json ramp.json --expected expected.json
+```
+
+where `expected.json` lists the lines filed from files (date, merchant,
+amount, category, kind). It prints the pending total against the expected
+total, every match with status, trip and GL, and both leftovers. Amount is the
+join, so a line Ramp read with a different amount shows on both lists with the
+gap in the header - that is the shape of the hotel on 2026-10-18.
+
+**3. Fix in place, within what Ramp allows.** `ramp_edit_reimbursement` on a
+PENDING reimbursement accepts trip, memo and coding and **rejects amount and
+merchant**; those need a draft. Attach every trip line to the Ramp trip
+(`ramp_get_user_trips`; he names it, e.g. "Burbank - Oct 2026"). Coding for a
+Data & AI trip line is the three fixed selections plus the travel GL for the
+category, all in `expenses_ramp.CODING` / `GL_BY_CATEGORY`, read from his own
+rows - never guess a UUID.
+
+**Submit is its own go.** Nothing prints a submit call. `ramp_submit_reimbursement`
+runs only on "submit 1 2 3" over a list he has read; a submitted reimbursement
+reaches an approver and stops being editable in the ways that matter. Never
+delete or edit a reimbursement that is not his own, and never delete a PENDING
+one without his word - it is in someone's queue.
+
 ## The report, by day
 
 When he wants to see the expense report before submitting it, or asks what a
@@ -243,6 +305,7 @@ re-offer is possible. No CSV: skip reconcile, say so. An unverified source
 
 - **Approving Spend requests** ("You have 1 Spend request to approve"). A
   Rippling task for him; the brief may surface it, nothing here acts on it.
+- **Rippling.** Superseded 2026-10-18; CMG expenses live in Ramp now. The Rippling API note below is history.
 - **The Rippling API.** No expense or receipt endpoint is in the public docs,
   and a token needs a company admin. `expenses.py` is shaped so an API sink is
   a second `Forward`-like class behind `go`; build it when both exist, not

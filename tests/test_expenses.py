@@ -750,7 +750,7 @@ def test_check_confirms_only_what_rippling_answered(tmp_path):
     assert (
         f"- ✓ 1. oct 5 Uber $11.98 -> draft reimbursement, Rideshare & Taxis ({DRAFT_LINK})" in text
     )
-    assert "- ? 2. oct 5 Uber $34.98 - forwarded, no reply from rippling yet (" in text
+    assert "- ? 2. oct 5 Uber $34.98 - forwarded, no reply from the receipts inbox yet (" in text
     assert "- draft with no row in this batch: oct 5 Cafe $5.00 (" in text
     assert unsourced_claims(text) == []
 
@@ -915,3 +915,43 @@ def test_check_reads_the_log_when_the_batch_still_says_new(tmp_path, capsys):
     code = ex.main(["check", str(batch_path), str(replies), "--log", str(tmp_path / "events.db")])
     assert code == 0
     assert "1 of 1 forwarded confirmed" in capsys.readouterr().out
+
+
+def test_a_ramp_reply_is_read_into_a_draft():
+    """The shape Ramp actually sent on 2026-10-18, 13 s after the forward."""
+    body = (
+        "Reimbursement created for this receipt\n\nYou have 1 draft reimbursement:\n\n"
+        "$11.98 at Uber\nDraft reimbursement · Nitin Srivastava · 10/05/26\n\n"
+        "[https://app.ramp.com/s/reimbursements/00000000-0000-0000-0000-000000000000"
+        "?email=x%40y.com&utm_medium=email]\n\nReview draft\n"
+        "[https://app.ramp.com/s/reimbursements/00000000-0000-0000-0000-000000000000?email=x]\n\n"
+        "You can forward or email receipts to reimbursements@ramp.com"
+    )
+    msg = {
+        "id": "r1",
+        "threadId": "t1",
+        "sender": "do-not-reply@ramp.com",
+        "subject": "Re: Fwd: [Business] Your Monday morning trip with Uber",
+        "plaintextBody": body,
+        "viewUrl": LINK.format("r1"),
+    }
+    (draft,) = ex.drafts_in([msg])
+    assert (draft.amount, draft.vendor, draft.purchased_on) == (
+        Decimal("11.98"),
+        "Uber",
+        date(2026, 10, 5),
+    )
+    assert (
+        draft.link == "https://app.ramp.com/s/reimbursements/00000000-0000-0000-0000-000000000000"
+    )
+    assert draft.category == ""
+
+
+def test_other_mail_from_ramp_is_not_a_draft():
+    msg = {
+        "id": "x",
+        "threadId": "t9",
+        "sender": "communications@ramp.com",
+        "snippet": "Your expense download is ready",
+    }
+    assert ex.drafts_in([msg]) == []

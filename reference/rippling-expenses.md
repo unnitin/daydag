@@ -186,3 +186,76 @@ goes by header name and needs `Date`, `Description`, `Amount`.
 - Rippling developer portal and reference: https://developer.rippling.com/
 - Third-party API profile listing an Expenses API with no paths:
   https://github.com/api-evangelist/rippling
+
+## 2026-10-18: the sink is Ramp now
+
+CMG moved expenses to Ramp (AP's "Ramp User training" mail, Oct 14; Ramp bill
+approvals already reach him). Verified live on 2026-10-18:
+
+- **Intake:** a mail from his work address to `reimbursements@ramp.com`
+  becomes one **draft reimbursement** per receipt (Ramp support, "Submitting
+  reimbursements"). `receipts@ramp.com` is a different inbox, for matching
+  receipts to Ramp *card* charges - not for out-of-pocket.
+- **Confirmation:** `do-not-reply@ramp.com` replies in the forward's own
+  thread. First forward 21:58:59Z, reply 21:59:12Z (13 s). Body: "Reimbursement
+  created for this receipt / You have 1 draft reimbursement: / $11.98 at Uber /
+  Draft reimbursement · Nitin Srivastava · 10/05/26 / Review draft
+  <https://app.ramp.com/s/reimbursements/<uuid>?email=...>". No category in the
+  reply. `drafts_in` reads this shape (`_ramp_draft`).
+- **Nine Uber receipts forwarded** this way on 2026-10-18 ~15:00 PT, logged
+  under `expenses.forwarded` with `to=reimbursements@ramp.com` (rows 3191-3199);
+  the Rippling rows 3182-3190 from 10/15 predate the `to` field.
+- **What he filled by hand in Ramp** (export `spend_events_*.csv`, 13 rows):
+  columns Date, Payment Method (REIMBURSEMENT), Amount, Merchant, Ramp
+  Category, Trip Name, URL, Memo, NetSuite mapping. Categories as Ramp spells
+  them on his rows: `Taxi and Rideshare`, `Restaurants`, `Lodging`, `Office`,
+  `Uncategorized`. Trip name he used: `Burbank - Oct 2026`. Ramp read the hotel
+  folio's gross ($1,203.77) not the amount paid ($1,177.95), and named the
+  merchant "Hotel Tonnelle" - OCR fields need a look before submit.
+- **Files still can't be sent from a session** (connector attachments are
+  inline bytes). Ramp adds a phone path: text a receipt photo to HIRAMP
+  (447-267) / +1 844 331 1023, or drag-and-drop at Home > New > Reimbursement.
+- **Not found:** a Ramp MCP/API write path. The Ramp connector in this
+  workspace (unauthenticated) and Ramp's hosted MCP expose read tools
+  (`load_reimbursements`, ...) only.
+
+### The Ramp connector, verified 2026-10-18 (afternoon)
+
+"claude.ai Ramp" = Ramp's hosted MCP (`ramp-mcp-remote.ramp.com`), installed in
+the workspace, authorised per user via `/mcp`. Token scopes include
+`reimbursements:write`, `receipts:write`, `trips:write`, `accounting:write`.
+What the first real use established:
+
+- **Reads.** `ramp_get_user_recent_reimbursements(include_drafts=true,
+  limit=null, up_to_days=30)` returned all 23 of his rows with amount_decimal,
+  merchant_name, transaction_date, status, memo, trip_uuid and the four
+  tracking selections (Department, Division, Business Unit, GL "Category").
+  `ramp_get_reimbursements` returns a different shape without trip_uuid.
+  `ramp_get_user_trips` gave the trip he made by hand: "Burbank - Oct 2026"
+  (uuid from `ramp_get_user_trips` at run time), Seattle -> Burbank -> Los Angeles,
+  Oct 5-8.
+- **Edits on PENDING.** trip_uuid: accepted (16 rows). amount, merchant:
+  rejected, `DEVELOPER_7078` "can only be edited while the reimbursement is
+  in DRAFT state". Memo and coding were not tried on PENDING.
+- **Files.** `ramp_request_receipt_upload_link` (no transaction_uuid) ->
+  single-use URL, 30 min. `curl -sS -F "file=@<pdf>;type=application/pdf"
+  '<url>'` from the session -> 201 `{"receipt_uuid": ..., "transaction_uuid":
+  null}`. `ramp_create_reimbursement_from_receipt(receipt_uuid, amount,
+  currency_code, transaction_date, merchant)` -> DRAFT with the file attached
+  and the given fields, GL unset, memo unset. The auto-mode classifier allowed
+  the curl; it had blocked `python -m daydag.expenses go` (prints only) as a
+  "real-world transaction", so the nine forwards were made from the log rows.
+- **Duplicate** copies fields, not the receipt (`missing_receipt: true`).
+- **Policy** "General Expenses": receipt, memo and category required from $0.
+  Fund not required. Submission validated all of that on his 22.
+- **Coding on his rows** (UUIDs in .env under the names in `expenses_ramp.CODING_KEYS`): Department
+  "Data & AI", Division "3 - Corporate", Business Unit "22 - Create Music
+  Group"; GLs 607101 Airfare, 607102 Lodging, 607103 Ground Transportation,
+  607104 Meals (Employee), 607105 Meals and Entertainment (Client), 607106
+  Entertainment (Employee), 607107 Conferences; he coded in-flight Wi-Fi to
+  604104 Office Supplies - no internet/telecom GL exists, only IT
+  software/hardware/support.
+- **State at the end of the day:** 22 PENDING, $2,172.17, all on the trip;
+  expected $2,146.35; the $25.82 gap is the hotel at the folio's gross, which
+  he chose to leave. One DRAFT, hotel $1,177.95 with the folio attached, left
+  unsubmitted pending his word.

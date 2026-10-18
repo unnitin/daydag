@@ -106,7 +106,7 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
-from daydag.config import timezone_for
+from daydag.config import Identities, timezone_for
 from daydag.state import EventLog
 
 __all__ = [
@@ -159,9 +159,13 @@ __all__ = [
     "trip_from_calendar",
 ]
 
-#: Where a forwarded receipt lands in his Rippling Spend. Public, on Rippling's
-#: own product page; the account it files under comes from the From header.
-RIPPLING_RECEIPTS_INBOX = "receipts@rippling.com"
+#: Where a forwarded receipt lands. Since 2026-10-18 that is Ramp: a mail to
+#: Ramp's reimbursements inbox becomes one draft reimbursement per receipt
+#: (support.ramp.com, "Submitting reimbursements"); the account it files under
+#: comes from the From header. The Rippling inbox it replaced is kept by name
+#: so the log can say which system an older forward went to.
+RECEIPTS_INBOX = "reimbursements@ramp.com"
+RIPPLING_RECEIPTS_INBOX = RECEIPTS_INBOX
 
 #: The Gmail label the agent applies after a forward. The plan excludes it, so
 #: a receipt is offered once even when the log is unavailable.
@@ -635,7 +639,7 @@ def forward_spec(receipt: Receipt, *, report: str = "") -> Forward:
     body finds them and he can paste the rest.
     """
     lines = [
-        "receipt for rippling",
+        "receipt for ramp",
         f"vendor: {receipt.merchant}",
         f"amount: ${receipt.amount}",
         f"date: {receipt.purchased_on.isoformat()}",
@@ -1424,6 +1428,18 @@ class Draft:
 
 
 RIPPLING_RECEIPTS_SENDER = "receipts@rippling.com"
+#: Ramp answers a forward to `reimbursements@ramp.com` from this address, in
+#: the forward's own thread, within seconds (verified 2026-10-18, 13 s):
+#: "Reimbursement created for this receipt / You have 1 draft reimbursement:
+#: / $11.98 at Uber / Draft reimbursement · Nitin Srivastava · 10/05/26 /
+#: Review draft <https://app.ramp.com/s/reimbursements/<uuid>?...>". No
+#: category in the reply; Ramp picks one when he opens the draft.
+RAMP_REPLY_SENDER = "do-not-reply@ramp.com"
+_RAMP_DRAFT_LINK = re.compile(r"(https://app\.ramp\.com/s/reimbursements/[0-9a-f-]+)")
+_RAMP_DRAFT_FIELDS = re.compile(
+    r"\$(?P<amount>[\d,]+\.\d{2}) at (?P<vendor>.+?)\s+Draft reimbursement(?: · .+?)? · "
+    r"(?P<date>\d{2}/\d{2}/\d{2})"
+)
 _DRAFT_LINK = re.compile(
     r"(https://link\.rippling\.com/spendApp\?path=/spend-management/expense/[^\s)\]|]+)"
 )
@@ -1443,7 +1459,13 @@ def drafts_in(payload: Any) -> list[Draft]:
     """
     drafts: list[Draft] = []
     for message in messages_in(payload):
-        if RIPPLING_RECEIPTS_SENDER not in str(message.get("sender") or "").lower():
+        sender = str(message.get("sender") or "").lower()
+        if RAMP_REPLY_SENDER in sender:
+            ramp = _ramp_draft(message)
+            if ramp is not None:
+                drafts.append(ramp)
+            continue
+        if RIPPLING_RECEIPTS_SENDER not in sender:
             continue
         raw = _text(message)
         if "draft reimbursement created" not in raw.lower():
@@ -1477,9 +1499,43 @@ def drafts_in(payload: Any) -> list[Draft]:
     return drafts
 
 
+def _ramp_draft(message: Mapping[str, Any]) -> Draft | None:
+    """Ramp's "Reimbursement created for this receipt" reply, read into a Draft."""
+    raw = _text(message)
+    if "reimbursement created for this receipt" not in raw.lower():
+        return None
+    flat = re.sub(r"\[[^\]]*\]", " ", raw)
+    flat = re.sub(r"\s+", " ", flat).strip()
+    fields = _RAMP_DRAFT_FIELDS.search(flat)
+    if fields is None:
+        return None
+    try:
+        amount = Decimal(fields.group("amount").replace(",", ""))
+    except InvalidOperation:
+        return None
+    try:
+        when: date | None = datetime.strptime(fields.group("date"), "%m/%d/%y").date()
+    except ValueError:
+        when = None
+    link = _RAMP_DRAFT_LINK.search(raw)
+    return Draft(
+        thread_id=_field(message, "threadId", "thread_id"),
+        message_id=str(message.get("id") or ""),
+        amount=amount,
+        vendor=fields.group("vendor").strip(),
+        purchased_on=when,
+        category="",
+        link=link.group(1) if link else "",
+        permalink=_field(message, "viewUrl", "view_url"),
+    )
+
+
 @dataclass(frozen=True)
 class Check:
-    """Forwarded rows against Rippling's confirmations."""
+    """Forwarded rows against the receipts inbox's confirmations.
+
+    Ramp since 2026-10-18; Rippling before.
+    """
 
     confirmed: tuple[tuple[Row, Draft], ...]
     unconfirmed: tuple[Row, ...]
@@ -1487,7 +1543,7 @@ class Check:
 
     def render(self) -> str:
         total = len(self.confirmed) + len(self.unconfirmed)
-        lines = [f"drafts in rippling - {len(self.confirmed)} of {total} forwarded confirmed"]
+        lines = [f"draft reimbursements - {len(self.confirmed)} of {total} forwarded confirmed"]
         for row, draft in self.confirmed:
             r = row.receipt
             lines.append(
@@ -1499,7 +1555,7 @@ class Check:
             r = row.receipt
             lines.append(
                 f"- ? {row.n}. {_day(r.purchased_on)} {r.merchant} ${r.amount} - forwarded, "
-                f"no reply from rippling yet ({r.permalink})"
+                f"no reply from the receipts inbox yet ({r.permalink})"
             )
         for draft in self.unmatched:
             when = _day(draft.purchased_on) if draft.purchased_on else "undated"
@@ -1567,6 +1623,7 @@ def mark_forwarded(
             memo=receipt.memo,
             category=receipt.category,
             report=report,
+            to=RECEIPTS_INBOX,
             at=now.isoformat(),
         )
         count += 1
@@ -1758,6 +1815,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     p_rec.add_argument("--amex", type=Path, required=True)
     p_rec.add_argument("--days", type=int, default=3)
 
+    p_rc = sub.add_parser("ramp-check", help="what ramp holds against the ledger")
+    p_rc.add_argument("batch", type=Path, help="batch.json, or '-' for none")
+    p_rc.add_argument("ramp", type=Path, help="saved answer of ramp_get_user_recent_reimbursements")
+    p_rc.add_argument("--expected", type=Path, default=None, help="lines filed from files")
+    p_rc.add_argument("--days", type=int, default=3)
+
+    p_rs = sub.add_parser("ramp-stage", help="the ramp calls that file local receipt files")
+    p_rs.add_argument(
+        "files", type=Path, help="files.json: file, merchant, amount, date, category, memo"
+    )
+    p_rs.add_argument("--trip-uuid", default="")
+
     args = parser.parse_args(argv)
     try:
         if args.command == "trip":
@@ -1823,6 +1892,31 @@ def main(argv: Sequence[str] | None = None) -> int:
             batch = Batch.from_json(args.batch.read_text(encoding="utf-8"))
             charges = charges_from_csv(args.amex.read_text(encoding="utf-8"))
             print(reconcile((r.receipt for r in batch.rows), charges, days=args.days).render())
+        elif args.command == "ramp-check":
+            from daydag import expenses_ramp as ramp
+
+            expected: list[ramp.Expected] = []
+            if str(args.batch) != "-":
+                expected += ramp.expected_from_batch(
+                    Batch.from_json(args.batch.read_text(encoding="utf-8"))
+                )
+            if args.expected is not None:
+                expected += ramp.expected_from_file(
+                    json.loads(args.expected.read_text(encoding="utf-8"))
+                )
+            items = ramp.ramp_items_in(json.loads(args.ramp.read_text(encoding="utf-8")))
+            print(ramp.ramp_check(expected, items, days=args.days).render())
+        elif args.command == "ramp-stage":
+            from daydag import expenses_ramp as ramp
+
+            files = ramp.files_from_payload(json.loads(args.files.read_text(encoding="utf-8")))
+            env = Path(".env")
+            identities = Identities.from_file(env) if env.exists() else None
+            print(
+                ramp.render_staging(
+                    ramp.stage_files(files, trip_uuid=args.trip_uuid, identities=identities)
+                )
+            )
     except ExpenseError as exc:
         print(f"expenses: {exc}", file=sys.stderr)
         return 2
