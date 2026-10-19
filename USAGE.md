@@ -29,6 +29,44 @@ the terminal. Nothing is sent anywhere.
 That is the whole interface. `SKILL.md` maps the other phrasings ("wrap up",
 "week ahead").
 
+### Expenses
+
+Each forwarded receipt becomes a draft reimbursement in Rippling Spend, with
+vendor, amount, date and category filled by Rippling; you add the memo and
+the report and press Submit. Say what you want:
+
+> file my receipts for the LA trip          (or: what's not in rippling yet)
+
+The `expenses` skill first builds the trip from your calendar (flights, the
+hotel, the dinner that explains a ride), then plans the Gmail searches, runs
+them, drops Uber's charge summaries and tip duplicates, places each receipt
+against the trip, and prints a numbered list with a permalink per row. Only
+what the trip places inside it goes with `go all`; the rest waits for a
+number. Nothing is sent until you answer with a go:
+
+> go 1            (the first time: one receipt, then check Spend > Receipts)
+> go all          (the rest, once the first one has landed)
+
+Then:
+
+> did they land                                (Rippling's replies, with the draft links)
+> report by day                                (the expense report, day by day)
+> reconcile my amex against the LA trip        (needs the activity CSV)
+
+For Amex, download the activity export first - Statements & Activity >
+Download > CSV - and drop it anywhere outside the repo; give the path. It is
+used to reconcile only: a statement line is never forwarded, Rippling needs
+the receipt. Amex, DoorDash and the like send nothing to the work mailbox, so
+a receipt that lives in another account has to reach Gmail first (a filter
+that forwards it to work is the simplest route).
+
+The forward is a connector write (`mcp__claude_ai_Gmail__forward`); Claude
+Code asks for permission on it unless you allow it once in
+`.claude/settings.local.json`. The `expensed` label cannot be applied from
+here (the Gmail connector has no label-write scope), so the event log is the
+"already filed" guard. The reasoning and what was verified about Rippling
+live in `reference/rippling-expenses.md`.
+
 ## What actually works today
 
 | Ask | Status |
@@ -39,6 +77,7 @@ That is the whole interface. `SKILL.md` maps the other phrasings ("wrap up",
 | "prep me for X" | **works.** Names a meeting or a person, searches 7 days, and asks which one when the name matches several. |
 | "prep tomorrow's calls" / `prep-ahead` | **runs**, new in [#171](https://github.com/unnitin/daydag/issues/171). Evening, with the wrap: preps the next working day's calls that match `## Prep rules` in `DayDAG/Watchlist.md`. Checked against Monday 9/28's real calendar; not yet run end to end. |
 | "ingest", "chase", "what shipped" | **run**, newly wired in [#95](https://github.com/unnitin/daydag/issues/95). `chase` reads `State.md`; `ship` needs a Pulse built from the mirrors: pass `--mirrors` (and `--log`, so the cursors persist). |
+| "file my receipts" | **runs**, new 2026-10-15 (`expenses` skill). Uber parsed against his real mail; the forward to Rippling's receipts inbox is unverified until the first one is seen landing, so the first run sends one and checks. |
 
 All eight loops the skill advertises are now reachable. Two — morning and
 week-ahead — have been checked against real data end to end; the rest have run,
