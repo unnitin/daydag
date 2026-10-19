@@ -335,10 +335,21 @@ scripts/install-morning.sh --remove    # take it off
 DAYDAG_POST=no scripts/morning.sh      # a dry run now: renders, posts nothing
 ```
 
+The installer also schedules a wake three minutes before the job
+(`sudo pmset repeat wake MTWRF 06:40:00`; `DAYDAG_WAKE=` skips it, `--remove`
+cancels it). Without it a Mac asleep at 06:43 runs the brief when it next
+wakes: 2026-10-15's ran at 23:08, and 10/16 and 10/19 did not run at all. The
+wake is reliable with the lid open or an external display; a closed laptop may
+only dark-wake, which does not open the terminal window.
+
 Each run appends to `~/.local/state/daydag/runs/morning-<date>.log`, with the
 payloads it fetched beside it. A Mac asleep at 06:43 runs it when it wakes.
 It runs on this machine, not in the cloud, because it reads your vault and the
-event log, which only this machine has.
+event log, which only this machine has. It opens in your terminal app
+(Ghostty by default; `DAYDAG_TERMINAL=<app>` at install picks another): macOS
+gives a bare launchd job no access to `~/Documents` or iCloud Drive, and the
+terminal you already use for this repo has both, so a window opens at 06:43
+and closes when the run ends.
 
 ## Honest status
 
