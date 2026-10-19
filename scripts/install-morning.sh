@@ -1,20 +1,22 @@
 #!/bin/zsh
-# Install (or remove) the launchd job that runs scripts/morning.sh at 06:43 on
-# weekdays. The plist is written to ~/Library/LaunchAgents with THIS machine's
-# repo path, so no local path is committed (the repo is public).
+# Install (or remove) the launchd job behind the scheduled morning. The plist
+# is written to ~/Library/LaunchAgents with THIS machine's repo path, so no
+# local path is committed (the repo is public).
 #
 #   scripts/install-morning.sh            # install or update, and load
 #   scripts/install-morning.sh --remove   # unload and delete
 #
-# A Mac asleep at 06:43 runs the job when it wakes - launchd's calendar jobs
-# catch up once, they do not stack.
-#
-# The job opens the run in a terminal app (DAYDAG_TERMINAL, default Ghostty)
-# rather than running /bin/zsh itself. macOS privacy protection gives a bare
-# launchd zsh no access to ~/Documents or iCloud Drive - the 2026-10-14 06:47
-# run died on "can't open input file" - while the terminal app he already uses
-# for this repo has both, so no new permission is granted. The window closes
-# when the run ends. DAYDAG_TERMINAL= (empty) runs zsh directly, which needs
+# launchd does not run scripts/morning.sh directly. macOS privacy protection
+# gives a bare launchd zsh no access to ~/Documents or iCloud Drive - the
+# 2026-10-14 06:47 run died on "can't open input file" - so launchd runs a
+# copy of scripts/morning-gate.sh placed in ~/.local/state/daydag, every 15
+# minutes from 06:43 to 09:58 on weekdays. The gate opens the real run in a
+# terminal app (DAYDAG_TERMINAL, default Ghostty), which already has access to
+# both folders, and only when the Mac is awake inside the window and today's
+# brief has not shipped. A Mac asleep at 06:43 therefore gets its brief at the
+# first slot after it wakes, not at 23:08 (2026-10-15), and not at all if it
+# sleeps past 10:00 (10/16, 10/19) - without sudo or a scheduled wake, which
+# he does not want. DAYDAG_TERMINAL= (empty) runs zsh directly, which needs
 # Full Disk Access for /bin/zsh.
 set -eu
 REPO="${0:A:h:h}"
@@ -22,25 +24,30 @@ TERMINAL="${DAYDAG_TERMINAL-Ghostty}"
 LABEL="com.daydag.morning"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 TARGET="gui/$(id -u)"
+STATE="$HOME/.local/state/daydag"
+GATE="$STATE/morning-gate.sh"
 
 launchctl bootout "$TARGET/$LABEL" 2>/dev/null || true
 if [[ "${1:-}" == "--remove" ]]; then
-  rm -f "$PLIST"
+  rm -f "$PLIST" "$GATE"
   echo "removed $LABEL"
   exit 0
 fi
 
-mkdir -p "$HOME/Library/LaunchAgents" "$HOME/.local/state/daydag/runs"
+mkdir -p "$HOME/Library/LaunchAgents" "$STATE/runs"
+# The gate and its two settings live outside ~/Documents, where a bare zsh can
+# read them. REPO stays out of the repo: it is this machine's path.
+cp "$REPO/scripts/morning-gate.sh" "$GATE"
+chmod +x "$GATE"
+printf 'REPO=%q\nTERMINAL=%q\n' "$REPO" "$TERMINAL" >"$STATE/morning.env"
 days=""
 for weekday in 1 2 3 4 5; do
-  days+="    <dict><key>Weekday</key><integer>$weekday</integer><key>Hour</key><integer>6</integer><key>Minute</key><integer>43</integer></dict>
+  for slot in "6 43" "6 58" "7 13" "7 28" "7 43" "7 58" "8 13" "8 28" "8 43" "8 58" "9 13" "9 28" "9 43" "9 58"; do
+    days+="    <dict><key>Weekday</key><integer>$weekday</integer><key>Hour</key><integer>${slot% *}</integer><key>Minute</key><integer>${slot#* }</integer></dict>
 "
+  done
 done
-if [[ -n "$TERMINAL" ]]; then
-  PROGRAM="<string>/usr/bin/open</string><string>-na</string><string>$TERMINAL</string><string>--args</string><string>-e</string><string>$REPO/scripts/morning.sh</string>"
-else
-  PROGRAM="<string>/bin/zsh</string><string>-lc</string><string>$REPO/scripts/morning.sh</string>"
-fi
+PROGRAM="<string>/bin/zsh</string><string>$GATE</string>"
 cat >"$PLIST" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -60,4 +67,4 @@ $days  </array>
 PLIST
 plutil -lint "$PLIST" >/dev/null
 launchctl bootstrap "$TARGET" "$PLIST"
-echo "installed $LABEL: weekdays 06:43 -> $REPO/scripts/morning.sh (in ${TERMINAL:-a bare zsh})"
+echo "installed $LABEL: weekdays 06:43-09:58 every 15 min -> $GATE -> $REPO/scripts/morning.sh (in ${TERMINAL:-a bare zsh})"
