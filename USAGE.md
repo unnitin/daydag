@@ -335,15 +335,19 @@ scripts/install-morning.sh --remove    # take it off
 DAYDAG_POST=no scripts/morning.sh      # a dry run now: renders, posts nothing
 ```
 
-The installer also schedules a wake three minutes before the job
-(`sudo pmset repeat wake MTWRF 06:40:00`; `DAYDAG_WAKE=` skips it, `--remove`
-cancels it). Without it a Mac asleep at 06:43 runs the brief when it next
-wakes: 2026-10-15's ran at 23:08, and 10/16 and 10/19 did not run at all. The
-wake is reliable with the lid open or an external display; a closed laptop may
-only dark-wake, which does not open the terminal window.
+launchd does not call `morning.sh` itself: a bare launchd shell cannot read
+`~/Documents` or iCloud. It runs a copy of `scripts/morning-gate.sh` from
+`~/.local/state/daydag` every 15 minutes between 06:43 and 09:58, and the gate
+opens the real run in your terminal app only when the Mac is awake in that
+window and today's brief has not shipped. So a Mac asleep at 06:43 gets the
+brief at the first slot after it wakes, never at night (2026-10-15's ran at
+23:08 under the old job; 10/16 and 10/19 never ran), and a failing run stops
+after three tries. A lock older than three hours counts as a dead run. No sudo
+and no scheduled wake are involved. `DAYDAG_GATE_DRY=1 scripts/morning-gate.sh`
+prints the decision it would make.
 
 Each run appends to `~/.local/state/daydag/runs/morning-<date>.log`, with the
-payloads it fetched beside it. A Mac asleep at 06:43 runs it when it wakes.
+payloads it fetched beside it; the gate's own lines go to `runs/launchd.log`.
 It runs on this machine, not in the cloud, because it reads your vault and the
 event log, which only this machine has. It opens in your terminal app
 (Ghostty by default; `DAYDAG_TERMINAL=<app>` at install picks another): macOS
