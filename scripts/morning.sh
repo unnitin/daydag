@@ -42,6 +42,12 @@ Never send anything to anyone but the principal's own DM. End with one line: pos
 # run, a dry run and a hand-run session overlapped, raced on the payloads file,
 # and the hand-run one posted first: a second post would have duplicated it.
 LOCK="$STATE/morning.lock"
+# A morning never takes three hours. A lock that old is left over from a run
+# that died without its trap, and would block every morning after it.
+if [[ -d "$LOCK" ]] && [[ -n "$(find "$LOCK" -maxdepth 0 -mmin +180 2>/dev/null)" ]]; then
+  echo "== $(date '+%F %T %Z') removing a stale lock from $(date -r "$LOCK" '+%F %T')" >>"$LOG"
+  rmdir "$LOCK" 2>/dev/null || true
+fi
 if ! mkdir "$LOCK" 2>/dev/null; then
   echo "== $(date '+%F %T %Z') another morning run holds $LOCK - standing down" >>"$LOG"
   exit 0
