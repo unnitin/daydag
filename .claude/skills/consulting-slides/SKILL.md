@@ -114,7 +114,9 @@ Read the reference that matches the step you are on; they are short:
   helper, never coloured-dot emoji. Emoji are for his web decks only, as a continuity
   glyph set with a legend.
 - One highlighted number per slide in bright green; everything else grey. Status colours
-  always come with the status word.
+  always come with their meaning. A table of statuses is a traffic light: soft fills
+  (`light`), no word in every cell, one legend at the bottom (`lightLegend`), and the
+  reason in its own column. A lone status elsewhere says its word.
 - No grey tracker text in the top corner. A section cue is the green tab (`sticker`), used
   only where it earns its place: "Illustrative" on a built example, "A1" on an appendix page.
 - Never copy slides from the template decks that carry client content or BCG branding;
