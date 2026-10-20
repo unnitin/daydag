@@ -81,6 +81,7 @@ __all__ = [
     "packed_meeting_rows",
     "read_vault_note",
     "red_items",
+    "red_priorities",
     "render_push",
     "split_citation",
     "unsourced_claims",
@@ -357,6 +358,44 @@ def red_items(note: str) -> list[tuple[int, str]]:
       carry one, and without this the legend leads every brief.
     """
     return _scan_red_items(note, ticked=False)
+
+
+#: The bold lead of an item - `**Databricks commit - close it or park it**` -
+#: which is how the note titles a priority before its paragraph of evidence.
+_BOLD_TITLE = re.compile(r"\*\*(?P<title>[^*]+?)\*\*")
+
+
+def red_priorities(note: str) -> list[tuple[int, str]]:
+    """Open top-level 🔴 items, one per priority, as ``(line number, title)``.
+
+    What the brief's "top of the note" shows. :func:`red_items` counts every
+    indented sub-checkbox as an item of its own and keeps each one's whole
+    paragraph, so on 2026-10-19 the first priority and two of its sub-bullets
+    filled the section and the other five became "+24 more" - his words: "bring
+    the priorities back". Here a priority is a top-level item, titled by its
+    bold lead when it has one, with a count of its open sub-items; the evidence
+    stays in the note, one click away. Sub-items of a ticked parent are not
+    counted against the priority above it.
+    """
+    lines = (note or "").splitlines()
+    open_red = dict(red_items(note))
+    priorities: dict[int, int] = {}  # parent line -> open sub-items
+    parent: int | None = None
+    for lineno, line in enumerate(lines, 1):
+        if not _ITEM.match(line):
+            continue
+        if not line[:1].isspace():
+            parent = lineno
+            if lineno in open_red:
+                priorities[lineno] = 0
+        elif lineno in open_red and parent in priorities:
+            priorities[parent] += 1
+    found = []
+    for lineno, subs in priorities.items():
+        bold = _BOLD_TITLE.search(open_red[lineno])
+        title = bold["title"].strip() if bold else open_red[lineno]
+        found.append((lineno, f"{title} · {subs} open" if subs else title))
+    return found
 
 
 def closed_red_items(note: str) -> list[tuple[int, str]]:
@@ -899,7 +938,7 @@ def assemble(
             Section(f"meetings ({len(shown)})", tuple(_meeting_lines(shown, day)), key="meetings")
         )
 
-    red = red_items(note)
+    red = red_priorities(note)
     if red:
         sections.append(
             Section(

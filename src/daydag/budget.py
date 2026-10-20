@@ -96,7 +96,7 @@ SLACK_TEXT_LIMIT = 5_000
 #: the packed form names every meeting in about ten lines, and it shrinks last.
 ITEM_CAP = 120
 CAPS: Mapping[str, int] = {
-    "note": 3,
+    "note": 6,
     "owed": 3,
     "owed-by": 2,
     "overnight": 4,

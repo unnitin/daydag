@@ -731,6 +731,33 @@ def test_red_items_reads_the_real_note_layout_where_items_are_unmarked():
     ]
 
 
+def test_the_brief_shows_each_priority_once_not_its_sub_bullets():
+    """2026-10-19, "bring the priorities back".
+
+    The real note nests a paragraph of evidence and several sub-checkboxes
+    under each priority. Read as items, the first priority and two of its
+    sub-bullets filled the section and the other five became "+24 more".
+    """
+    from daydag.brief import red_priorities
+
+    note = (
+        "## 🔴 High - needs my hand this week\n\n"
+        "- [ ] **Databricks commit - close it or park it** *(mine)* - DocuSign reached Will\n"
+        "\t- [ ] decide with Seth's answer in hand\n"
+        "\t- [x] Business Support waived\n"
+        "\t- [ ] GCP funding mechanisms, Mon 1:00\n"
+        "- [x] **Sponsor note** *(mine)* - sent\n"
+        "\t- [ ] a stray follow-up under a closed priority\n"
+        "- [ ] plain priority with no bold lead\n\n"
+        "## 🟡 Medium\n"
+        "- [ ] **not red**\n"
+    )
+    assert red_priorities(note) == [
+        (3, "Databricks commit - close it or park it · 2 open"),
+        (9, "plain priority with no bold lead"),
+    ]
+
+
 def test_a_triage_legend_heading_is_not_a_priority_section():
     """A heading naming several tiers is the legend, and leads no brief."""
     assert red_items("## Triage: 🔴 High / 🟡 Medium / 🟢 Lower\n- [ ] not a priority\n") == []
