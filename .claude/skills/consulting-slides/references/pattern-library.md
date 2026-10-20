@@ -62,6 +62,7 @@ below are positions in the file (`catalog_template.py` prints them with their ti
 | Roadmap by workstream | Gantt: lanes, months, grey bars, green diamonds, "today" shaded | S41, S129, S131, G13, G16 |
 | Phases of work | Chevrons with durations and bullets beneath | K37, K80, S121 |
 | Quarter plan with status | Lanes by deliverable, quarter columns, status pills (built, in progress, planned) | P12, build: `timelineQuarters` |
+| Where each item or next step stands | Table with a narrow traffic-light column (soft fill, no word), a "Why" column of reasons beside it, one legend under the table | build: `table` with `light(level)` cells, then `lightLegend`; GCP cost deck p6, p7 |
 | Speed to launch | Curved rail with dated events | K40, S124 |
 
 ## Frameworks and systems

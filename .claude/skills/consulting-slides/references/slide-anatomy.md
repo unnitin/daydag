@@ -52,8 +52,13 @@ BCG-style palette as used in the templates (hex):
 
 Rules: one dominant colour (dark green) plus greys; the bright green goes on the single
 thing the eye must land on; grey everything that is context. Status reds and ambers are
-allowed but each status also says its word ("Open", "At risk"). Keep colour meaning stable
-across the deck. No gradients on content (a gradient is reserved for divider panels), no
+allowed but each status also says what it means. In a table of statuses that is a traffic
+light: the status cell is a soft fill (`BFE3CF` good, `F3DDA6` watch, `EBBAC0` bad, `D9D9D9`
+none) with no word in it, one legend at the bottom names each colour, and the reason sits in
+its own column beside it. Saturated fills with a word in every cell read as loud and
+repetitive (his sticky, GCP cost deck, 20 Oct 2026). A lone status outside a table says its
+word ("Open", "At risk"). Keep colour meaning stable across the deck: the same legend
+wording on every page that uses it. No gradients on content (a gradient is reserved for divider panels), no
 shadows, no 3D, no clip art, no stock photo behind text unless it is a divider.
 
 ## Signature shapes
