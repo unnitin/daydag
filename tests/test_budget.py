@@ -287,7 +287,8 @@ def test_every_cut_is_counted_where_it_lives_and_headings_keep_their_totals(tmp_
         cut = cuts[key]
         assert cut.shown + cut.counted == cut.total
         # "+N more" while some rows show, "N" once the section shows none
-        leads = (f"- +{cut.counted} {words}", f"- {cut.counted} {words.removeprefix('more ')}")
+        bare = words.removeprefix("more ").removeprefix("older ")
+        leads = (f"- +{cut.counted} {words}", f"- {cut.counted} {bare}")
         line = next((x for x in head.splitlines() if x.startswith(leads)), "")
         assert line.endswith(home), f"{key}: {cut.counted} cut, a different count or home: {line}"
     overnight = thread.split("\n\n")[0].splitlines()
