@@ -117,8 +117,9 @@ the skill's scripts, which need only the standard library.
    recipe there: which source settles which kind of claim. A source you cannot reach gets
    one line ("couldn't check Jira: 403"), never a guess.
 
-7. **Pass 5, house rules by machine.** Save the outline and check it:
-   `python3 .claude/skills/slide-review/scripts/outline.py <deck>.pptx > <scratch>/outline.txt`,
+7. **Pass 5, house rules by machine.** Save the deck's own words (`--content` leaves out
+   his stickies, so his notes are not blamed on the deck) and check them:
+   `python3 .claude/skills/slide-review/scripts/outline.py <deck>.pptx --content > <scratch>/outline.txt`,
    then `.venv/bin/python -m daydag.style check <scratch>/outline.txt --project "<section>"`.
    The checker reads house rows without the project's exceptions and stops at the first
    emoji. So a hit that a project row allows is not a finding: name the row that allows

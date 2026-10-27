@@ -9,10 +9,12 @@ numbers are positions in the file) and from BCG's published work (see `## Source
 ## Checklist
 
 Deck:
-1. Map the deck onto cover, context, executive summary, sections with a tracker, key
-   message slides, detail backup, decisions and next steps, appendix. Name what is
-   missing, out of order, or doing two jobs.
-2. Preliminary, illustrative or draft content carries a sticker saying so.
+1. Map the deck onto cover, context, executive summary, sections (each opened so the
+   reader knows where they are), key message slides, detail backup, decisions and next
+   steps, appendix. Name what is missing, out of order, or doing two jobs.
+2. Preliminary or estimated content says so where the number is. In his house look
+   that is words on the slide ("estimate", "proposal", a `[placeholder]` with its date)
+   and the green tab only for "Illustrative" and appendix labels (see below).
 
 Each slide:
 3. Say its one idea in a sentence without the title. Does the title say the same? Two
@@ -62,8 +64,17 @@ follow it closely:
 
 Stickers tell the reader how much weight a page bears: "Preliminary", "Draft", "For
 discussion", "Illustrative", "Example", "Non-exhaustive list", "Backup" (NYCHA; Dallas
-uses "Backup" 27 times). A recommendation or a figure that is still preliminary and
-carries no sticker is a finding.
+uses "Backup" 27 times). A recommendation or a figure that is still preliminary and says
+so nowhere is a finding.
+
+**His house rules win over the BCG habit here** (consulting-slides and `Style.md`): no
+grey tracker text in the top corner; a section is opened by a divider or an agenda page
+with the current part lit, not by a corner label; the green tab is used only where it
+earns its place ("Illustrative" on a built example, "A1" on an appendix page). So a
+missing corner tracker or a missing "Preliminary" sticker is not a finding on his decks.
+What is a finding is a reader who cannot tell where they are in the argument, or cannot
+tell an estimate from a fact. Fix those in his idiom: a divider, an agenda page, the
+word "estimate", a dated placeholder.
 
 Review: map the deck onto this order. Missing pieces (no summary, no close), pieces out of
 order (methodology before the answer; detail before the claim it supports) and pieces doing

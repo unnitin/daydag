@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Read a .pptx as an argument: every slide's title, body, exhibit data, sources and notes.
 
-Usage: python3 outline.py deck.pptx [--titles | --numbers | --json] [--summary N]
-                                      [--today YYYY-MM-DD]
+Usage: python3 outline.py deck.pptx [--titles | --numbers | --content | --json]
+                                      [--summary N] [--today YYYY-MM-DD] [--sticky RRGGBB]
 
   (default)   every slide: title, body in reading order, table and chart data, source
               lines, speaker notes, his stickies, and the mechanical flags
@@ -10,14 +10,19 @@ Usage: python3 outline.py deck.pptx [--titles | --numbers | --json] [--summary N
   --numbers   every figure (money, percentages, multiples, ranges kept whole) with the
               slides it appears on, then the bare counts; dates and #ids are left out.
               Slides after the appendix divider are marked "a"
+  --content   the deck's own words only (no stickies, flags or notes of ours): the input
+              for `daydag.style check`, so his sticky notes are not blamed on the deck
   --json      the default view as JSON
   --summary N the executive summary is slide N; by default it is the first slide titled
               like one, else the first slide after the cover, marked "presumed"
-  --today D   the date past-due checks compare against (default: today)
+  --today D   the date past-due checks compare against (default: today); a date written
+              without a year is read as the nearest one
+  --sticky C  the fill colour of his stickies (default FFFF00), as stickies.py --color
 
-The title is the slide's title placeholder when it has one; otherwise the largest type
-in the top band (above 1.4 in), which is where the house build puts it; failing that the
-largest type on the slide, which catches a claim carried in a green left panel. Each
+The title is the slide's title placeholder when it has one; otherwise the topmost text of
+16 pt or more in the top band (above 1.4 in), which is where the house build puts it
+(above a panel heading set larger); failing that the largest type on the slide, which
+catches a claim carried in a green left panel. Each
 slide says which rule picked its title, so a wrong pick is visible.
 
 The appendix starts at the first slide after the opening that reads as a divider (a page
@@ -68,24 +73,38 @@ TOPIC_WORDS = {
     "scope",
 }
 HEDGES = re.compile(
-    r"\b(may|might|could|potentially|possibly|perhaps|arguably|somewhat|fairly|relatively|"
+    r"\b(might|could|potentially|possibly|perhaps|arguably|somewhat|fairly|relatively|"
     r"we believe|we think|it seems|appears to|seems to|likely)\b",
     re.I,
 )
+HEDGE_MAY = re.compile(r"\bmay\b")  # lower case only: "May '27" is a month
 SOURCE_LINE = re.compile(r"^\s*(sources?|notes?|footnotes?)\b\s*[:.]", re.I)
 UNIT = r"(?:%|x\b|\u00d7|pp\b|k\b|K\b|M\b|B\b|bn\b)"
 ONE = r"[$€£]?\d(?:[\d,]*\d)?(?:\.\d+)?"
-# one figure, or a range kept whole ("$29-48k", "20-35%", "2 to 4x"); not after # or /
+# one figure, or a range kept whole ("$29-48k", "20-35%"); not after # or / or an id's dash.
+# "to" is not a range: "up 40% to $1.2M" is two figures
 NUMBER = re.compile(
-    rf"(?<![\w.#/\-])[~≈<>+\-]?\s?{ONE}(?:\s?{UNIT})?(?:\s?(?:-|\u2013|to)\s?{ONE}(?:\s?{UNIT})?)?"
+    rf"(?<![\w.#/\-'\u2019])[~≈<>+\-]?\s?{ONE}(?:\s?{UNIT})?(?:\s?(?:-|\u2013)\s?{ONE}(?:\s?{UNIT})?)?"
 )
 MONTHS = "jan feb mar apr may jun jul aug sep oct nov dec".split()
-MONTH = r"(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?"
-DATE = re.compile(rf"\b(\d{{1,2}})\s({MONTH})|\b({MONTH})\s(\d{{1,2}})\b(?!\d)", re.I)
-DUE_HEADER = re.compile(r"\b(due|when|date|by|deadline|target)\b", re.I)
+# whole month names or their abbreviations, capitalised: "Marketing" and "Decision" are not
+MONTH = (
+    r"(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|June?|July?|Aug(?:ust)?"
+    r"|Sept?(?:ember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\b\.?"
+)
+YEAR = r"(?:,?\s(\d{4}))?"
+DATE = re.compile(rf"\b(\d{{1,2}})\s({MONTH}){YEAR}|\b({MONTH})\s(\d{{1,2}})\b(?![\d.,]\d){YEAR}")
+# a column of deadlines: named as one, or a bare "When"/"Date"/"By" in a plan table
+DUE_HEADER = re.compile(r"\b(due|deadline|eta|by when|target date)\b", re.I)
+WHEN_HEADER = re.compile(r"^\s*(when|date|by)\s*$", re.I)
+PLAN_HEADER = re.compile(r"\b(owner|who|status|next steps?|actions?)\b", re.I)
 APPENDIX = re.compile(r"^\s*(appendix|backup|annex)\b", re.I)
 SUMMARY_TITLE = re.compile(r"summary|at a glance|in brief|key messages|the answer", re.I)
-CLOSE_TITLE = re.compile(r"next step|decision|we ask|asks?\b|what we need|owners?", re.I)
+CLOSE_TITLE = re.compile(
+    r"\bnext steps?\b|^decisions?\b|\bdecisions? (needed|required|to make|for|we need|today)\b"
+    r"|\bwe ask\b|\bthe ask\b|\bwhat we need\b",
+    re.I,
+)
 TODAY = date.today()
 
 
@@ -142,9 +161,10 @@ def text_shapes(xml: str) -> list[dict]:
         if not paras:
             continue
         sppr = re.search(r"<p:spPr[^>]*>(.*?)</p:spPr>", sp, flags=re.S)
-        fill = re.search(
-            r'<a:solidFill><a:srgbClr val="([0-9A-Fa-f]{6})"', sppr.group(1) if sppr else ""
-        )
+        # the outline (<a:ln>) carries its own solidFill; a shape with no fill would
+        # otherwise read as its outline colour, and a yellow outline as a sticky
+        own = re.sub(r"<a:ln\b.*?</a:ln>", "", sppr.group(1) if sppr else "", flags=re.S)
+        fill = re.search(r'<a:solidFill><a:srgbClr val="([0-9A-Fa-f]{6})"', own)
         sizes = [int(s) / 100 for s in re.findall(r'<a:(?:rPr|endParaRPr)[^>]*\bsz="(\d+)"', sp)]
         x, y, w, h = position(sp)
         out.append(
@@ -243,7 +263,7 @@ def pick_title(shapes: list[dict]) -> tuple[dict | None, str]:
         and (s["size"] == 0 or s["size"] >= 16)
     ]
     if top:
-        return max(top, key=lambda s: (s["size"], -s["y"])), "top band"
+        return min(top, key=lambda s: (s["y"], -s["size"])), "top band"
     if shapes:
         return max(shapes, key=lambda s: (s["size"], -s["y"])), "largest type"
     return None, "none"
@@ -268,13 +288,16 @@ def figures(line: str) -> tuple[list[str], list[str]]:
 def past_due(text: str, today: date) -> list[str]:
     out = []
     for m in DATE.finditer(text):
-        day = m.group(1) or m.group(4)
-        mon = (m.group(2) or m.group(3))[:3].lower()
+        day = m.group(1) or m.group(5)
+        mon = (m.group(2) or m.group(4))[:3].lower()
+        year = m.group(3) or m.group(6)
+        years = [int(year)] if year else [today.year - 1, today.year, today.year + 1]
         try:
-            when = date(today.year, MONTHS.index(mon) + 1, int(day))
+            options = [date(y, MONTHS.index(mon) + 1, int(day)) for y in years]
         except ValueError:
             continue
-        if when < today and today.month - when.month < 6:
+        when = min(options, key=lambda d: abs((d - today).days))  # no year: the nearest
+        if when < today:
             out.append(m.group(0))
     return out
 
@@ -294,14 +317,14 @@ def appendix_start(slides: list[dict]) -> int | None:
     return None
 
 
-def read(path: str) -> list[dict]:
+def read(path: str, sticky: str = STICKY) -> list[dict]:
     z = zipfile.ZipFile(path)
     slides = []
     for n, part in enumerate(slide_paths(z), 1):
         xml = z.read(part).decode("utf-8", "replace")
         shapes = text_shapes(xml)
-        stickies = [s for s in shapes if s["fill"] == STICKY]
-        content = [s for s in shapes if s["fill"] != STICKY]
+        stickies = [s for s in shapes if s["fill"] == sticky]
+        content = [s for s in shapes if s["fill"] != sticky]
         title_shape, how = pick_title(content)
         body, sources = [], []
         for s in content:  # document order: the build order, which beats position for columns
@@ -358,7 +381,11 @@ def flag(slides: list[dict], today: date) -> None:
             f.append("figures and no Source line: where do they come from?")
         if s["charts"] and not re.search(r"\d", t):
             f.append("chart under a title with no figure: does the title say what the chart shows?")
-        hedges = sorted({m.group(0).lower() for x in [t, *s["body"]] for m in HEDGES.finditer(x)})
+        lines = [t, *s["body"]]
+        hedges = sorted(
+            {m.group(0).lower() for x in lines for m in HEDGES.finditer(x)}
+            | {"may" for x in lines if HEDGE_MAY.search(x)}
+        )
         if hedges:
             f.append("hedges (" + ", ".join(hedges) + "): say it or cut it?")
         fills = sum(c.startswith("[fill ") for tb in s["tables"] for r in tb["rows"] for c in r)
@@ -367,7 +394,12 @@ def flag(slides: list[dict], today: date) -> None:
         due = []
         for tb in s["tables"]:
             head = tb["rows"][0] if tb["rows"] else []
-            cols = [i for i, c in enumerate(head) if DUE_HEADER.search(c)]
+            plan = any(PLAN_HEADER.search(c) for c in head)
+            cols = [
+                i
+                for i, c in enumerate(head)
+                if DUE_HEADER.search(c) or (plan and WHEN_HEADER.match(c))
+            ]
             for r in tb["rows"][1:]:
                 due += [d for i in cols if i < len(r) for d in past_due(r[i], today)]
         if due:
@@ -494,12 +526,13 @@ def show(path: str, slides: list[dict], mode: str, summary_n: int | None = None)
             for f, ctx in deck["summary_orphans"]:
                 print(f"  ? {f} appears only on the summary: {ctx[:90]}")
         return
+    ours = mode != "content"  # stickies, flags and deck notes are not the deck's words
     found = deck["summary_from"] or "deck too short"
     print(
         f"executive summary: {deck['summary'] or 'none'} ({found}) · "
         f"decisions / next steps: {deck['close'] or 'none found by title'}"
     )
-    for n in deck["notes"]:
+    for n in deck["notes"] if ours else []:
         print(f"  ? {n}")
     for s in slides:
         print(f"\n## {tag(s['n'])} · {s['title'] or '(no title)'}")
@@ -520,9 +553,9 @@ def show(path: str, slides: list[dict], mode: str, summary_n: int | None = None)
             print(f"   source: {t}")
         for t in s["notes"]:
             print(f"   notes: {t}")
-        for st in s["stickies"]:
+        for st in s["stickies"] if ours else []:
             print(f"   STICKY at ({st['x']}, {st['y']}): {st['text']}")
-        for f in s["flags"]:
+        for f in s["flags"] if ours else []:
             print(f"   ? {f}")
 
 
@@ -531,9 +564,11 @@ if __name__ == "__main__":
     if not args or args[0].startswith("--"):
         print(__doc__)
         sys.exit(1)
-    mode = next((a[2:] for a in args[1:] if a in {"--titles", "--numbers", "--json"}), "full")
+    modes = {"--titles", "--numbers", "--content", "--json"}
+    mode = next((a[2:] for a in args[1:] if a in modes), "full")
     summary_n = int(args[args.index("--summary") + 1]) if "--summary" in args else None
     today = date.fromisoformat(args[args.index("--today") + 1]) if "--today" in args else TODAY
-    slides = read(args[0])
+    sticky = args[args.index("--sticky") + 1].upper() if "--sticky" in args else STICKY
+    slides = read(args[0], sticky)
     flag(slides, today)
     show(args[0], slides, mode, summary_n)

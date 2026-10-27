@@ -214,7 +214,7 @@ reach one line ("couldn't check Jira: 403"), never a guess.
 |---|---|---|
 | A PR merged, open, or "moves X" | GitHub | `gh pr view <n> -R CreateMusicGroup/<repo>`; a number may be an issue, not a PR (`gh issue view`) |
 | A ticket's status or owner | Jira | the Atlassian connector, JQL bounded by key or project and date (CLAUDE.md §3) |
-| "Agreed with X", "raised on date", an owner's commitment | Slack, Gmail | search by the person's Slack id (`.venv/bin/python -m daydag.people show <role>`), never display name; read the thread, not only the parent |
+| "Agreed with X", "raised on date", an owner's commitment | Slack, Gmail | search by the person's Slack id (`.venv/bin/python -m daydag.people show <role> --log ~/.local/state/daydag/events.db`), never display name; read the thread, not only the parent |
 | A meeting held or scheduled | Calendar | day by day; a scheduled meeting is not a held one |
 | A figure from a system (billing, a table) | the system's own export or query | re-run only if cheap; otherwise check the source line names the system, period and date |
 

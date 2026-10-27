@@ -43,7 +43,7 @@ Read the reference that matches the step you are on; they are short:
    sources (Slack, Gmail notes, Notion) for what moved since the page was written, and
    bracket anything still pending as a placeholder with its arrival date (`[Mon]`).
    Then read what his feedback has already taught, before deciding anything about words
-   or look: `python -m daydag.style show --project "<project>"` prints the house rules and
+   or look: `.venv/bin/python -m daydag.style show --project "<project>"` prints the house rules and
    the project's, with the ones that carry a condition marked. Those rules outrank this
    file's defaults. Name the project the way its section in `DayDAG/Style.md` is named.
 
@@ -68,7 +68,7 @@ Read the reference that matches the step you are on; they are short:
    rebuild rather than patching the file. A flow that needs explaining gets one worked
    example built click by click: name each step's shapes in the script and run
    `scripts/animate.py` after every rebuild (see `build.md`). Before any handover run
-   `python -m daydag.style check <build.js> --project "<project>"`: it flags the phrases
+   `.venv/bin/python -m daydag.style check <build.js> --project "<project>"`: it flags the phrases
    and emoji his rules forbid, and echoes every rule applied on a condition, so the reply
    can say which assumptions have an expiry.
 
@@ -97,9 +97,11 @@ Read the reference that matches the step you are on; they are short:
    - **Conflicts with him**: a finding that contradicts one of his stickies, his retyped
      wording or a `Style.md` row loses. His word wins; say so in the reply.
 
-   Rebuild and re-render after the fixes. Send the changed slides back to the same
-   reviewer (SendMessage) for one recheck, not a new full review; at most two review
-   passes per round.
+   Before rebuilding with the fixes, run `scripts/drift.py` against his current file again:
+   the review takes minutes, and anything he retyped meanwhile goes into the script first
+   (his heading edits were lost this way on 25 Oct). Then rebuild and re-render. Send the
+   changed slides back to the same reviewer (SendMessage) for one recheck, not a new full
+   review; at most two review passes per round.
 
    **Deliver** five things:
    - the `.pptx` path;
@@ -122,7 +124,7 @@ Read the reference that matches the step you are on; they are short:
 
 8. **Write through what the round taught.** Sort each sticky into a one-off, which dies
    with the round, or a rule. A rule is appended as a row he can edit:
-   `python -m daydag.style add "<section>" "<rule> · <why> · <holds> · <source> · inferred"`,
+   `.venv/bin/python -m daydag.style add "<section>" "<rule> · <why> · <holds> · <source> · inferred"`,
    where the section is `house` for anything that holds across his work and the project's
    name for the rest, and `holds` is `always`, `while <fact>` or `until <date>`. A sticky
    that repeats a rule already in the file is a sign the build skipped step 1, not a new
