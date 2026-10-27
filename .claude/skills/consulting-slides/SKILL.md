@@ -1,6 +1,6 @@
 ---
 name: consulting-slides
-description: "Build or rewrite a slide deck the way BCG, Bain and McKinsey do it: answer first, action titles that read as the argument, one exhibit per slide, sources and page numbers everywhere, green-on-grey Trebuchet look matched to Nitin's slide templates, delivered as a .pptx. Use this whenever Nitin asks for a deck, slides, a presentation, a one-pager for the sponsor or department leadership, a storyline, an executive summary, a ghost deck, a roadmap or timeline slide, or asks to make existing slides 'more BCG', 'more consulting', 'answer first' or 'less verbose', even if he does not say PowerPoint. Also use it to review a deck against consulting standards."
+description: "Build or rewrite a slide deck the way BCG, Bain and McKinsey do it: answer first, action titles that read as the argument, one exhibit per slide, sources and page numbers everywhere, green-on-grey Trebuchet look matched to Nitin's slide templates, delivered as a .pptx. Use this whenever Nitin asks for a deck, slides, a presentation, a one-pager for the sponsor or department leadership, a storyline, an executive summary, a ghost deck, a roadmap or timeline slide, or asks to make existing slides 'more BCG', 'more consulting', 'answer first' or 'less verbose', even if he does not say PowerPoint. Also use it to check a deck's look against the house standards; an adversarial review of the argument and content is slide-review."
 daydag:
   # Not orchestrated by DayDAG: invoked by hand. Decks go where the user points it
   # (`${DECKS_DIR}/<project>/`, both from `.env`). The one vault write is
@@ -72,13 +72,49 @@ Read the reference that matches the step you are on; they are short:
    and emoji his rules forbid, and echoes every rule applied on a condition, so the reply
    can say which assumptions have an expiry.
 
-6. **Deliver** the `.pptx` path, the rendered pages for what changed, and two or three
-   things to check by page number. Say what is unverified or estimated.
+6. **Review, then deliver. Every build gets a review**: the first build, every sticky
+   round, every revision however small. After the render and the style check, hand the
+   deck to `slide-review` in a fresh agent (Agent tool, general-purpose) with this brief
+   and nothing else. Never pass the storyline or your reasoning: a reviewer who knows what
+   a slide was meant to say reads that meaning into it.
+
+   ```
+   Read .claude/skills/slide-review/SKILL.md and follow it to review <deck>.pptx.
+   Renders: <deck>-pages/ (use these, do not re-render).
+   Brief: audience <role>, <live meeting | pre-read>, decision <what it is for>,
+   Style.md section <name>.
+   Scope: <whole deck | slides N, M changed this round, plus the titles-only pass>.
+   You did not build this deck. Return the step 8 report.
+   ```
+
+   The scope is the whole deck for a new deck or a round that changed titles or the
+   order. Otherwise it is the slides this round touched, plus the titles-only pass, so a
+   one-slide fix is still checked against the argument around it. Act on the report:
+   - **Blockers**: fix before delivering. If a fix needs his call (a target, an owner, a
+     decision), it becomes a bracketed placeholder and a question in the reply.
+   - **Majors**: fix the ones in your hands; list the rest.
+   - **Minors**: fix the cheap ones.
+   - **Conflicts with him**: a finding that contradicts one of his stickies, his retyped
+     wording or a `Style.md` row loses. His word wins; say so in the reply.
+
+   Rebuild and re-render after the fixes. Send the changed slides back to the same
+   reviewer (SendMessage) for one recheck, not a new full review; at most two review
+   passes per round.
+
+   **Deliver** five things:
+   - the `.pptx` path;
+   - the rendered pages for what changed;
+   - the review's verdict in one line, with what was fixed and what was left and why;
+   - two or three things to check, by page number;
+   - what is unverified or estimated.
+
+   A delivery without the review line means this step was skipped.
 
 7. **Iterate through stickies.** He answers with yellow text boxes on the slides, and by
    retyping headings in place. Each round: back up his version, list the stickies, run
    `scripts/drift.py` against your last build to catch what he retyped, carry both into
-   the script, rebuild, render, look at every page, reply sticky by sticky. When he says
+   the script, rebuild, render, look at every page, review (step 6), reply sticky by
+   sticky. When he says
    "promote", `scripts/promote.sh` turns the draft into a dated file. Neither script
    deletes anything: render output lives in one marked folder, and an old one is moved
    aside with its path printed. Where a sticky asks for alternatives, build each as its

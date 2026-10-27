@@ -35,10 +35,15 @@ loop is cheap for him and exact for you; follow it rather than inventing a revie
    from the script next round.
 4. Rebuild, render with `scripts/render.sh`, and look at every page. Three defects recur:
    bullets spilling below a panel, value labels running off a bar, a table or panel sliding
-   under the band below it. Fix, re-render, look again. Only then reply.
-5. Reply with what changed, sticky by sticky, in two or three lines each, plus anything you
-   could not settle from the sources. Do not restate the slides.
-6. "Promote the draft to dated version": `bash scripts/promote.sh <deck>-draft.pptx`
+   under the band below it. Fix, re-render, look again.
+5. Review: `slide-review` in a fresh agent, scoped to the slides this round touched plus
+   the titles-only pass (SKILL.md step 6 has the brief). Fix what it finds, re-render, and
+   send the changed slides back for one recheck. His stickies and retyped wording outrank
+   a finding: where they clash, keep his and say so. Only then reply.
+6. Reply with what changed, sticky by sticky, in two or three lines each, then the review
+   line (verdict, fixed, left and why), plus anything you could not settle from the
+   sources. Do not restate the slides.
+7. "Promote the draft to dated version": `bash scripts/promote.sh <deck>-draft.pptx`
    renames the deck and its build script to `<deck>-<YYYY-MM-DD>` and moves the render
    folder aside (nothing is deleted; the script prints where it went). The next round's
    stickies land on the dated file; promote again and the date is replaced.

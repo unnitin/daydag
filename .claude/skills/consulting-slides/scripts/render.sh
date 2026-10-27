@@ -44,3 +44,11 @@ if [ -e "$out" ]; then
 fi
 mv "$work" "$out"
 ls -1 "$out"/page-*.jpg
+
+# A build is not handed over until slide-review has read it (SKILL.md step 6). Said here
+# because this script runs after every build; a review's own render of a scratch copy
+# lands under a temp folder and does not need the reminder.
+case "$dir" in
+  /tmp/* | /private/tmp/* | /var/folders/* | "${TMPDIR:-/nonexistent}"*) ;;
+  *) echo "next: slide-review in a fresh agent before handing this over (consulting-slides step 6)" ;;
+esac

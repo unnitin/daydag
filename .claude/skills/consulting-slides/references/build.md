@@ -104,7 +104,11 @@ one or two complex exhibits, not for a 25-slide deck.
 
 - Save under `${DECKS_DIR}/<project>/` (both from `.env`), or the folder the user names.
   Never into the templates folder.
+- Review first: every build goes through `slide-review` in a fresh agent before it is
+  handed over (SKILL.md step 6). `render.sh` prints a reminder after every render of a
+  deck outside a temp folder.
 - Hand back the `.pptx` path and the rendered page images for the slides changed in this
-  pass, with the one or two things to check named by page number.
+  pass, the review's verdict with what was fixed and what was left, and the one or two
+  things to check named by page number.
 - Fonts: the deck names Trebuchet MS, which ships with Office. If it is ever opened on a
   machine without it, Calibri substitutes cleanly.
