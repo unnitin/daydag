@@ -336,24 +336,33 @@ DAYDAG_POST=no scripts/morning.sh      # a dry run now: renders, posts nothing
 ```
 
 launchd does not call `morning.sh` itself: a bare launchd shell cannot read
-`~/Documents` or iCloud. It runs a copy of `scripts/morning-gate.sh` from
+`~/Documents` or iCloud Drive. It runs a copy of `scripts/morning-gate.sh` from
 `~/.local/state/daydag` every 15 minutes between 06:43 and 09:58, and the gate
-opens the real run in your terminal app only when the Mac is awake in that
-window and today's brief has not shipped. So a Mac asleep at 06:43 gets the
-brief at the first slot after it wakes, never at night (2026-10-15's ran at
-23:08 under the old job; 10/16 and 10/19 never ran), and a failing run stops
-after three tries. A lock older than three hours counts as a dead run. No sudo
-and no scheduled wake are involved. `DAYDAG_GATE_DRY=1 scripts/morning-gate.sh`
-prints the decision it would make.
+opens the real run headless - in "DayDAG Morning.app", a faceless app the
+installer builds beside the gate from `scripts/morning-launcher.c` - only when
+the Mac is awake in that window and today's brief has not shipped. So a Mac
+asleep at 06:43 gets the brief at the first slot after it wakes, never at night
+(2026-10-15's ran at 23:08 under the old job; 10/16 and 10/19 never ran), and a
+failing run stops after three tries. A lock older than three hours counts as a
+dead run. No sudo and no scheduled wake are involved. `DAYDAG_GATE_DRY=1
+scripts/morning-gate.sh` prints the decision it would make.
+
+The app exists for one reason: macOS attributes a file access to the process it
+holds responsible, and keys the grant to that process. The app runs `morning.sh`
+as its child and waits, so the grant it asks for - Documents folder and iCloud
+Drive, two prompts the installer triggers with a probe run while you are at the
+keyboard - covers the whole morning, every morning, with no window. Until
+2026-10-28 the gate opened the run in a terminal app instead, borrowing its
+grant; the terminal spawned no shell while the screen was locked (10/22, 10/23
+and 10/28 all ran hours late) and closing its window killed the run. If the
+probe reports `denied`, allow the app under System Settings > Privacy &
+Security > Files and Folders and rerun the installer; `scripts/morning.sh
+--probe` runs the same checks by hand.
 
 Each run appends to `~/.local/state/daydag/runs/morning-<date>.log`, with the
-payloads it fetched beside it; the gate's own lines go to `runs/launchd.log`.
-It runs on this machine, not in the cloud, because it reads your vault and the
-event log, which only this machine has. It opens in your terminal app
-(Ghostty by default; `DAYDAG_TERMINAL=<app>` at install picks another): macOS
-gives a bare launchd job no access to `~/Documents` or iCloud Drive, and the
-terminal you already use for this repo has both, so a window opens at 06:43
-and closes when the run ends.
+payloads it fetched beside it; the gate's and the app's own lines go to
+`runs/launchd.log`. It runs on this machine, not in the cloud, because it reads
+your vault and the event log, which only this machine has.
 
 ## Honest status
 
