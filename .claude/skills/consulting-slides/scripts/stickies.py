@@ -40,9 +40,10 @@ def shapes(xml: str):
         # the fill lives in <p:spPr> (PowerPoint may give it attributes); a search that
         # runs past it picks up text colours instead
         sppr = re.search(r"<p:spPr[^>]*>(.*?)</p:spPr>", sp, flags=re.S)
-        fill = re.search(
-            r'<a:solidFill><a:srgbClr val="([0-9A-Fa-f]{6})"', sppr.group(1) if sppr else ""
-        )
+        # the outline (<a:ln>) has its own solidFill: a shape with no fill and a yellow
+        # outline is not a sticky
+        own = re.sub(r"<a:ln\b.*?</a:ln>", "", sppr.group(1) if sppr else "", flags=re.S)
+        fill = re.search(r'<a:solidFill><a:srgbClr val="([0-9A-Fa-f]{6})"', own)
         off = re.search(r'<a:off x="(\d+)" y="(\d+)"', sp)
         paras = []
         for p in re.findall(r"<a:p>.*?</a:p>|<a:p .*?</a:p>", sp, flags=re.S):

@@ -35,10 +35,16 @@ loop is cheap for him and exact for you; follow it rather than inventing a revie
    from the script next round.
 4. Rebuild, render with `scripts/render.sh`, and look at every page. Three defects recur:
    bullets spilling below a panel, value labels running off a bar, a table or panel sliding
-   under the band below it. Fix, re-render, look again. Only then reply.
-5. Reply with what changed, sticky by sticky, in two or three lines each, plus anything you
-   could not settle from the sources. Do not restate the slides.
-6. "Promote the draft to dated version": `bash scripts/promote.sh <deck>-draft.pptx`
+   under the band below it. Fix, re-render, look again.
+5. Review: `slide-review` in a fresh agent, scoped to the slides this round touched plus
+   the titles-only pass (SKILL.md step 6 has the brief). Run `drift.py` against his file
+   again before rebuilding with the fixes, since he may have saved during the review; then
+   fix, re-render, and send the changed slides back for one recheck. His stickies and retyped wording outrank
+   a finding: where they clash, keep his and say so. Only then reply.
+6. Reply with what changed, sticky by sticky, in two or three lines each, then the review
+   line (verdict, fixed, left and why), plus anything you could not settle from the
+   sources. Do not restate the slides.
+7. "Promote the draft to dated version": `bash scripts/promote.sh <deck>-draft.pptx`
    renames the deck and its build script to `<deck>-<YYYY-MM-DD>` and moves the render
    folder aside (nothing is deleted; the script prints where it went). The next round's
    stickies land on the dated file; promote again and the date is replaced.
@@ -92,7 +98,7 @@ time and edited by him in Obsidian:
   condition are applied with the condition echoed in the reply, so an assumption with an
   expiry is visible on every round.
 - **Checkable rows are enforced.** `"A", never "B"` becomes a scan of the build script for
-  B; a `never ... emoji` row scans for emoji. `python -m daydag.style check` runs both.
+  B; a `never ... emoji` row scans for emoji. `.venv/bin/python -m daydag.style check` runs both.
 - **Promotion needs evidence.** A rule starts at the narrowest scope the sticky supports.
   Seen again on a second project, it is proposed for `house`; a house rule he never
   overrides is a candidate for this skill's references. A project that needs an exception

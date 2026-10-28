@@ -10,6 +10,7 @@ All planning work is orchestrated from this repo. Four skills were copied **verb
 | `weekly-progress-reporting` | backward-looking: Goals & Progress doc + highlights email | Cowork skills-plugin (live) |
 | `weekly-feedback-scan` | private weekly VP feedback log for VP-AI & VP-Data → Drive | Cowork skills-plugin (live) |
 | `consulting-slides` | BCG-style decks and slides as `.pptx`: storyline, anatomy, charts, pattern library, a pptxgenjs helper library, the sticky feedback loop, and the style rules it writes through to `DayDAG/Style.md`; not orchestrated by DayDAG | this repo, 2026-10-10 |
+| `slide-review` | runs on every `consulting-slides` build, in a fresh agent, before the deck is handed over (and by hand on any deck); adversarial content review of a deck or slide: titles-only read against Minto's pyramid, one idea per slide proved by its exhibit, the visual build across slides, a sceptic's attack on the numbers; findings by page with a fix each, never edits; `scripts/outline.py` reads a `.pptx` as titles, bodies, figures and sources | this repo, 2026-10-25 |
 | `expenses` | receipts out of Gmail and into Rippling Spend's receipts inbox, after his go per batch; Amex reconciliation; `sensitivity: private`, nothing in the vault | this repo, 2026-10-15 |
 
 ## Every skill here carries a `daydag:` manifest
