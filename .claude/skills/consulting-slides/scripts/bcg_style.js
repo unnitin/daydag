@@ -22,7 +22,9 @@
  *
  * Components: cover, divider, content, panel, quoteSlide, execSummary, columns, cards,
  * kpis, table, chevrons, timelineQuarters, nextSteps, boxPanel, twoCols, hub, stages, barsH,
- * chart, takeaway, callout, bigNumber, bulletList, text, rule, icon, icons.
+ * chart, takeaway, callout, light, lightLegend, bigNumber, bulletList, text, rule, icon, icons.
+ * Traffic lights: `light('good' | 'watch' | 'bad' | 'none')` is a table cell (soft fill, no
+ * word); `lightLegend(s, [[level, label], ...], { y })` draws the one legend under the table.
  *
  * Shapes the helpers do not cover (an arrow band, a pointer triangle, an odd rectangle) are
  * one line of pptxgenjs through `deck.pres.ShapeType`; see the revenue domain build script
@@ -372,6 +374,24 @@ function createDeck(meta) {
     s.slide.addText(textStr, textOpts({ x: b.x + 0.25, y, w: b.w - 0.5, h, fontSize: o.size || S.body, bold: true, color: o.dark ? C.white : C.ink, valign: 'middle' }));
   }
 
+  // Traffic lights: a status cell is a soft fill with no word in it, and one legend under the exhibit names
+  // each colour; the reason goes in its own column. Levels: good, watch, bad, none.
+  const LIGHTS = { good: C.lightGood, watch: C.lightWatch, bad: C.lightBad, none: C.rule };
+  function light(level) {
+    return { text: '', options: { fill: { color: LIGHTS[level] || LIGHTS.none } } };
+  }
+
+  function lightLegend(s, items, o) {
+    o = o || {}; const b = s.body; const sw = 0.2; const size = o.size || S.small;
+    let x = o.x == null ? b.x : o.x; const y = o.y == null ? b.y + b.h - 0.3 : o.y;
+    items.forEach(([level, label]) => {
+      const col = LIGHTS[level] || LIGHTS.none; const w = label.length * size * 0.006 + 0.1;
+      s.slide.addShape(pres.ShapeType.rect, { x, y: y + 0.05, w: sw, h: sw, fill: { color: col }, line: noLine(col) });
+      s.slide.addText(label, textOpts({ x: x + sw + 0.08, y, w, h: 0.3, fontSize: size, color: C.ink, valign: 'middle' }));
+      x += sw + 0.08 + w + 0.25;
+    });
+  }
+
   function callout(s, o) {
     s.slide.addShape(pres.ShapeType.roundRect, { x: o.x, y: o.y, w: o.w, h: o.h || 0.36, rectRadius: 0.1, fill: { color: o.fill || C.bright }, line: noLine(o.fill || C.bright) });
     s.slide.addText(o.text, textOpts({ x: o.x, y: o.y, w: o.w, h: o.h || 0.36, fontSize: o.size || S.small, bold: true, color: o.color || C.white, align: 'center', valign: 'middle' }));
@@ -488,7 +508,7 @@ function createDeck(meta) {
     return file;
   }
 
-  return { pres, T, C, S, box, sub, cover, divider, content, panel, quoteSlide, execSummary, columns, cards, kpis, table, chevrons, timelineQuarters, nextSteps, boxPanel, twoCols, takeaway, callout, bigNumber, barsH, chart, hub, stages, bulletList, text, rule, icon, icons, save, pages: () => pageCount };
+  return { pres, T, C, S, box, sub, cover, divider, content, panel, quoteSlide, execSummary, columns, cards, kpis, table, chevrons, timelineQuarters, nextSteps, boxPanel, twoCols, takeaway, callout, light, lightLegend, bigNumber, barsH, chart, hub, stages, bulletList, text, rule, icon, icons, save, pages: () => pageCount };
 }
 
 module.exports = { createDeck, THEME: T };

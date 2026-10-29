@@ -18,6 +18,9 @@
     "amber": "C8891A",
     "amberTint": "FBF0DC",
     "red": "B23A48",
+    "lightGood": "BFE3CF",
+    "lightWatch": "F3DDA6",
+    "lightBad": "EBBAC0",
     "white": "FFFFFF"
   },
   "sizes": {
