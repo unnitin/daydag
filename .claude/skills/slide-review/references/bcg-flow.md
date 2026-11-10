@@ -167,7 +167,8 @@ Review for each slide:
 2. Cover the body. Does the title alone state a claim someone could disagree with?
 3. Cover the title. Does the exhibit alone point to the same claim, by its highlight?
 4. Is there anything on the slide that neither the title nor the proof needs? Cut it or
-   move it.
+   move it: where it moves (note line, speaker notes, the reply) is consulting-slides
+   `references/detail-placement.md`.
 
 ## 4. Building a point across slides
 

@@ -94,6 +94,10 @@ the skill's scripts, which need only the standard library.
    - an exhibit type that matches the comparison the title makes;
    - nothing in the bottom bullets or notes that undoes the title;
    - a source for every figure;
+   - nothing in its text that belongs off it: the mechanism behind a number, the trail
+     (thread, meeting, who agreed what), an ask with an owner and a date, a note to him,
+     or a line another element already says. The tiers and the per-sentence test are in
+     consulting-slides `references/detail-placement.md`;
    - its kind (key message or detail slide) matched to where it sits (main flow or
      appendix).
 
@@ -143,6 +147,17 @@ the skill's scripts, which need only the standard library.
      Severity follows the effect on the argument, not the page's location. A
      contradiction in the appendix is major. It is a blocker when the figure is quoted
      in the main flow, or belongs there.
+
+     **Detail off its tier** is reported as a move, naming the words that go, where they
+     go, and what the slide keeps:
+     `p.2 · minor · "At first reviewers take a third of the gap out of offers: about 7%
+     less capital" is the mechanism, not the claim · CFO: "which number do I hold you
+     to?" · move it to the notes; the row keeps "so a contract can carry up to 20% less
+     capital" and the impact column keeps "7-20%"`.
+     It is major when it buries the one number on a summary page, or when an ask or a
+     note to him sits on the copy that goes to the audience. Blue 'to confirm' boxes on a
+     draft round are his drafting aid, not a finding; the outline's bracketed-ask flag
+     is a question, confirmed by reading the line.
    - **Rolled up**: the minor items, one line each.
    - **Live checks**: what was verified, against what, and what could not be checked.
    - **The title sequence after the fixes**, when any title changed or a slide moved: the
