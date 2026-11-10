@@ -114,8 +114,9 @@ Read the reference that matches the step you are on; they are short:
 
 7. **Iterate through stickies.** He answers with yellow text boxes on the slides, and by
    retyping headings in place. Each round: back up his version, list the stickies, run
-   `scripts/drift.py` against your last build to catch what he retyped, carry both into
-   the script, rebuild, render, look at every page, review (step 6), reply sticky by
+   `scripts/drift.py` against your last build to catch what he retyped, reformatted or
+   moved, carry all of it into the script, rebuild, drift his file against the new build
+   (only this round's changes may remain), render, look at every page, review (step 6), reply sticky by
    sticky. When he says
    "promote", `scripts/promote.sh` turns the draft into a dated file. Neither script
    deletes anything: render output lives in one marked folder, and an old one is moved

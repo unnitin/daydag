@@ -54,7 +54,8 @@ deck.save('deck.pptx');
    and picture count; `pattern-library.md` maps messages to slide numbers.
 7. Feedback rounds: `python3 <skill>/scripts/stickies.py <deck>.pptx` lists his yellow
    stickies with slide and position; `python3 <skill>/scripts/drift.py <his>.pptx <last-build>.pptx`
-   lists what he retyped in place; `bash <skill>/scripts/promote.sh <deck>-draft.pptx`
+   lists what he changed in place: retyped text, formatting (size, bold, colour, highlight,
+   alignment), and boxes he moved, resized or deleted; `bash <skill>/scripts/promote.sh <deck>-draft.pptx`
    renames deck and script to the dated version and moves the render folder aside. Neither
    script deletes: a render folder is only moved, and only when it carries the marker, so
    a same-named folder of his is never touched. Details in `feedback-loop.md`.

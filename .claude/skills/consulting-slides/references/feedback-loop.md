@@ -21,10 +21,19 @@ loop is cheap for him and exact for you; follow it rather than inventing a revie
 1. `python3 scripts/stickies.py <deck>.pptx` lists the yellow (`FFFF00`) text boxes with
    slide number, position and text. Position tells you what the sticky points at (a sticky
    at the status strip is about the status strip).
-   Then `python3 scripts/drift.py <his-version>.pptx <your-last-build>.pptx`: he also retypes
-   headings and cells in place, and says nothing about it. Every text box that differs from
-   what you gave him is feedback; carry his wording into the build script before applying
-   the stickies, or the rebuild silently overwrites it (it did, on 11 Oct 2026, five headings).
+   Then `python3 scripts/drift.py <his-version>.pptx <your-last-build>.pptx`: he also edits
+   in place and says nothing about it. Every difference it prints is feedback, and all of it
+   goes into the build script before applying the stickies, or the rebuild silently
+   overwrites it (five retyped headings on 11 Oct 2026; a recoloured impact number and three
+   moved boxes on 10 Nov 2026). It reports:
+   - **text** he retyped, added or deleted, including a box or a blue box he deleted;
+   - **formatting** on text that reads the same: size, bold, italic, underline, colour,
+     highlight, alignment. A number he turned from bright to dark green is a call about
+     which number the slide highlights; carry the property, not just the words;
+   - **a box he moved or resized**, or whose fill he changed: carry the new position.
+   A slide where most boxes differ, or with shapes named by another app ("Google Shape"),
+   is a slide he pasted or rebuilt by hand. It is his: reproduce it in the script before
+   the next rebuild, or do not rebuild that deck; never overwrite it.
    Keep a dated copy of every build you hand over and of every file he hands back (in your
    state folder, not beside his deck) so the next diff has its base.
 2. Copy the sticky version to your scratch folder before touching anything, so his words
@@ -33,7 +42,11 @@ loop is cheap for him and exact for you; follow it rather than inventing a revie
    ("create an option of a slide with X and another with Y"), build both as separate slides
    with "option A" and "option B" in the tracker; he deletes the loser and you remove it
    from the script next round.
-4. Rebuild, render with `scripts/render.sh`, and look at every page. Three defects recur:
+4. Rebuild, render with `scripts/render.sh`, and look at every page. If his file is the
+   one the script writes and he may have it open, build to a scratch path first (`OUT=`
+   if the script takes it). Then prove the carry-forward: `drift.py <his file> <new build>`
+   must show only what this round meant to change (the stickies, the fixes). Any other
+   line is one of his edits the script lost: put it in the script and build again. Three defects recur:
    bullets spilling below a panel, value labels running off a bar, a table or panel sliding
    under the band below it. Fix, re-render, look again.
 5. Review: `slide-review` in a fresh agent, scoped to the slides this round touched plus
