@@ -71,6 +71,7 @@ artifact is the load-bearing rule; the rest is plumbing.
 | `call_notes` | The ingest sweep (idempotent on the gmail message id) and the EOD calls section: attendance per note, provenance on every line, ranked priorities; actionable items recorded for the `State.md` chase list (#180) |
 | `style` | What his feedback taught, as rows he edits in `DayDAG/Style.md`: scope by section, lifetime by `holds`, the checkable ones enforced at build |
 | `team_practices` | The team's "How we work" metrics: ticket coverage today, reviews and ownership next. No author, anywhere |
+| `cost` | The bill from the billing tables in one shape (day, line, amount): monthly pace by service against a base week, a lever's before and after on its own resource, a day's movers; one-offs leave only by name, commits are not usage, read only |
 | `expenses` | Receipts into Ramp (Rippling until 2026-10-18): sources in (Uber parsed against real mail, the rest by a generic rule), one forward to the reimbursements inbox after his go, labelled and logged so nothing is offered twice; Amex reconciles, never files |
 | `expenses_ramp` | Ramp through its connector: the saved answer read against the ledger (`ramp-check`, pending total vs expected with trip and GL flags), local receipt files staged as upload link, curl from disk, create with explicit fields, edit (`ramp-stage`); coding UUIDs from .env; nothing sends, submit is his own go |
 
