@@ -94,6 +94,12 @@ MONTH = (
 )
 YEAR = r"(?:,?\s(\d{4}))?"
 DATE = re.compile(rf"\b(\d{{1,2}})\s({MONTH}){YEAR}|\b({MONTH})\s(\d{{1,2}})\b(?![\d.,]\d){YEAR}")
+# a bracket in slide text that names a who and a when ("[ops lead, 4 Dec]") or starts
+# with "ask" is a chase-list item; "[Mon]" or "[owner]" holding a value's place is not
+BRACKET = re.compile(r"\[([^\[\]]{2,80})\]")
+WHEN = re.compile(
+    rf"\b{MONTH}|\bQ[1-4]\b|^(?i:mon|tues?|wed(?:nes)?|thu(?:rs)?|fri|sat(?:ur)?|sun)(?i:day)?\.?$"
+)
 # a column of deadlines: named as one, or a bare "When"/"Date"/"By" in a plan table
 DUE_HEADER = re.compile(r"\b(due|deadline|eta|by when|target date)\b", re.I)
 WHEN_HEADER = re.compile(r"^\s*(when|date|by)\s*$", re.I)
@@ -302,6 +308,24 @@ def past_due(text: str, today: date) -> list[str]:
     return out
 
 
+def bracketed_asks(text: str) -> list[str]:
+    """The brackets in `text` that carry an ask: an owner and a date, or "ask ...".
+
+    "[ops lead, 4 Dec]" and "[ask Finance]" are returned; a placeholder for a value still
+    due ("[Mon]", "[by 4 Dec]", "[owner]", "[Thu, 13 Nov]") is not, nor is a bracket with
+    no date in it ("[$2.1M, estimate]").
+    """
+    out = []
+    for m in BRACKET.finditer(text):
+        inner = m.group(1).strip()
+        parts = [p.strip() for p in re.split(r"[,:;]", inner) if p.strip()]
+        dated = [p for p in parts if WHEN.search(p)]
+        who = [p for p in parts if p not in dated and re.search(r"[A-Za-z]", p)]
+        if re.match(r"ask\b", inner, re.I) or (dated and who):
+            out.append(m.group(0))
+    return out
+
+
 def norm(f: str) -> str:
     return re.sub(r"[\s,~≈]", "", f).lower().replace("\u00d7", "x")
 
@@ -388,6 +412,13 @@ def flag(slides: list[dict], today: date) -> None:
         )
         if hedges:
             f.append("hedges (" + ", ".join(hedges) + "): say it or cut it?")
+        cells = [c for tb in s["tables"] for r in tb["rows"] for c in r]
+        asks = list(dict.fromkeys(a for x in [*lines, *cells] for a in bracketed_asks(x)))
+        if asks:
+            f.append(
+                "bracketed ask in slide text (" + ", ".join(asks[:3]) + "): a chase-list item "
+                "for the reply, with only the status word left on the slide?"
+            )
         fills = sum(c.startswith("[fill ") for tb in s["tables"] for r in tb["rows"] for c in r)
         if fills:
             f.append(f"{fills} table cells carry only a colour: status by colour alone?")

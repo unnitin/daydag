@@ -28,6 +28,7 @@ Read the reference that matches the step you are on; they are short:
 | Which layout for which message, and the template slide to copy | `references/pattern-library.md` |
 | Generating, rendering, checking and delivering the file | `references/build.md` |
 | Working from his deck, reading his stickies, promoting dated versions, what each round keeps | `references/feedback-loop.md` |
+| Which detail stays on the slide, and which goes to the note line, the speaker notes or the reply | `references/detail-placement.md` |
 
 ## The process
 
@@ -169,3 +170,5 @@ Read the reference that matches the step you are on; they are short:
 - No text below 8 pt; no overflow; no mid-word breaks (render and look, do not assume).
 - Every data slide has a source; every acronym is expanded once; units appear once.
 - The one bright-green element on each slide is the thing the reader must see.
+- No asks, notes to him, play by play or trail in slide text; the qualifier that changes
+  how a number reads stays beside it (`references/detail-placement.md`).
