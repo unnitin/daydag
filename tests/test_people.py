@@ -468,3 +468,23 @@ def test_the_org_domain_falls_back_to_the_principals_address(directory):
 
     assert audience.has_external(["rdinh@vendor.example"])
     assert not audience.has_external(["wren@example.com"])
+
+
+def test_a_nickname_finds_the_person_and_leaves_the_name_alone(tmp_path):
+    """He calls people by short names ("Ren" for Lorenzo) and types them on slides.
+
+    The first fix put the nickname inside the display name, which made every
+    brief print "Lorenzo Vale (Ren)". A nickname is a lookup handle, not a name.
+    """
+    log = tmp_path / "events.db"
+    People(EventLog.open(log)).remember(
+        "eng-sr", email="lorenzo.vale@example.com", display_name="Lorenzo Vale", source=STATED
+    )
+    People(EventLog.open(log)).remember("eng-sr", nickname="Ren", source=STATED)
+
+    reloaded = People(EventLog.open(log))
+
+    assert reloaded.resolve("ren").key == "eng-sr"
+    assert reloaded.resolve("lorenzo vale").key == "eng-sr"
+    assert reloaded.resolve("eng-sr").display_name == "Lorenzo Vale"
+    assert reloaded.resolve("eng-sr").nickname == "Ren"

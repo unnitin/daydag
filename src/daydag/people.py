@@ -113,6 +113,8 @@ class Person:
     slack_id: str | None = None
     display_name: str | None = None
     title: str | None = None
+    #: What he calls them ("Ren"): matched by `resolve`, never shown in place of the name.
+    nickname: str | None = None
     #: The DM channel between this person and the principal.
     dm: str | None = None
     #: Channels and group DMs they are tracked in.
@@ -153,6 +155,7 @@ class People:
         slack_id: str | None = None,
         display_name: str | None = None,
         title: str | None = None,
+        nickname: str | None = None,
         dm: str | None = None,
         groups: Sequence[str] = (),
         leadership: bool | None = None,
@@ -178,6 +181,7 @@ class People:
             ("slack_id", slack_id),
             ("display_name", display_name),
             ("title", title),
+            ("nickname", nickname),
             ("dm", dm),
             ("leadership", leadership),
         ):
@@ -287,6 +291,8 @@ class People:
                 known |= _name_tokens(address)
             if person.display_name:
                 known |= _tokens(person.display_name)
+            if person.nickname:
+                known |= _tokens(person.nickname)
             if wanted <= known:
                 return person
         return None
@@ -313,7 +319,7 @@ class People:
         sources = dict(person.sources)
         changes: dict[str, Any] = {}
 
-        for name in ("slack_id", "display_name", "title", "dm", "leadership"):
+        for name in ("slack_id", "display_name", "title", "nickname", "dm", "leadership"):
             if name not in fact or fact[name] is None:
                 continue
             if _TRUST.get(source, 0) < _TRUST.get(sources.get(name, OBSERVED), 0):
@@ -350,7 +356,7 @@ def _fold(target: Person, other: Person) -> Person:
     """`other`'s facts into `target`, each field keeping the better-sourced value."""
     sources = dict(target.sources)
     changes: dict[str, Any] = {}
-    for name in ("slack_id", "display_name", "title", "dm", "leadership"):
+    for name in ("slack_id", "display_name", "title", "nickname", "dm", "leadership"):
         value = getattr(other, name)
         if value in (None, False, ""):
             continue
@@ -388,7 +394,7 @@ def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     usage = (
         "usage: python -m daydag.people {add|set|show|list} [key] --log PATH\n"
-        "       [--email A] [--slack-id U] [--name N] [--title T]\n"
+        "       [--email A] [--slack-id U] [--name N] [--nickname K] [--title T]\n"
         "       [--dm D] [--group C] [--leadership]"
     )
     if not args or args[0] not in {"add", "set", "show", "list"} or "--log" not in args:
@@ -431,6 +437,7 @@ def main(argv: list[str] | None = None) -> int:
             "emails",
             "slack_id",
             "display_name",
+            "nickname",
             "title",
             "dm",
             "groups",
@@ -454,6 +461,7 @@ def main(argv: list[str] | None = None) -> int:
         slack_id=opt("--slack-id"),
         display_name=opt("--name"),
         title=opt("--title"),
+        nickname=opt("--nickname"),
         dm=opt("--dm"),
         groups=groups,
         leadership=True if "--leadership" in args else None,
