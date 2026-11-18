@@ -56,6 +56,11 @@ COVERED (behavioural - real code, real assertions)
       channel a send can ever name (#10, full coverage in `tests/test_delivery.py`)
     - a message for anyone else is a `Draft`, and no function in `daydag.delivery`
       accepts a `Draft` and a `Transport` together
+    - the billing reads in `daydag.cost` (Databricks through its CLI, BigQuery
+      over HTTPS) turn every failure - a missing CLI, expired auth, a failed
+      statement, an answer that is not JSON, no network, a call that hangs -
+      into one "couldn't check <source>" line, with nothing on stdout that
+      could be read as the bill
 
 TRIPWIRES (no implementation exists - these fail when one lands unguarded)
     - no literal Slack/Gmail/Calendar client call anywhere in `src/daydag/`
@@ -64,9 +69,10 @@ TRIPWIRES (no implementation exists - these fail when one lands unguarded)
       alongside this rather than replacing it
     - no Jira write path (transition, comment, assign)
     - no inbound command surface, so no injection parser and no sender check
-    - no connector client besides the git mirror: every other source is probed
-      through a callable the caller injects (`daydag.smoke`), so nothing in the
-      package can reach a connector on its own
+    - no connector client besides the git mirror and the billing reads in
+      `daydag.cost` (guarded, see COVERED): every other source is probed
+      through a callable the caller injects (`daydag.smoke`), so nothing else
+      in the package can reach a connector on its own
 
 GAPS - not covered here, and not pretended to be
     1. Decisions. The queue that read a "yes"/"no" beside a line retired with
@@ -897,27 +903,122 @@ CONNECTOR_PATTERNS = {
 }
 
 
+#: Modules allowed to hold a connector client, each because a behavioural test
+#: below drives every way its read can fail. Adding a module here without that
+#: test is the failure the tripwire exists to stop.
+GUARDED_CLIENTS = frozenset({"src/daydag/cost.py"})
+
+
 @pytest.mark.guardrail
 def test_no_connector_client_exists_without_a_degrade_path():
-    """TRIPWIRE. No source is read by code that lives in this package.
+    """TRIPWIRE. No source is read by code in this package, except where guarded.
 
     `Mirror.mark_fetch_failed` covers git, and `daydag.smoke` covers everything
-    else - but only over probes the caller injects, so there is still no client
-    here and no failure mode of one to drive. That is what this holds open: the
-    day a real client lands, its degrade path has to be built rather than
-    assumed from the smoke run. Databricks is the case that proves the point,
-    since expired OAuth surfaces there as a schema error rather than an auth
-    error, so "it returned something" is not proof the source was reachable.
+    else - but only over probes the caller injects. `daydag.cost` is the first
+    real client (the billing tables), and it is allowed only because
+    `test_a_billing_read_that_fails_is_one_named_line` drives each way its
+    reads fail. Any client anywhere else still fires this. Databricks is the
+    case that proves the point, since expired OAuth surfaces there as a schema
+    error rather than an auth error, so "it returned something" is not proof
+    the source was reachable.
     """
     _self_check_scanner()
     hits = _scan(CONNECTOR_PATTERNS, include_strings=False)
-    assert not hits, _tripwire(
+    unguarded = [h for h in hits if h.split(":", 1)[0] not in GUARDED_CLIENTS]
+    assert not unguarded, _tripwire(
         "a connector client",
         "every read is wrapped so a failure produces a one-line "
         '"couldn\'t check <source>" in the report and the loop continues - it '
         "never stalls, retries silently, or fills the gap with a guess.",
-        hits,
+        unguarded,
     )
+    stale = [m for m in GUARDED_CLIENTS if not any(h.startswith(f"{m}:") for h in hits)]
+    assert not stale, f"{stale} hold no client any more; take them off GUARDED_CLIENTS"
+
+
+def _billing_failure(kind: str):
+    """(subprocess.run, urlopen) stand-ins that fail the way `kind` names."""
+    import io
+    import json as _json
+    import urllib.error
+
+    def done(args, out="", err="", rc=0):
+        return subprocess.CompletedProcess(args, rc, out, err)
+
+    token = lambda args, **kw: done(args, out="tok")  # noqa: E731
+    never = lambda *a, **kw: pytest.fail("reached the network")  # noqa: E731
+
+    def raise_(exc):
+        def run(*a, **kw):
+            raise exc
+
+        return run
+
+    failed = {"status": {"state": "FAILED", "error": {"message": "PERMISSION_DENIED: USE SCHEMA"}}}
+    denied = urllib.error.HTTPError(
+        "https://x", 403, "Forbidden", {}, io.BytesIO(b'{"error": {"message": "Access Denied"}}')
+    )
+    return {
+        "databricks: CLI missing": (raise_(FileNotFoundError(2, "No such file")), never),
+        "databricks: auth expired": (
+            lambda a, **kw: done(a, err="cannot configure auth", rc=1),
+            never,
+        ),
+        "databricks: statement failed": (lambda a, **kw: done(a, out=_json.dumps(failed)), never),
+        "databricks: not JSON": (lambda a, **kw: done(a, out="<html>login</html>"), never),
+        "databricks: hangs": (raise_(subprocess.TimeoutExpired("databricks", 180)), never),
+        "gcp: gcloud missing": (raise_(FileNotFoundError(2, "No such file")), never),
+        "gcp: ADC expired": (lambda a, **kw: done(a, err="Reauthentication failed", rc=1), never),
+        "gcp: no network": (token, raise_(urllib.error.URLError("nodename nor servname"))),
+        "gcp: denied": (token, raise_(denied)),
+        "gcp: hangs": (token, raise_(TimeoutError("timed out"))),
+    }[kind]
+
+
+BILLING_FAILURES = [
+    "databricks: CLI missing",
+    "databricks: auth expired",
+    "databricks: statement failed",
+    "databricks: not JSON",
+    "databricks: hangs",
+    "gcp: gcloud missing",
+    "gcp: ADC expired",
+    "gcp: no network",
+    "gcp: denied",
+    "gcp: hangs",
+]
+
+
+@pytest.mark.guardrail
+@pytest.mark.parametrize("kind", BILLING_FAILURES)
+def test_a_billing_read_that_fails_is_one_named_line(kind, tmp_path, monkeypatch, capsys):
+    """BEHAVIOURAL. Each way a billing read fails, at the lowest layer it can.
+
+    The CLI and the HTTP call are replaced, not the wrappers around them, so
+    the wrappers are what is under test. A failure must come back as exactly
+    one stderr line naming the source and its reason, exit 2, and nothing on
+    stdout: a half-printed table is a guess at the bill.
+    """
+    from daydag import cost
+
+    run, urlopen = _billing_failure(kind)
+    monkeypatch.setattr(cost.subprocess, "run", run)
+    monkeypatch.setattr(cost.urllib.request, "urlopen", urlopen)
+    env = tmp_path / ".env"
+    env.write_text(
+        "DATABRICKS_WORKSPACE_ID=profile\nDATABRICKS_BILLING_WAREHOUSE_ID=w\n"
+        "GCP_BILLING_EXPORT_TABLE=proj.ds.export\nGCP_BILLING_QUERY_PROJECT=proj\n"
+    )
+    source = kind.split(":")[0]
+
+    assert cost.main([source, "--env", str(env), "--recent", "2026-11-09:2026-11-10"]) == 2
+
+    out, err = capsys.readouterr()
+    assert out == "", "a failed read printed something that reads as the bill"
+    lines = err.splitlines()
+    assert len(lines) == 1, lines
+    assert lines[0].startswith(f"couldn't check {cost.SOURCE_NAMES[source]}: ")
+    assert "Traceback" not in err
 
 
 # --------------------------------------------------------------------------
