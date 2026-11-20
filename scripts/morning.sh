@@ -17,6 +17,11 @@
 set -eu
 cd "${0:A:h}/.."
 
+# The same app also carries the weekend progress-deck refresh: its gate opens the
+# app with --progress-deck (scripts/progress-deck-gate.sh), so that run holds this
+# app's grant too and no second app needs granting. exec keeps it the app's child.
+if [[ "${1:-}" == "--progress-deck" ]]; then shift; exec /bin/zsh scripts/progress-deck.sh "$@"; fi
+
 STATE="$HOME/.local/state/daydag"
 DAY=$(date +%F)
 RUNS="$STATE/runs"
