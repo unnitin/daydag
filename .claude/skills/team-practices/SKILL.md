@@ -30,6 +30,10 @@ The doc's own framing governs the tone of every render: *"not to police anyone -
 so that gaps are visible before they bite"*. A number, the PRs behind it, and a
 link on every line. No adjectives about people.
 
+**First, refresh the local repos** (his call, 2026-11-20: every daily and weekly recap
+does): `.venv/bin/python -m daydag.repos sync --log ~/.local/state/daydag/events.db`.
+A repo it cannot fetch is one line, never a stall.
+
 ## coverage
 
 ```sh
