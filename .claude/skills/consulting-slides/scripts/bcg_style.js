@@ -23,6 +23,11 @@
  * Components: cover, divider, content, panel, quoteSlide, execSummary, columns, cards,
  * kpis, table, chevrons, timelineQuarters, nextSteps, boxPanel, twoCols, hub, stages, barsH,
  * chart, takeaway, callout, light, lightLegend, bigNumber, bulletList, text, rule, icon, icons.
+ * Killer-slide devices (references/killer-concepts.md): bars (vertical, one highlight, split,
+ * brackets, reference line), waterfall (bridge), lines (one series green, the rest grey), quotes
+ * (a wall of short quotes), connector (the green so-what arrow) and soWhat (the conclusion
+ * column after it). kpis takes iconData per item for the K20 ring-and-icon tiles, and
+ * createDeck({ background: 'tint' }) gives content slides the templates' light grey.
  * Traffic lights: `light('good' | 'watch' | 'bad' | 'none')` is a table cell (soft fill, no
  * word); `lightLegend(s, [[level, label], ...], { y })` draws the one legend under the table.
  *
@@ -70,7 +75,9 @@ function createDeck(meta) {
 
   const pageNo = { x: 12.4, y: 6.95, w: 0.45, h: 0.3, fontSize: S.footnote, color: C.grey, fontFace: FONT, align: 'right' };
 
-  pres.defineSlideMaster({ title: 'CONTENT', background: { color: C.white }, objects: [], slideNumber: pageNo });
+  // meta.background 'tint' gives content slides the templates' light grey (F2F2F2) instead of white
+  const contentBg = meta.background === 'tint' ? C.tint : (meta.background || C.white);
+  pres.defineSlideMaster({ title: 'CONTENT', background: { color: contentBg }, objects: [], slideNumber: pageNo });
   pres.defineSlideMaster({ title: 'COVER', background: { color: C.white }, objects: [] });
   pres.defineSlideMaster({ title: 'DIVIDER', background: { color: C.green }, objects: [], slideNumber: Object.assign({}, pageNo, { color: C.white }) });
   pres.defineSlideMaster({ title: 'DARK', background: { color: C.green }, objects: [], slideNumber: Object.assign({}, pageNo, { color: C.white }) });
@@ -165,10 +172,13 @@ function createDeck(meta) {
     const slide = pres.addSlide({ masterName: 'CONTENT' });
     pageCount++;
     const pw = o.panelWidth || 4.4;
-    slide.addShape(pres.ShapeType.homePlate, { x: 0, y: 0, w: pw, h: 7.5, fill: { color: C.green }, line: noLine(C.green) });
+    // a rectangle plus a narrow home plate: the point is 0.6 in deep, as in K10, so the text keeps the full width
+    // (one home plate the panel's width has a point as deep as half its width and runs into the title)
+    slide.addShape(pres.ShapeType.rect, { x: 0, y: 0, w: pw - 0.6, h: 7.5, fill: { color: C.green }, line: noLine(C.green) });
+    slide.addShape(pres.ShapeType.homePlate, { x: pw - 1.2, y: 0, w: 1.2, h: 7.5, fill: { color: C.green }, line: noLine(C.green) });
     if (o.eyebrow) slide.addText(o.eyebrow, textOpts({ x: 0.5, y: 0.5, w: pw - 1.2, h: 0.4, fontSize: S.label, color: C.lime, charSpacing: 2 }));
     slide.addText(o.panelTitle, textOpts({ x: 0.5, y: 1.0, w: pw - 1.3, h: 2.2, fontSize: 24, color: C.white, lineSpacingMultiple: 1.05 }));
-    if (o.panelText) slide.addText(o.panelText, textOpts({ x: 0.5, y: 3.3, w: pw - 1.3, h: 1.8, fontSize: S.body, color: C.white }));   // the wedge narrows below y 5.1
+    if (o.panelText) slide.addText(o.panelText, textOpts({ x: 0.5, y: 3.3, w: pw - 1.3, h: 2.6, fontSize: o.panelTextSize || S.body + 1, color: C.white }));
     if (o.title) slide.addText(o.title, textOpts({ x: pw + 0.3, y: Z.title.y, w: 12.83 - pw - 0.3, h: Z.title.h, fontSize: S.title, color: C.green, valign: 'middle' }));
     if (o.source || o.note) {
       // the footer starts right of the wedge, not at the margin
@@ -278,7 +288,13 @@ function createDeck(meta) {
     items.forEach((it, i) => {
       const cx = b.x + i * cw + cw / 2;
       if (d) {
-        s.slide.addShape(pres.ShapeType.ellipse, { x: cx - d / 2, y: b.y, w: d, h: d, fill: { color: it.fill || C.white }, line: { color: it.color || C.green2, width: 1.5 } });
+        s.slide.addShape(pres.ShapeType.ellipse, { x: cx - d / 2, y: b.y, w: d, h: d, fill: { color: it.fill || C.white }, line: { color: o.ringColor || it.color || C.green2, width: o.ringWidth || 1.5 } });
+        // K20: a line icon sits on the ring's upper-left edge
+        if (it.iconData) {
+          // a disc in the slide's background colour masks the ring behind the icon
+          s.slide.addShape(pres.ShapeType.ellipse, { x: cx - d / 2 - 0.32, y: b.y - 0.32, w: 0.8, h: 0.8, fill: { color: contentBg }, line: noLine(contentBg) });
+          s.slide.addImage({ data: it.iconData, x: cx - d / 2 - 0.25, y: b.y - 0.25, w: 0.66, h: 0.66 });
+        }
         s.slide.addText(it.value, textOpts({ x: cx - d / 2, y: b.y, w: d, h: d, fontSize: it.size || 26, bold: true, color: it.color || C.green, align: 'center', valign: 'middle' }));
         s.slide.addText(it.label, textOpts({ x: cx - cw / 2 + 0.1, y: b.y + d + 0.12, w: cw - 0.2, h: 0.8, fontSize: S.label, color: C.ink, align: 'center' }));
       } else {
@@ -498,6 +514,185 @@ function createDeck(meta) {
     s.slide.addText(runs, textOpts({ x: b.x + pad, y: y + pad, w: b.w - 2 * pad, h: b.y + b.h - y - 2 * pad, fontSize: o.fontSize || S.body - 1, color: o.color || C.ink, paraSpaceAfter: o.space == null ? 6 : o.space }));
   }
 
+  // ---------- killer-slide devices (references/killer-concepts.md) ----------
+
+  // a straight line between two points; pptxgenjs draws lines top-left to bottom-right, so a
+  // rising segment is the same box flipped vertically
+  function seg(s, x1, y1, x2, y2, line) {
+    s.slide.addShape(pres.ShapeType.line, { x: Math.min(x1, x2), y: Math.min(y1, y2), w: Math.abs(x2 - x1), h: Math.abs(y2 - y1),
+      flipV: (x2 - x1) * (y2 - y1) < 0, line });
+  }
+
+  // the so-what arrow (K4, K5, K9, K51): a small green disc with a white chevron, set on the
+  // rule between an exhibit and the conclusion it leads to
+  function connector(s, o) {
+    const d = o.d || 0.34; const a = d * 0.11; const h = d * 0.2;
+    s.slide.addShape(pres.ShapeType.ellipse, { x: o.x - d / 2, y: o.y - d / 2, w: d, h: d, fill: { color: o.color || C.bright }, line: noLine(o.color || C.bright) });
+    const ln = { color: C.white, width: 1.75 };
+    seg(s, o.x - a, o.y - h, o.x + a + 0.01, o.y, ln);
+    seg(s, o.x - a, o.y + h, o.x + a + 0.01, o.y, ln);
+  }
+
+  // the conclusion column: a vertical rule with the connector on it, then a big number and
+  // a line or two of green text (K4 "11% growth", K5, K9, K89). box = the column.
+  function soWhat(s, o) {
+    const b = o.box; const mid = b.y + b.h / 2;
+    s.slide.addShape(pres.ShapeType.line, { x: b.x, y: b.y, w: 0, h: b.h, line: { color: C.rule, width: 1 } });
+    connector(s, { x: b.x, y: mid });
+    const tx = b.x + 0.4; const tw = b.w - 0.4;
+    if (o.value) {
+      s.slide.addText(o.value, textOpts({ x: tx, y: mid - 1.0, w: tw, h: 0.95, fontSize: o.valueSize || 40, bold: true, color: C.bright, valign: 'bottom' }));
+      if (o.label) s.slide.addText(o.label, textOpts({ x: tx, y: mid + 0.02, w: tw, h: 0.4, fontSize: S.label, color: C.grey }));
+      if (o.text) s.slide.addText(o.text, textOpts({ x: tx, y: mid + 0.5, w: tw, h: Math.max(0.1, b.y + b.h - mid - 0.5), fontSize: o.textSize || 15, color: C.green2 }));
+    } else {
+      s.slide.addText(o.text, textOpts({ x: tx, y: b.y, w: tw, h: b.h, fontSize: o.textSize || 16, color: C.green2, valign: 'middle' }));
+    }
+  }
+
+  // an elbow bracket from bar `from` to bar `to` with its label in a pill (G5 "-72%", K10 "+21-32%")
+  function bracket(s, o) {
+    const ln = { color: C.grey, width: 0.75 };
+    seg(s, o.x1, o.y1, o.x1, o.top, ln);
+    seg(s, o.x1, o.top, o.x2, o.top, ln);
+    s.slide.addShape(pres.ShapeType.line, { x: o.x2, y: o.top, w: 0, h: Math.max(0.01, o.y2 - o.top), line: Object.assign({ endArrowType: 'triangle' }, ln) });
+    const w = Math.max(0.8, o.label.length * 0.095 + 0.3);
+    callout(s, { x: (o.x1 + o.x2) / 2 - w / 2, y: o.top - 0.18, w, h: 0.36, text: o.label, size: S.label, fill: o.fill || C.bright });
+  }
+
+  // vertical bars drawn as shapes (K4, G5, G14): grey bars, the one that matters in bright green,
+  // value labels on top, category labels under the axis.
+  //   items: [{ label, value, valueLabel, hi, color }]
+  //   split: index where a second period starts (a dotted divider), splitLabels: ['Historical', 'Plan']
+  //   brackets: [{ from, to, label }]   refLine: { value, label }   trend: true draws a thin arrow over the bars
+  function bars(s, o) {
+    const b = o.box || s.body; const items = o.items; const n = items.length;
+    const labH = 0.4; const top = (o.brackets && o.brackets.length ? 0.75 : 0.35) + (o.splitLabels ? 0.4 : 0);
+    const max = Math.max(o.max || 0, ...items.map(i => i.value), o.refLine ? o.refLine.value : 0, 1e-9);
+    const plotY = b.y + top; const plotH = b.h - top - labH - 0.3;
+    const slot = b.w / n; const bw = Math.min(o.barW || slot * 0.62, 1.4);
+    const base = plotY + plotH;
+    const pos = items.map((it, i) => {
+      const h = Math.max(0.03, plotH * it.value / max); const x = b.x + i * slot + (slot - bw) / 2;
+      return { x, y: base - h, h, cx: x + bw / 2 };
+    });
+    items.forEach((it, i) => {
+      const p = pos[i]; const col = it.color || (it.hi ? C.bright : C.bar);
+      s.slide.addShape(pres.ShapeType.rect, { x: p.x, y: p.y, w: bw, h: p.h, fill: { color: col }, line: noLine(col) });
+      s.slide.addText(it.valueLabel || String(it.value), textOpts({ x: p.cx - slot / 2, y: p.y - 0.32, w: slot, h: 0.3, fontSize: o.valueSize || S.label, bold: !!it.hi, color: it.hi ? C.green : C.ink, align: 'center', valign: 'bottom' }));
+      s.slide.addText(it.label, textOpts({ x: p.cx - slot / 2, y: base + 0.08, w: slot, h: labH, fontSize: o.labelSize || S.label, color: C.grey, align: 'center' }));
+    });
+    rule(s, { x: b.x, y: base, w: b.w, color: C.grey, width: 0.75 });
+    if (o.split != null) {
+      const sx = b.x + o.split * slot;
+      s.slide.addShape(pres.ShapeType.line, { x: sx, y: plotY - 0.2, w: 0, h: base - plotY + 0.2, line: { color: C.grey, width: 0.75, dashType: 'sysDot' } });
+      if (o.splitLabels) {
+        s.slide.addText(o.splitLabels[0], textOpts({ x: b.x, y: b.y, w: sx - b.x - 0.1, h: 0.35, fontSize: S.label, color: C.grey }));
+        s.slide.addText(o.splitLabels[1], textOpts({ x: sx + 0.15, y: b.y, w: b.x + b.w - sx - 0.15, h: 0.35, fontSize: S.label, bold: true, color: C.bright }));
+      }
+    }
+    if (o.refLine) {
+      const ry = base - plotH * o.refLine.value / max;
+      s.slide.addShape(pres.ShapeType.line, { x: b.x, y: ry, w: b.w, h: 0, line: { color: C.green2, width: 1, dashType: 'dash' } });
+      if (o.refLine.label) s.slide.addText(o.refLine.label, textOpts({ x: b.x + b.w - 2.5, y: ry - 0.32, w: 2.5, h: 0.3, fontSize: S.small, color: C.green2, align: 'right', valign: 'bottom' }));
+    }
+    if (o.trend) {
+      const f = pos[0]; const l = pos[n - 1];
+      s.slide.addShape(pres.ShapeType.line, { x: f.cx, y: l.y - 0.55, w: l.cx - f.cx, h: Math.max(0.01, f.y - l.y), flipV: true, line: { color: C.grey, width: 0.75, endArrowType: 'triangle' } });
+    }
+    (o.brackets || []).forEach((bk, k) => {
+      const p1 = pos[bk.from]; const p2 = pos[bk.to];
+      bracket(s, { x1: p1.cx, y1: p1.y - 0.36, x2: p2.cx, y2: p2.y - 0.36, top: Math.min(p1.y, p2.y) - 0.6 - k * 0.45, label: bk.label, fill: bk.fill });
+    });
+    return pos;
+  }
+
+  // a bridge (K6, K10, K72): start total, steps that float from the running total, end total.
+  //   steps: [{ label, value, total: true|false, valueLabel, hi }]  - for a total, value is its height;
+  //   for a step, value is the signed change (draw a range at its midpoint and say the range in valueLabel)
+  //   bracket: { label } spans first to last bar
+  function waterfall(s, o) {
+    const b = o.box || s.body; const st = o.steps; const n = st.length;
+    let run = 0; const spans = st.map(x => {
+      if (x.total) { run = x.value; return { lo: 0, hi: x.value }; }
+      const a = run; run += x.value; return { lo: Math.min(a, run), hi: Math.max(a, run) };
+    });
+    const max = Math.max(...spans.map(p => p.hi), 1e-9);
+    const labH = 0.55; const top = o.bracket ? 0.85 : 0.4;
+    const plotY = b.y + top; const plotH = b.h - top - labH - 0.2; const base = plotY + plotH;
+    const slot = b.w / n; const bw = Math.min(slot * 0.58, 1.3);
+    const yOf = v => base - plotH * v / max;
+    const pos = st.map((x, i) => {
+      const sp = spans[i]; const xx = b.x + i * slot + (slot - bw) / 2;
+      const col = x.color || (x.hi ? C.bright : (x.total ? C.bar : C.rule));
+      s.slide.addShape(pres.ShapeType.rect, { x: xx, y: yOf(sp.hi), w: bw, h: Math.max(0.03, yOf(sp.lo) - yOf(sp.hi)), fill: { color: col }, line: noLine(col) });
+      s.slide.addText(x.valueLabel || String(x.value), textOpts({ x: xx - (slot - bw) / 2, y: yOf(sp.hi) - 0.34, w: slot, h: 0.32, fontSize: o.valueSize || S.label + 1, bold: !!x.hi, color: x.hi ? C.green : C.ink, align: 'center', valign: 'bottom' }));
+      s.slide.addText(x.label, textOpts({ x: xx - (slot - bw) / 2 + 0.05, y: base + 0.08, w: slot - 0.1, h: labH, fontSize: o.labelSize || S.label, color: C.grey, align: 'center' }));
+      if (i < n - 1) {
+        const ry = x.total ? yOf(sp.hi) : yOf(x.value < 0 ? sp.lo : sp.hi);
+        s.slide.addShape(pres.ShapeType.line, { x: xx + bw, y: ry, w: slot - bw, h: 0, line: { color: C.grey, width: 0.5, dashType: 'sysDot' } });
+      }
+      return { cx: xx + bw / 2, y: yOf(sp.hi) };
+    });
+    rule(s, { x: b.x, y: base, w: b.w, color: C.grey, width: 0.75 });
+    if (o.bracket) {
+      const p1 = pos[0]; const p2 = pos[n - 1];
+      bracket(s, { x1: p1.cx, y1: p1.y - 0.38, x2: p2.cx, y2: p2.y - 0.38, top: Math.min(...pos.map(p => p.y)) - 0.62, label: o.bracket.label, fill: o.bracket.fill });
+    }
+    return pos;
+  }
+
+  // lines drawn as shapes (K5 "you have won", K71): the series that matters in bright green and
+  // thick, the rest thin grey, the name at each line's end, values at every point or the ends.
+  //   labels: x categories; series: [{ name, values, hi }]; points: 'all' | 'ends' | 'none'
+  function lines(s, o) {
+    const b = o.box || s.body; const L = o.labels; const n = L.length;
+    const nameW = o.nameW || 1.9; const labH = 0.4;
+    const all = [].concat(...o.series.map(se => se.values.filter(v => v != null)));
+    const max = o.max != null ? o.max : Math.max(...all); const min = o.min != null ? o.min : 0;
+    const plotX = b.x + 0.2; const plotW = b.w - nameW - 0.4; const plotY = b.y + 0.35; const plotH = b.h - 0.35 - labH - 0.15;
+    const xOf = i => plotX + (n === 1 ? plotW / 2 : plotW * i / (n - 1));
+    const yOf = v => plotY + plotH * (1 - (v - min) / Math.max(1e-9, max - min));
+    const base = plotY + plotH;
+    rule(s, { x: b.x, y: base, w: plotW + 0.4, color: C.grey, width: 0.75 });
+    L.forEach((l, i) => s.slide.addText(l, textOpts({ x: xOf(i) - 0.6, y: base + 0.08, w: 1.2, h: labH, fontSize: S.label, color: C.grey, align: 'center' })));
+    const order = o.series.slice().sort((a, c) => (a.hi ? 1 : 0) - (c.hi ? 1 : 0));   // the highlight draws last, on top
+    order.forEach(se => {
+      const col = se.hi ? C.bright : C.bar; const ln = { color: col, width: se.hi ? 2.75 : 1.25 };
+      const pts = se.values.map((v, i) => v == null ? null : [xOf(i), yOf(v), v]).filter(Boolean);
+      for (let i = 1; i < pts.length; i++) seg(s, pts[i - 1][0], pts[i - 1][1], pts[i][0], pts[i][1], ln);
+      const mode = se.points || o.points || 'all';
+      pts.forEach((p, i) => {
+        const show = mode === 'all' || (mode === 'ends' && (i === 0 || i === pts.length - 1));
+        if (!show) return;
+        // a valley (lower than both neighbours) takes its label below, clear of the line climbing out of it
+        const valley = i > 0 && i < pts.length - 1 && p[2] < pts[i - 1][2] && p[2] < pts[i + 1][2];
+        const under = se.below || valley;
+        const lbl = se.format ? se.format(p[2]) : (o.format ? o.format(p[2]) : String(p[2]));
+        s.slide.addText(lbl, textOpts({ x: p[0] - 0.55, y: p[1] - (under ? -0.08 : 0.34), w: 1.1, h: 0.28, fontSize: se.hi ? S.label + 1 : S.small, bold: !!se.hi, color: se.hi ? C.green : C.grey, align: 'center', valign: under ? 'top' : 'bottom' }));
+      });
+      const last = pts[pts.length - 1];
+      s.slide.addText(se.name, textOpts({ x: plotX + plotW + 0.3, y: last[1] - 0.25 + (se.nameDy || 0), w: nameW, h: 0.5, fontSize: se.hi ? S.body - 1 : S.label, bold: !!se.hi, color: se.hi ? C.green : C.grey, valign: 'middle' }));
+    });
+  }
+
+  // a wall of short quotes (K59): who on top where the logo sat, a dotted rule with a green quote
+  // mark on it, the words beneath. items: [{ who, role, quote }]
+  function quotes(s, items, o) {
+    o = o || {}; const b = o.box || s.body; const cols = o.cols || 2; const rows = Math.ceil(items.length / cols);
+    const gx = 0.6; const gy = 0.35; const cw = (b.w - gx * (cols - 1)) / cols; const ch = (b.h - gy * (rows - 1)) / rows;
+    items.forEach((it, i) => {
+      const x = b.x + (i % cols) * (cw + gx); const y = b.y + Math.floor(i / cols) * (ch + gy);
+      s.slide.addText([{ text: it.who, options: { bold: true, color: C.green, breakLine: !!it.role } }].concat(it.role ? [{ text: it.role, options: { color: C.grey, fontSize: S.small } }] : []),
+        textOpts({ x, y, w: cw, h: 0.6, fontSize: S.label + 1, align: 'center', valign: 'bottom' }));
+      const ry = y + 0.78;
+      s.slide.addShape(pres.ShapeType.line, { x, y: ry, w: cw, h: 0, line: { color: C.bar, width: 0.75, dashType: 'sysDot' } });
+      const d = 0.3;
+      s.slide.addShape(pres.ShapeType.ellipse, { x: x + cw / 2 - d / 2, y: ry - d / 2, w: d, h: d, fill: { color: C.bright }, line: noLine(C.bright) });
+      s.slide.addText('“', textOpts({ x: x + cw / 2 - d / 2, y: ry - d / 2 + 0.04, w: d, h: d, fontSize: 16, bold: true, color: C.white, align: 'center', valign: 'middle' }));
+      s.slide.addText(it.quote, textOpts({ x, y: ry + 0.25, w: cw, h: Math.max(0.1, y + ch - ry - 0.3), fontSize: o.size || 15, color: C.ink, align: 'center', lineSpacingMultiple: 1.15 }));
+    });
+  }
+
   async function icon(s, o) {
     const data = await iconData(o.name, o.color);
     s.slide.addImage({ data, x: o.x, y: o.y, w: o.size || 0.5, h: o.size || 0.5 });
@@ -508,7 +703,7 @@ function createDeck(meta) {
     return file;
   }
 
-  return { pres, T, C, S, box, sub, cover, divider, content, panel, quoteSlide, execSummary, columns, cards, kpis, table, chevrons, timelineQuarters, nextSteps, boxPanel, twoCols, takeaway, callout, light, lightLegend, bigNumber, barsH, chart, hub, stages, bulletList, text, rule, icon, icons, save, pages: () => pageCount };
+  return { pres, T, C, S, box, sub, cover, divider, content, panel, quoteSlide, execSummary, columns, cards, kpis, table, chevrons, timelineQuarters, nextSteps, boxPanel, twoCols, takeaway, callout, light, lightLegend, bigNumber, barsH, chart, hub, stages, bulletList, text, rule, icon, icons, connector, soWhat, bracket, bars, waterfall, lines, quotes, save, pages: () => pageCount };
 }
 
 module.exports = { createDeck, THEME: T };
