@@ -25,6 +25,7 @@ Read the reference that matches the step you are on; they are short:
 | Story, titles, executive summary, next steps | `references/storyline.md` |
 | Where things go on a slide, type, colour, numbers | `references/slide-anatomy.md` |
 | Which chart or table proves which message | `references/charts.md` |
+| Which story a killer slide already tells, and the device it draws it with | `references/killer-concepts.md` |
 | Which layout for which message, and the template slide to copy | `references/pattern-library.md` |
 | Generating, rendering, checking and delivering the file | `references/build.md` |
 | Working from his deck, reading his stickies, promoting dated versions, what each round keeps | `references/feedback-loop.md` |
@@ -56,7 +57,11 @@ Read the reference that matches the step you are on; they are short:
 
 3. **Pick a pattern per slide from the message, not the data.** One message, one exhibit.
    A title with "and" is two slides. Text slides still get structure (columns, cards, a
-   numbered list); never prose.
+   numbered list); never prose. First name the story each slide tells (growth, beating the
+   alternative, a business case, a track record, model performance) and look it up in
+   `references/killer-concepts.md`: when a killer slide tells that story, build its concept
+   and its so-what device, then fall back to the abstract layouts in the pattern library.
+   A table is for lookup; a main slide that is a table needs a reason.
 
 4. **Build a look sample first for a new deck** (cover, executive summary, one dense
    slide), render it, show the pages, then fan out. Changing the look after 25 slides
@@ -113,7 +118,11 @@ Read the reference that matches the step you are on; they are short:
 
    A delivery without the review line means this step was skipped.
 
-7. **Iterate through stickies.** He answers with yellow text boxes on the slides, and by
+7. **Iterate through stickies.** Every build is a new versioned file,
+   `<stem>-YYYY-MM-DD-vNN.pptx` (`OUT="$(bash scripts/nextver.sh <deck>.pptx)"`), whatever
+   name he started the deck with; the latest date and highest version is current, and you
+   never write over a file he may have open (`references/feedback-loop.md`, Versions).
+   He answers with yellow text boxes on the slides, and by
    retyping headings in place. Each round: back up his version, list the stickies, run
    `scripts/drift.py` against your last build to catch what he retyped, reformatted or
    moved, carry all of it into the script, rebuild, drift his file against the new build
