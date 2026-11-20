@@ -399,6 +399,35 @@ def test_a_strangers_address_never_folds_into_a_known_person(directory):
     assert stranger is not None and stranger.key != "vp-data" and stranger.dm is None
 
 
+def test_two_strangers_with_the_same_local_part_stay_two_people(directory):
+    """`observe` keyed a new address by its name tokens, so `ben@vendorco.com`
+    and `ben@labelco.com` both minted the key "ben" and became one person with
+    two addresses. Naming one of them then folded the other in as well."""
+    directory.observe(
+        _row("Vendor call", "me@example.com", "ben@vendorco.com"), principal="me@example.com"
+    )
+    directory.observe(
+        _row("Label call", "me@example.com", "ben@labelco.com"), principal="me@example.com"
+    )
+
+    vendor = directory.resolve("ben@vendorco.com")
+    label = directory.resolve("ben@labelco.com")
+    assert vendor.key != label.key
+    assert vendor.emails == ("ben@vendorco.com",)
+    assert label.emails == ("ben@labelco.com",)
+
+
+def test_an_observed_address_never_lands_on_a_stated_key_it_does_not_own(directory):
+    directory.remember("ben", display_name="Ben Stated", leadership=True)
+
+    directory.observe(
+        _row("Vendor call", "me@example.com", "ben@vendorco.com"), principal="me@example.com"
+    )
+
+    assert directory.resolve("ben").emails == ()
+    assert directory.resolve("ben@vendorco.com").key != "ben"
+
+
 def test_an_address_query_never_falls_through_to_name_tokens(directory):
     directory.remember("vp-data", email="wren.alder@example.com", display_name="Wren Alder")
 
