@@ -89,6 +89,10 @@ fi
 rc=0
 {
   echo "== $(date '+%F %T %Z') morning (post: $POST)"
+  # Every local copy of a watched repo first (daydag.repos): the shell runs it,
+  # so the headless run needs no permission for it, and a failure never stops
+  # the brief.
+  .venv/bin/python -m daydag.repos sync --log "$EVENTS" || echo "repos: refresh failed (exit $?)"
   # stdin from /dev/null: headless, there is no terminal to wait on, and a
   # `claude -p` given a closed pipe reads it as an empty prompt and moves on.
   "$CLAUDE" -p "$PROMPT" --max-turns 80 --output-format text --allowedTools \

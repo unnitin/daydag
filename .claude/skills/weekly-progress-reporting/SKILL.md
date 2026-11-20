@@ -23,6 +23,10 @@ This is the **backward-looking** companion to the `weekly-planning` skill. Plann
 
 > **Audience note (read first):** the report audience is **whoever the most recent send was addressed to — currently Sponsor.** **Former-Sponsor has departed CMG**; Sponsor is the interim sponsor and was added to the thread on the 6/19 send. Always confirm the current recipient from the live thread before drafting (see Threading); never hard-code "Former-Sponsor."
 
+## Before you start: refresh the local repos
+
+In Claude Code, from the daydag repo: `.venv/bin/python -m daydag.repos sync --log ~/.local/state/daydag/events.db` (his call, 2026-11-20: every daily and weekly recap updates the local repos first). It fetches DayDAG's mirror of every `Watchlist.md` repo and fast-forwards his clean working copies; a repo it cannot fetch is one line, never a stall. Skip it when `weekly-planning-and-progress` already ran it this session.
+
 ---
 
 ## The source of truth

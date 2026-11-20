@@ -39,6 +39,14 @@ this file: `SPEC.md` (what each loop does), `ARCHITECTURE.md` (who owns what) an
 
 ## Before anything else
 
+First, **refresh the local repos** (his call, 2026-11-20: every daily and weekly
+recap updates them first): `.venv/bin/python -m daydag.repos sync --log
+~/.local/state/daydag/events.db`. It fetches DayDAG's mirror of every `Watchlist.md`
+repo, clones any new one, and fast-forwards his clean working copies under
+`WORKTREE_DIRS`. It moves no pulse cursor, and a repo it cannot fetch is one line,
+never a stall. The scheduled morning already ran it before Claude started
+(`scripts/morning.sh`), so skip it there.
+
 1. **Re-read state.** `${VAULT_ROOT}/DayDAG/State.md` (chase list, watch items,
    snoozes, open notes-gaps), `Decisions.md` (anything Nitin answered in place since
    the last run - a hand edit is an event and it **wins** over derived state), and
