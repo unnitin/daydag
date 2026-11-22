@@ -24,8 +24,9 @@ CONTRACTS - break one and the guarantee is gone
        shown + counted == total per section.
     4. No list row loses or cuts a link. A row is shortened in what it says,
        never its citation; a row whose words carry a link is shown whole, so
-       every row still passes `brief.unsourced_claims`. (A packed meeting TITLE
-       is cut at `brief.TITLE_CAP` as a title; its row cites the calendar's day.)
+       every row still passes the suite's `unsourced_claims`
+       (`tests/voice_check.py`). (A packed meeting TITLE is cut at
+       `brief.TITLE_CAP` as a title; its row cites the calendar's day.)
     5. Overflow with no other home - overnight, shipping, and gave-up titles -
        goes to ONE thread reply. Every section the DM says is "in the thread"
        keeps its heading there, with the count it really shows; rows the reply

@@ -16,11 +16,10 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from daydag import brief
 from daydag.pulse import Mirror, Pulse
 from daydag.state import StateFolder
-from daydag.voice import voice_violations
 from daydag.week_ahead import WeekAheadError, assemble
+from voice_check import unsourced_claims, voice_violations
 
 PT = ZoneInfo("America/Los_Angeles")
 
@@ -486,7 +485,7 @@ def test_a_fully_loaded_week_is_evidenced_and_clean_in_the_house_voice(state):
     pushed = _assemble(sources=sources, state=state)
     text = pushed.render()
 
-    assert brief.unsourced_claims(text) == [], f"a claim shipped with no evidence:\n{text}"
+    assert unsourced_claims(text) == [], f"a claim shipped with no evidence:\n{text}"
     assert voice_violations(text) == [], f"broke the house voice:\n{voice_violations(text)}\n{text}"
 
 
@@ -495,7 +494,7 @@ def test_a_thin_week_still_renders_a_short_honest_push():
     pushed = _assemble(sources=FakeSources())
     text = pushed.render()
     assert text.startswith("week ahead")
-    assert brief.unsourced_claims(text) == []
+    assert unsourced_claims(text) == []
     assert voice_violations(text) == []
 
 

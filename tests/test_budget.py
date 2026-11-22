@@ -22,7 +22,7 @@ import heavy_morning as hm
 from daydag import brief, budget, recipes, run
 from daydag.brief import NOT_SHOWN, UNSOURCED, Brief, Section, claim
 from daydag.state import EventLog, StateNotWritable
-from daydag.voice import voice_violations
+from voice_check import unsourced_claims, voice_violations
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -259,7 +259,7 @@ def test_a_heavy_morning_fits_one_message_sourced_and_in_voice(tmp_path, now, ow
 
     assert max(len(head), len(thread)) <= budget.PUSH_BUDGET < budget.SLACK_TEXT_LIMIT
     for part in (head, thread):
-        assert brief.unsourced_claims(part) == []
+        assert unsourced_claims(part) == []
         assert voice_violations(part) == []
 
 
@@ -401,7 +401,7 @@ def test_an_overfull_reply_keeps_every_heading_and_counts_what_it_drops():
     assert named == budget.CAPS["gave-up"], "exactly the titles the reply kept count as said"
     assert gone == {key: 30 - n for key, n in zip(threaded, kept.values(), strict=True)}
     assert "named in a later brief" in thread and "still in slack and gmail" in thread
-    assert brief.unsourced_claims(thread) == []
+    assert unsourced_claims(thread) == []
     assert voice_violations(thread) == []
 
 
@@ -503,7 +503,7 @@ def test_the_floor_is_bounded_and_keeps_every_degrade_line():
     for name in dead:
         assert f"- couldn't check {name}" in floor.head
     assert floor.head.splitlines()[2].startswith("⚠ no weekly note")
-    assert brief.unsourced_claims(floor.head) == []
+    assert unsourced_claims(floor.head) == []
 
 
 def test_the_budget_is_deterministic(tmp_path):
@@ -668,7 +668,7 @@ def test_a_state_md_refusal_still_fits(tmp_path, monkeypatch):
     assert len(head) <= budget.PUSH_BUDGET
     assert refusal.startswith("- couldn't update State.md: the file changed")
     assert refusal.endswith("Nothing was written.") and "..." not in refusal, "the refusal was cut"
-    assert brief.unsourced_claims(head) == []
+    assert unsourced_claims(head) == []
 
 
 def test_a_light_morning_keeps_the_refusal_whole(tmp_path, monkeypatch):

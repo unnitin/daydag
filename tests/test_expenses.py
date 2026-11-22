@@ -14,8 +14,8 @@ from decimal import Decimal
 import pytest
 
 from daydag import expenses as ex
-from daydag.brief import unsourced_claims
 from daydag.state import EventLog
+from voice_check import unsourced_claims
 
 LINK = "https://mail.google.com/mail/#all/thread-f:1|msg-f:{}"
 

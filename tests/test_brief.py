@@ -17,11 +17,11 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from daydag import brief as brief_module
-from daydag.brief import BriefError, assemble, red_items, unsourced_claims
+from daydag.brief import BriefError, assemble, red_items
 from daydag.ledger import Ledger
 from daydag.pulse import Item, Mirror, Pulse
 from daydag.state import StateFolder
-from daydag.voice import voice_violations
+from voice_check import unsourced_claims, voice_violations
 
 PT = ZoneInfo("America/Los_Angeles")
 
@@ -911,7 +911,7 @@ def test_first_meeting_line_picks_the_earliest_by_instant_not_by_order():
 
 
 def test_first_meeting_line_admits_a_missing_link():
-    from daydag.brief import first_meeting_line, unsourced_claims
+    from daydag.brief import first_meeting_line
 
     event = _event("a", "mystery hold", 9)
     del event["permalink"]

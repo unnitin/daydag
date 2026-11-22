@@ -1575,7 +1575,7 @@ def _chase(
                     # Through `claim`, so the row's own quote and permalink
                     # render - house rule 1 - and the line is bulleted like the
                     # section above it. Bare `owner: ask` strings dropped both
-                    # and were invisible to `brief.unsourced_claims`.
+                    # and were invisible to the suite's `unsourced_claims`.
                     tuple(
                         brief.claim(
                             f"{item.get('owner', 'someone')} · {item.get('ask', '')}",

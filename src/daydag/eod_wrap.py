@@ -13,15 +13,14 @@ USING IT
 
     wrap = assemble(now=now, sources=Connectors(), ledger=ledger, pulse=pulse)
     wrap.render()
-    unsourced_claims(wrap.render())   # from daydag.brief - must be empty
 
 CONTRACTS
     1. Silence is information (SPEC 3.7 rule 3). An empty section - nothing
        closed, nothing moved, no meeting tomorrow - is OMITTED, not labelled.
     2. Evidence or silence (guardrail 3). Every claim carries a permalink or a
-       vault path, or admits it could not be sourced - checked with
-       `daydag.brief.unsourced_claims`, the same scanner the brief is checked
-       with, because the rule is not brief-specific.
+       vault path, or admits it could not be sourced - checked in the suite
+       with `unsourced_claims` (`tests/voice_check.py`), the same scanner
+       the brief is checked with, because the rule is not brief-specific.
     3. Degrade, never stall (guardrail 6). A source that raises costs one
        "couldn't check X" line; the wrap still ships regardless.
     4. A naive `now` is REFUSED with `WrapError`, never read against the

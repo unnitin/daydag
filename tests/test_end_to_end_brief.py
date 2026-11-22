@@ -39,7 +39,7 @@ from daydag import brief as brief_module
 from daydag.ledger import Ledger, Match
 from daydag.pulse import Mirror, Pulse
 from daydag.state import EventLog, StateFolder
-from daydag.voice import voice_violations
+from voice_check import unsourced_claims, voice_violations
 
 PT = timezone(timedelta(hours=-7))
 MONDAY_9AM = datetime(2026, 9, 7, 9, 0, tzinfo=PT)
@@ -290,7 +290,7 @@ def test_a_whole_morning_arrives_as_one_assembled_brief(tmp_path, landings, git_
     # ask and nothing to click. The brief says so rather than asserting it -
     # this is the seam, and the fix belongs in what the log records.
     assert "couldn't source" in text
-    assert brief_module.unsourced_claims(text) == [], "a claim shipped with no evidence"
+    assert unsourced_claims(text) == [], "a claim shipped with no evidence"
     assert voice_violations(text) == [], f"the assembled brief broke the voice rules:\n{text}"
 
 
@@ -357,5 +357,5 @@ def test_a_dead_connector_and_a_dead_mirror_both_degrade_into_the_same_brief(
     assert "as of" in text.lower(), "a stale mirror says so instead of asserting freshness"
     assert "CDI-596 cutover rehearsal" in text, "the healthy mirror still reports"
     assert "VP-Data 1:1" in text, "the healthy connector still reports"
-    assert brief_module.unsourced_claims(text) == []
+    assert unsourced_claims(text) == []
     assert voice_violations(text) == []

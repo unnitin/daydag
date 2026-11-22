@@ -165,9 +165,10 @@ class WeekAhead:
 # names cross module boundaries in this package (see `README.md`'s module
 # table and `prep.py`'s own naive-start guard, which does the same rather
 # than reaching into `brief._local`). `UNSOURCED`'s wording is imported,
-# though: it is `brief.unsourced_claims`'s only lexical anchor for "this line
-# admits it has no evidence", so a second string here would silently stop
-# being recognised by the shared check.
+# though: it is the only lexical anchor the suite's `unsourced_claims`
+# (`tests/voice_check.py`) has for "this line admits it has no evidence", so
+# a second string here would silently stop being recognised by the shared
+# check.
 # --------------------------------------------------------------------------
 
 

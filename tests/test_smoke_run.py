@@ -40,7 +40,7 @@ from daydag.smoke import (
     SKIPPED,
     SmokeReport,
 )
-from daydag.voice import voice_violations
+from voice_check import voice_violations
 
 # --------------------------------------------------------------------------
 # fixtures: one plausible payload per check, so a test can break exactly one

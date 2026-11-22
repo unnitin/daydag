@@ -30,7 +30,8 @@ from daydag import prep
 from daydag.config import Identities
 from daydag.ledger import Ledger, Match
 from daydag.state import StateFolder
-from daydag.voice import Push, voice_violations
+from daydag.voice import Push
+from voice_check import voice_violations
 
 PT = timezone(timedelta(hours=-7))
 MONDAY_9AM = datetime(2026, 9, 7, 9, 0, tzinfo=PT)

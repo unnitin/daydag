@@ -44,7 +44,7 @@ from daydag.runlog import (
     RunRow,
 )
 from daydag.state import EventLog, StateFolder
-from daydag.voice import voice_violations
+from voice_check import voice_violations
 
 PT = timezone(timedelta(hours=-7))
 SIX_FORTY = datetime(2026, 9, 8, 6, 40, tzinfo=PT)

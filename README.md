@@ -51,7 +51,7 @@ artifact is the load-bearing rule; the rest is plumbing.
 | `board` | The watchlist's `jira` and `projects` blocks, and ticket keys in a line; the join and deltas are retired at tag `pre-retirement` until a loop needs them |
 | `closure` | Open is a verdict, not a default: the reply under every ask is read before the ask is reported open |
 | `vault` | Targeted line edits to a note, with an iCloud-aware compare-and-swap |
-| `voice` | The house voice as assertions, and the templates for every push |
+| `voice` | The template for every push, the sanctioned warning glyph and the one-line clip. The house voice itself is asserted by the suite (`tests/voice_check.py`), not at run time |
 | `smoke` | One pre-flight pass over every source: reached, skipped, or never connected |
 | `runlog` | One row per run in the event log, so a brief that never arrived can still be explained |
 | `recipes` | SPEC §4's prose as literal, testable queries |

@@ -11,8 +11,8 @@ from datetime import UTC, date, datetime
 import pytest
 
 from daydag import team_practices as tp
-from daydag.brief import unsourced_claims
 from daydag.pulse import FORBIDDEN_IN_OUTPUT
+from voice_check import unsourced_claims
 
 REPO = "CreateMusicGroup/cmg-sdp-transform"
 WINDOW = (date(2026, 8, 20), date(2026, 9, 19))

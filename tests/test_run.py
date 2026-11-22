@@ -1111,7 +1111,7 @@ def test_ingest_lines_are_bulleted_like_every_other_section(identities):
 
 def test_a_carried_chase_item_keeps_its_quote_and_permalink(identities, tmp_path):
     """House rule 1. Bare `owner: ask` dropped both, and was invisible to
-    `brief.unsourced_claims` for want of a bullet."""
+    `voice_check.unsourced_claims` for want of a bullet."""
     from daydag.state import EventLog, StateFolder
 
     folder = StateFolder.create(tmp_path / "vault" / "DayDAG")

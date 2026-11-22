@@ -24,10 +24,10 @@ from __future__ import annotations
 import subprocess
 from datetime import datetime, timedelta, timezone
 
-from daydag import brief, week_ahead
+from daydag import week_ahead
 from daydag.pulse import Mirror, Pulse
 from daydag.state import EventLog, StateFolder
-from daydag.voice import voice_violations
+from voice_check import unsourced_claims, voice_violations
 
 PT = timezone(timedelta(hours=-7))
 SUNDAY = datetime(2026, 9, 6, 17, 30, tzinfo=PT)
@@ -199,7 +199,7 @@ def test_a_sunday_evening_arrives_as_one_assembled_week_ahead(tmp_path, git_env)
     assert "shipping" in text
     assert "CDI-596 cutover rehearsal" in text
 
-    assert brief.unsourced_claims(text) == [], f"a claim shipped with no evidence:\n{text}"
+    assert unsourced_claims(text) == [], f"a claim shipped with no evidence:\n{text}"
     assert voice_violations(text) == [], f"broke the house voice:\n{voice_violations(text)}\n{text}"
 
 
@@ -260,5 +260,5 @@ def test_a_dead_connector_and_a_stale_mirror_both_degrade_into_the_same_push(tmp
     # a dead vault read on a DIFFERENT note must not take it down
     assert "Pod Steering" in text
     assert any(p.meeting == "Pod Steering" for p in pushed.monday_preps)
-    assert brief.unsourced_claims(text) == []
+    assert unsourced_claims(text) == []
     assert voice_violations(text) == []

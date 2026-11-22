@@ -17,7 +17,7 @@ import pytest
 from daydag.eod_wrap import WrapError, assemble
 from daydag.ledger import Ledger
 from daydag.pulse import Item, Mirror, Pulse
-from daydag.voice import voice_violations
+from voice_check import unsourced_claims, voice_violations
 
 PT = ZoneInfo("America/Los_Angeles")
 
@@ -342,8 +342,6 @@ def test_every_claim_in_a_full_wrap_carries_evidence_or_admits_it(fake_repo):
         pulse=Pulse(mirrors=[Mirror.attach(fake_repo, cursor="HEAD~2")]),
     ).render()
 
-    from daydag.brief import unsourced_claims
-
     assert unsourced_claims(text) == []
 
 
@@ -364,8 +362,6 @@ def test_items_from_the_pulse_render_with_their_own_links():
     """A defensive check on the seam: the wrap must not rebuild the pulse's
     line and lose the link `Item` carries."""
     item = Item(title="CDI-596 cutover", permalink="mirrors/x.git#abc1234")
-    from daydag.brief import unsourced_claims
-
     assert unsourced_claims(f"- {item.title} ({item.permalink})") == []
 
 
@@ -542,8 +538,6 @@ def test_the_wrap_never_states_live_source_evidence_as_a_closure():
 @pytest.mark.guardrail
 def test_every_proposal_carries_a_permalink_or_the_path_it_came_from():
     """Guardrail 3, checked with the same scanner the rest of the wrap is."""
-    from daydag.brief import unsourced_claims
-
     text = _assemble(
         FakeSources(),
         movement=[_movement(link=""), _movement(link="https://x/2")],
@@ -652,8 +646,6 @@ def test_a_closing_proposal_is_never_counted_as_closed_today():
     assert not [line for line in text.splitlines() if line.startswith("closed today")], text
     for word in ("closed", "done", "resolved"):
         assert f"- {word}" not in text.lower(), text
-    from daydag.brief import unsourced_claims
-
     assert unsourced_claims(text) == [], text
 
 

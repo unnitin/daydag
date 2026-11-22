@@ -12,8 +12,9 @@ from pathlib import Path
 
 import pytest
 
-from daydag import brief, closure
+from daydag import closure
 from daydag.closure import Ask, asks_in, closure_steps, judge, render_closure, slack_permalink
+from voice_check import unsourced_claims
 
 FIXTURE = Path(__file__).parent / "fixtures" / "state" / "hand_edited.md"
 PRINCIPAL = "UPRINCIPAL1"
@@ -268,7 +269,7 @@ def test_every_rendered_line_is_sourced_or_admits_it_is_not():
         if s.lines
     )
 
-    assert brief.unsourced_claims(text) == [], brief.unsourced_claims(text)
+    assert unsourced_claims(text) == [], unsourced_claims(text)
 
 
 def test_closure_knows_when_the_run_skipped_every_read():

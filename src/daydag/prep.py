@@ -536,8 +536,9 @@ class PrepPing:
     def authored_text(self) -> str:
         """Everything the agent wrote, with borrowed words excised.
 
-        This is the string that must pass `voice.voice_violations` clean. See
-        the module docstring for why the full render is not that string.
+        This is the string that must pass the suite's `voice_violations`
+        (`tests/voice_check.py`) clean. See the module docstring for why the
+        full render is not that string.
         """
         return f"{self.headline()}\n{self._body(authored=True)}"
 

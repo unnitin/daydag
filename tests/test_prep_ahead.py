@@ -22,7 +22,7 @@ from daydag import run
 from daydag.config import Identities
 from daydag.people import Person
 from daydag.state import EventLog
-from daydag.voice import voice_violations
+from voice_check import voice_violations
 
 #: Friday 2026-09-25, 17:30 Pacific - when the evening run fires.
 FRIDAY_EVENING = datetime(2026, 9, 26, 0, 30, tzinfo=UTC)
