@@ -9,6 +9,30 @@
 > markdown reader, one "rows he edits" reader, one set of time helpers, the retire-or-wire
 > decisions D2-D4, the loop table, a stronger prose rule. The stack's base is tagged
 > `pre-simplification` and its branches stay on origin.
+>
+> **Status, 2026-11-21.** The retirement the October review sized ("what can go now") landed
+> as one PR of eight commits, each green alone: `smoke.py` retired (its nine status words
+> are `runlog`'s), `registry.py` folded into `manifests.py`, `board.py` into `pulse.py`,
+> `prep_selector.py` into `prep.py`, the 30-minute prep ping and its threaded send retired,
+> the voice and evidence scanners moved to `tests/voice_check.py`, the idle counters and
+> write paths in `state`, `ledger`, `config` and the vault line-edit planner retired.
+> Source went from 20,776 lines in 33 modules to 19,598 in 29; tests from 1,676 to 1,596.
+> Every loop's plan and render over the 18 real payload files on record was byte-identical
+> before and after. Restore point: tag `pre-retirement-2026-11-21`.
+>
+> Guardrail cases went from 278 to 273. Five had no live subject once the code they
+> exercised was gone, and are named in the PR: three `smoke` cases over Notion and
+> Databricks payloads no loop reads, and two on the vault planner (a diff never carries an
+> absolute path; a replacement containing a newline is refused). Every other guardrail kept
+> its assertion or was re-pointed at the code that runs.
+>
+> Kept against the review, each because the code disagreed with it: the brief's per-meeting
+> lines (a light morning and `--full` print them), the Monday prep queue (its failure is one
+> rendered line), `recipes._resolve` (it has a caller), `Registry.schedule` (the manifests
+> report prints it), the Rippling confirmation reader (`expenses check` reaches it).
+> Still open, in the review's order: the six morning and scheduled-path fixes, then the
+> retire-or-wire calls (`delivery`, the run log's read side, the notes-gaps projection,
+> `ingestion`, the soak gate), then the shared kernel and the loop table.
 
 **Refreshed 2026-10-02 against `main` at `a1497ee`.** First written 2026-09-18,
 built as a twelve-PR stack 09-18 to 09-20, parked 09-20, never merged. This
