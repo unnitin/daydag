@@ -167,7 +167,8 @@ terminal. It writes nothing a later brief reads - no run-log row, no remembered
 meetings, no State.md write, no cursors stored, no gave-up title marked as said
 - so the next fitted run still names what it cut. Pass the same log, or the
 remembered no-notes and gave-up rows are missing; shipping also needs
-`--mirrors`, which still fetches:
+`--mirrors`, which still fetches (add `--prefetched` right after a
+`daydag.repos sync` to read the mirrors as they are):
 
 ```sh
 python -m daydag.run render morning --payloads payloads.json \
@@ -334,6 +335,14 @@ scripts/install-morning.sh             # install or update the 06:43 weekday job
 scripts/install-morning.sh --remove    # take it off
 DAYDAG_POST=no scripts/morning.sh      # a dry run now: renders, posts nothing
 ```
+
+Since 2026-11-21 the brief also has a shipping section: what landed on every
+`Watchlist.md` repo since the last brief, three lines in the DM and the rest in
+the thread, each titled by its PR and linked to the commit on GitHub. The shell
+refreshes the mirrors first (`daydag.repos sync`); the render then reads them
+with `--mirrors --prefetched` instead of fetching them all a second time. Each
+repo's read position moves when the brief renders, so a dry run uses up that
+window just as a real run does - the next real brief starts from the dry run.
 
 launchd does not call `morning.sh` itself: a bare launchd shell cannot read
 `~/Documents` or iCloud Drive. It runs a copy of `scripts/morning-gate.sh` from

@@ -45,7 +45,7 @@ import shutil
 import subprocess
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -238,9 +238,15 @@ class Mirror:
         label: str | None = None,
         last_fetched_at: datetime | None = None,
         ref: str = "HEAD",
+        link: str | None = None,
     ) -> None:
         self.path = Path(path)
         self.cursor = cursor
+        #: Where a landing can be opened, as a template with `{sha}` in it.
+        #: The brief is read in Slack, where a path on this Mac opens nothing,
+        #: so a mirror that knows its web home links there; one that does not
+        #: (a test's local origin) falls back to `path#sha`.
+        self.link = link
         #: The ref landings are read from. `HEAD` in a bare mirror is the
         #: remote's default branch, which is right for most repos and silently
         #: wrong for one that lands on `dev` - see issue #128.
@@ -323,13 +329,19 @@ class Mirror:
         # commit - so filtering on --merges would silently report nothing for
         # the most common workflow. Every first-parent commit on the watched
         # ref is one landing.
-        out = self._git("log", "--first-parent", "--format=%H%x1f%s", f"{self.cursor}..{tip}")
+        # %x1e ends each record: a PR title lives in the merge commit's BODY,
+        # and a body can hold newlines, so lines cannot be the separator.
+        out = self._git(
+            "log", "--first-parent", "--format=%H%x1f%s%x1f%b%x1e", f"{self.cursor}..{tip}"
+        )
         items: list[Item] = []
-        for line in out.splitlines():
-            if not line.strip():
+        for record in out.split("\x1e"):
+            if not record.strip():
                 continue
-            sha, _, subject = line.partition("\x1f")
-            items.append(Item(title=subject, permalink=f"{self.path}#{sha[:7]}"))
+            sha, _, rest = record.strip().partition("\x1f")
+            subject, _, body = rest.partition("\x1f")
+            permalink = self.link.format(sha=sha) if self.link else f"{self.path}#{sha[:7]}"
+            items.append(Item(title=_landing_title(subject, body), permalink=permalink))
         items.reverse()
         self.cursor = tip
         self.read = READ_OK
@@ -415,6 +427,37 @@ class WatchedRepo:
 def github_url(repo: WatchedRepo) -> str:
     """The clone url. Injectable, so tests clone local paths and never the network."""
     return f"https://github.com/{repo.owner}/{repo.name}.git"
+
+
+#: GitHub's own merge-button subject. The branch name it carries says less than
+#: the PR title, which GitHub writes as the first line of the merge's body.
+_MERGE_SUBJECT = re.compile(r"^Merge pull request #(?P<number>\d+) from \S+$")
+
+
+def _landing_title(subject: str, body: str) -> str:
+    """What a landing is called in the brief: the PR's title where git has it.
+
+    A merge-button commit reads "Merge pull request #964 from Org/feat/x"; its
+    body's first line is the PR title, so it becomes "<title> (#964)". Squash
+    and rebase landings already carry their own subject, and a merge commit
+    with no body keeps GitHub's subject rather than losing its number.
+    """
+    merged = _MERGE_SUBJECT.match(subject.strip())
+    title = next((line.strip() for line in body.splitlines() if line.strip()), "")
+    if merged and title:
+        return f"{title} (#{merged['number']})"
+    return subject
+
+
+def github_link(repo: WatchedRepo) -> str:
+    """Where a landing on ``repo`` opens in a browser, with ``{sha}`` to fill.
+
+    A wiki is the exception: GitHub has no stable per-commit page for one, so
+    its landings link to the wiki's history, which lists every revision.
+    """
+    if repo.name.endswith(".wiki"):
+        return f"https://github.com/{repo.owner}/{repo.name.removesuffix('.wiki')}/wiki/_history"
+    return f"https://github.com/{repo.owner}/{repo.name}/commit/{{sha}}"
 
 
 class MirrorUnavailable(PulseError):
@@ -678,9 +721,14 @@ class MirrorStore:
         url_for: Callable[[WatchedRepo], str] = github_url,
         log: FetchLog | None = None,
         clock: Callable[[], datetime] = _utcnow,
+        link_for: Callable[[WatchedRepo], str | None] = github_link,
     ) -> None:
         self.root = Path(root)
         self._url_for = url_for
+        #: Where a landing opens in a browser. Separate from `url_for`, which
+        #: tests point at local origins: what is cloned and what a reader
+        #: clicks are different questions.
+        self._link_for = link_for
         #: Optional. Without it the pre-step still runs; the stale line just has
         #: no date to carry, and says so rather than implying freshness.
         self._log = log
@@ -732,7 +780,12 @@ class MirrorStore:
         # issue #128 was exactly the field being parsed and then dropped at
         # this seam.
         return Mirror(
-            path, cursor, label=repo.slug, last_fetched_at=last, ref=repo.branch or "HEAD"
+            path,
+            cursor,
+            label=repo.slug,
+            last_fetched_at=last,
+            ref=repo.branch or "HEAD",
+            link=self._link_for(repo),
         )
 
     def _clone(self, repo: WatchedRepo, path: Path) -> None:
@@ -832,12 +885,22 @@ class MirrorStore:
         self,
         watched: Watchlist | Iterable[WatchedRepo],
         cursors: Mapping[str, str] | None = None,
+        fresh_within: timedelta | None = None,
     ) -> SyncReport:
         """Bring the mirror directory in line with the watchlist, then fetch.
 
         A repo that has dropped off the list is left exactly where it is.
         Deleting objects on a config edit is unrecoverable, and a line comes off
         that file for reasons ("not this quarter") that are not "destroy it".
+
+        ``fresh_within`` skips the fetch for a mirror whose last CLEAN fetch on
+        record is that recent. The scheduled morning refreshes every mirror in
+        the shell (`daydag.repos`) minutes before the headless render builds
+        the pulse; fetching all of them a second time inside that run doubled
+        the network time and, on a slow morning (26 mirrors, 126 s on
+        2026-11-20), outran the agent's two-minute command limit. Only a stamp
+        a success wrote counts, so a mirror whose shell fetch failed is tried
+        again here, and one never fetched always is.
         """
         watchlist = watched if isinstance(watched, Watchlist) else Watchlist(list(watched))
         cursors = cursors or {}
@@ -879,10 +942,15 @@ class MirrorStore:
                 # mirror the same way a fetch does. Skipping it left a
                 # day-old clone reporting "no successful fetch on record".
                 self._remember_read(mirror)
-            else:
+            elif not self._fresh(mirror, fresh_within):
                 self.refresh(mirror)
             report.mirrors.append(mirror)
         return report
+
+    def _fresh(self, mirror: Mirror, within: timedelta | None) -> bool:
+        """Whether ``mirror`` fetched cleanly within ``within`` of now."""
+        last = mirror.last_fetched_at
+        return within is not None and last is not None and self._clock() - last <= within
 
 
 class Pulse:
