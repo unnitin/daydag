@@ -1,11 +1,14 @@
 # Pattern library: which slide shape for which message
 
+Read `killer-concepts.md` first: when a killer slide (K) already tells the slide's story,
+build that concept. This file is the fallback for messages no K concept covers.
+
 Pick the pattern from the message, then build it (see `build.md`) or copy it from one of
 Nitin's three template decks in `${SLIDE_TEMPLATES_DIR}` (from `.env`):
 
 - **K** = `Slide examples_Killer slides_Final.pptx` (101 slides, filled examples with real
   action titles; the best reference for what a finished slide looks like)
-- **S** = `Sample killer slides 2020 selection.pptx` (159 slides, layout patterns with
+- **S** = `Sample killer slides 2020 selection.pptx` (154 slides, layout patterns with
   placeholder text; he also keeps a renamed copy as a working deck)
 - **G** = `German PP Templates.pptx` (151 slides, data-heavy tables, charts, comparisons,
   lists; 2016)
@@ -43,12 +46,12 @@ below are positions in the file (`catalog_template.py` prints them with their ti
 
 | Message | Pattern | Templates |
 |---|---|---|
-| Growth or trend | Column chart with a bracket "+x% p.a." and the future bars in green | K4, G14, G15 |
-| We beat the alternative | Line chart, our line green, others grey, end labels | K5 |
-| Build-up or bridge | Waterfall, steps grey, result green | K6, K10, K72 |
+| Growth or trend | Column chart with a bracket "+x% p.a." and the future bars in green | K4, G14, G15, build: `bars` (`split`, `trend`) + `soWhat` |
+| We beat the alternative | Line chart, our line green, others grey, end labels | K5, build: `lines` + `connector` |
+| Build-up or bridge | Waterfall, steps grey, result green | K6, K10, K72, build: `waterfall` (`bracket`), in a `panel` slide for K10 |
 | Share of a whole | 100% stacked bar or donut with the one slice highlighted | K7, K69, K70 |
 | Levers and their value | Horizontal bars by lever with a value column | K9, K89, G19 |
-| Three or four KPIs | Big numbers in rings or tiles | K20, K23, K27, S72, S144 |
+| Three or four KPIs | Big numbers in rings or tiles | K20, K23, K27, S72, S144, build: `kpis` (`iconData`, `ringColor`) |
 | Impact claims | Numbers in bubbles around a centre | K23, S61 |
 | Data table | Header shaded, hairlines, check marks | K87 to K92, G7 to G12, S137, S138, P18 |
 | Scatter / positioning | Dot chart with the quadrant that matters shaded | S39, G20 |
@@ -115,7 +118,7 @@ NODE_PATH="$(npm root -g)" node assets/patterns_build.js "${SLIDE_TEMPLATES_DIR}
 
 | Message | Pattern | Templates |
 |---|---|---|
-| Quote as evidence | Large quote, name, role, date; photo optional | K60, K61, S134, S135, P16 |
+| Quote as evidence | Large quote, name, role, date; photo optional | K60, K61, S134, S135, P16; several at once K59, build: `quotes` |
 | Proof point / case | Situation, actions, impact in three blocks | K95, K63 |
 
 ## Rules for using the templates directly

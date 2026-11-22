@@ -16,6 +16,26 @@ loop is cheap for him and exact for you; follow it rather than inventing a revie
 - One build script per deck, beside the output. The script is the source; the .pptx is a
   product. Revisions edit the script and rebuild.
 
+## Versions: every build is a new file
+
+His rule (16 Nov 2026): "version slides with date and a version number vXX format - that way
+we can keep out of each other's way. the latest slides should be the latest date and highest
+version", and "i can start slides by whatever name but you add version suffix to them and once
+added keep them consistently updated".
+
+- Every build you hand over goes to a new file, `<stem>-YYYY-MM-DD-vNN.pptx`, never over an
+  existing one. `bash scripts/nextver.sh <deck>.pptx` prints the path; build with
+  `OUT="$(bash scripts/nextver.sh <deck>.pptx)"`. The render folder follows the name.
+- `<stem>` is whatever he named the deck, without `-draft`, a date or a version. NN keeps
+  counting across days; it never resets. A deck that already had builds before it was
+  versioned starts at its round number (`--start N`), so the count stays honest.
+- The current deck is the latest date and highest version: `nextver.sh --latest <deck>.pptx`.
+  He reads and marks up that file; the next round reads its stickies, diffs it against the
+  build it came from, and writes vNN+1. He can keep reading while you build, since nothing
+  he has open is written.
+- Once a deck is versioned, keep it so: no more `-draft` builds, and the build script's
+  default output is not used. Old versions stay; nothing is deleted.
+
 ## One round
 
 1. `python3 scripts/stickies.py <deck>.pptx` lists the yellow (`FFFF00`) text boxes with
@@ -42,9 +62,8 @@ loop is cheap for him and exact for you; follow it rather than inventing a revie
    ("create an option of a slide with X and another with Y"), build both as separate slides
    with "option A" and "option B" in the tracker; he deletes the loser and you remove it
    from the script next round.
-4. Rebuild, render with `scripts/render.sh`, and look at every page. If his file is the
-   one the script writes and he may have it open, build to a scratch path first (`OUT=`
-   if the script takes it). Then prove the carry-forward: `drift.py <his file> <new build>`
+4. Rebuild into the next version (`OUT="$(bash scripts/nextver.sh <deck>.pptx)"`, see
+   Versions), render it with `scripts/render.sh`, and look at every page. Then prove the carry-forward: `drift.py <his file> <new build>`
    must show only what this round meant to change (the stickies, the fixes). Any other
    line is one of his edits the script lost: put it in the script and build again. Three defects recur:
    bullets spilling below a panel, value labels running off a bar, a table or panel sliding
@@ -57,10 +76,10 @@ loop is cheap for him and exact for you; follow it rather than inventing a revie
 6. Reply with what changed, sticky by sticky, in two or three lines each, then the review
    line (verdict, fixed, left and why), plus anything you could not settle from the
    sources. Do not restate the slides.
-7. "Promote the draft to dated version": `bash scripts/promote.sh <deck>-draft.pptx`
+7. "Promote the draft to dated version" (decks built before versioning): `bash scripts/promote.sh <deck>-draft.pptx`
    renames the deck and its build script to `<deck>-<YYYY-MM-DD>` and moves the render
-   folder aside (nothing is deleted; the script prints where it went). The next round's
-   stickies land on the dated file; promote again and the date is replaced.
+   folder aside (nothing is deleted; the script prints where it went). A versioned deck
+   needs no promoting: its latest `-YYYY-MM-DD-vNN` file already is the dated version.
 
 ## What his stickies have taught, generalised
 
@@ -119,6 +138,11 @@ time and edited by him in Obsidian:
 
 ## Layout traps that cost a round each
 
+- A cell block of fixed height (a number over a progress bar) in rows whose height varies
+  rides over the rule lines on the page with more rows. Size the block from the row height
+  and centre it, and centre a lone word ("not started") in the full row. Check the column at
+  200 dpi (`pdftoppm -r 200`, then `sips -c` to crop): at the normal render size it looks fine
+  (16 Nov 2026, "some numbers are not centered correctly").
 - Adding a subtitle moves the body down a quarter inch; every box placed from `body.y`
   shifts, and the lowest band falls off the slide. Re-check the bottom after any title change.
 - A tinted panel with an eyebrow needs about 0.9 in before its text has room; a strip under
