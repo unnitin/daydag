@@ -224,6 +224,7 @@ session, which is what makes scheduling a design question rather than a crontab.
 | Fri 13:00 | weekly planning + progress | existing routine |
 | weekly | VP feedback scan | existing routine — **fed, never absorbed** |
 | Sun 17:25 → 17:30 | pulse → week-ahead | DayDAG |
+| Sat 07:13 (Sun catch-up), only when a Sponsor 1:1 falls in the coming week | progress deck refresh: next version, pre-read copy (never sent), DM with changes and talking points | `progress-deck` - runs today, see USAGE "The weekend progress deck" |
 
 Five DayDAG schedules, not six: the pulse is a pre-step of three of them.
 

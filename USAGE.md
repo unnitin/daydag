@@ -364,6 +364,41 @@ payloads it fetched beside it; the gate's and the app's own lines go to
 `runs/launchd.log`. It runs on this machine, not in the cloud, because it reads
 your vault and the event log, which only this machine has.
 
+## The weekend progress deck
+
+The Sponsor progress deck (`PROGRESS_DECK` in `.env`) refreshes itself the
+weekend before each 1:1 with the Sponsor. On Saturday mornings a launchd job
+hunts the coming Monday to Sunday on your calendar for a 1:1 with the Sponsor
+(attendees, not titles: the required guests are exactly you and the Sponsor,
+whose email comes from the people directory). If there is one, the run reads
+what moved since the latest version - your stickies and edits, the pending
+file, the Sponsor DM and the last call's notes, Jira, GitHub and Slack -
+builds the next `-YYYY-MM-DD-vNN` beside it through consulting-slides, has it
+reviewed, builds a pre-read copy without speaker notes, and DMs you what
+changed, what needs you, and talking points. Numbers, dates and status move on
+their own; new pages, order and format wait in the pending file for your go.
+Nothing is sent to the Sponsor. No 1:1 in the window: it posts nothing.
+
+```sh
+scripts/install-progress-deck.sh             # install (after install-morning.sh) and probe
+scripts/install-progress-deck.sh --remove    # take it off
+scripts/progress-deck.sh --probe             # deck, node, LibreOffice, directory, claude
+DAYDAG_POST=no scripts/progress-deck.sh      # a dry run now: hunts and lists changes, builds and posts nothing
+```
+
+It reuses "DayDAG Morning.app" and its grant: the gate
+(`scripts/progress-deck-gate.sh`, copied to `~/.local/state/daydag`) opens the
+app with `--progress-deck`, and `morning.sh` hands that to
+`scripts/progress-deck.sh`. Slots run every 30 minutes from 07:13 to 12:43 on
+Saturday, again on Sunday as a catch-up; a finished run (built, no 1:1, or
+nothing moved) writes `runs/progress-deck-<monday>.done` and the rest of the
+weekend stands down, and a run that fails before building is retried up to
+three times. The run's tool allowlist is its guardrail: read-only connectors,
+writes only in the deck's folder and `runs/`, builds only through
+`progress-deck.sh --build` (a new file, never one that exists), and one Slack
+write that the prompt restricts to your DM. By hand any day: `/progress-deck`.
+Log: `runs/progress-deck-<monday>.log`.
+
 ## Honest status
 
 The foundations are solid and heavily tested. The wiring is where the bugs are:
