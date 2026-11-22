@@ -226,7 +226,7 @@ class People:
             if principal and address.casefold() == principal.casefold():
                 continue  # he is in every meeting
             existing = self._by_address(address)
-            key = existing.key if existing else _slug(address)
+            key = existing.key if existing else self._free_key(address)
             if f"{key}@{event_id}@{met_on}" in self._seen_events:
                 continue  # the same instance twice counts once
             fact: dict[str, Any] = {
@@ -279,6 +279,22 @@ class People:
             if person.slack_id and person.slack_id.casefold() == lowered:
                 return person
         return None
+
+    def _free_key(self, address: str) -> str:
+        """A key for an address nobody owns yet, never one already in use.
+
+        The name slug alone collided: `ben@vendorco.com` and
+        `ben@labelco.com` both minted "ben", so two strangers became one
+        person and naming either folded in the other. A taken slug gets the
+        domain's first label, then the bare address.
+        """
+        slug = _slug(address)
+        domain = address.split("@", 1)[1] if "@" in address else ""
+        label = domain.split(".", 1)[0].casefold()
+        for key in (slug, f"{slug}-{label}" if label else "", address.casefold()):
+            if key and key not in self._by_key:
+                return key
+        return address.casefold()
 
     def _by_name(self, handle: str) -> Person | None:
         """Every token of the query present in someone's name - for humans typing."""
