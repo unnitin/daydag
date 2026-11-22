@@ -37,6 +37,8 @@ GUARDRAILS (every step):
   - Slack read-only; Gmail draft only. NEVER send an email or post to Slack on Nitin's behalf without explicit approval.
   - Pull actual source content and quote verbatim; surface discrepancies rather than silently resolving them.
 
+BEFORE STEP 0 - Refresh the local repos (Claude Code only; his call, 2026-11-20): from the daydag repo run `.venv/bin/python -m daydag.repos sync --log ~/.local/state/daydag/events.db`. It fetches DayDAG's mirror of every `Watchlist.md` repo and fast-forwards his clean working copies; a repo it cannot fetch is one line in DELIVERY, never a stall. Do it once here; the two skills below then skip their own refresh.
+
 STEP 0 — Read durable context first (via obsidian-search): the most recent `Weekly Notes/MMDD-MMDD.md` (work backward by filename; note any gap; MATCH its current format — it evolves, see the `weekly-planning` skill), `Fact Base/Workstreams.md` (capture its version now as the STEP 3 `base_version`), and `Fact Base/Important Links.md` / `Internal Links.md` for canonical Slack channel IDs.
 
 STEP 1 — Weekly progress reporting (backward-looking; run BEFORE planning so the forward plan reflects what closed). Invoke `weekly-progress-reporting` and follow it fully. Orchestration reminders only: pull the live Priorities doc fresh (don't report from memory); present the Progress-tab markdown for paste (don't write the doc unless confirmed); leave the highlights email as a Gmail DRAFT to the current audience — never send.

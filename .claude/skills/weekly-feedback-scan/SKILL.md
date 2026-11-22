@@ -35,6 +35,10 @@ Produce Nitin's private weekly feedback log for his three direct reports. This l
 
 The key calibration: VP-AI is measured on the quality and reliability of delivery he directly drives (with Principal-facing stretch); VP-Data is measured on direction-setting, senior-relationship ownership, and the strength of people/systems he builds — without a delivery discount. Feedback that would be praise at one level can be developmental at the other (e.g., VP-Data personally fixing a pipeline is a portfolio-ownership flag, not a win).
 
+## Step 0 - Refresh the local repos
+
+In Claude Code, from the daydag repo: `.venv/bin/python -m daydag.repos sync --log ~/.local/state/daydag/events.db` (his call, 2026-11-20: every daily and weekly recap updates the local repos first). It fetches DayDAG's mirror of every `Watchlist.md` repo and fast-forwards his clean working copies; a repo it cannot fetch is one line, never a stall.
+
 ## Step 1 — Read the reference docs (every run; they evolve)
 
 1. **Expectations baseline** — Google Doc ID `${GDOC_VP_EXPECTATIONS}` ("VP Expectations — VP-AI (AI) & VP-Data (Data) — 2026"). This defines each person's mandate, the per-section expectations, and year-end success criteria. Read it in full; map every feedback item back to a specific section of it.
