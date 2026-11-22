@@ -12,9 +12,9 @@ under test and none of them are "does the string come out right":
 3. **A send is a run**, and a failed one leaves a row that says so - the run
    log is what makes a silent delivery failure diagnosable at all.
 
-The transport is injected throughout, exactly like `smoke.py`'s probes and
-`brief.py`'s sources - nothing here imports a Slack client, so the suite runs
-offline and a real one can be wired in without touching this module.
+The transport is injected throughout, exactly like `brief.py`'s sources -
+nothing here imports a Slack client, so the suite runs offline and a real one
+can be wired in without touching this module.
 """
 
 from __future__ import annotations

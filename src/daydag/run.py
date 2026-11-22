@@ -57,8 +57,10 @@ KNOWN LIMIT
     meeting's start time is scheduling, and belongs to #25, not here.
 
     The plan is advisory. Nothing verifies the agent actually ran the query it
-    was given rather than one of its own, which is why every check that
-    matters lives in `daydag.smoke` and runs on the payloads.
+    was given rather than one of its own. What `render` does catch is a
+    payload that is absent, or is not a list where records belong: that
+    degrades (contract 3). It does not measure the size of a payload it is
+    handed; the plan's bounds are what keep an answer small enough to arrive.
 """
 
 from __future__ import annotations
@@ -108,8 +110,7 @@ from daydag.pulse import (
     mirror_root,
     read_watchlist,
 )
-from daydag.runlog import RunLog
-from daydag.smoke import REACHED
+from daydag.runlog import REACHED, RunLog
 from daydag.state import (
     EventLog,
     NotesGap,

@@ -4,14 +4,22 @@ USING IT
     log = RunLog(EventLog.open(path), clock=lambda: datetime.now(UTC))
 
     with log.run("morning brief") as run:   # writes a row either way, re-raises
-        run.observe(report.as_rows())
+        run.observe(rows)
 
-    log.record("morning brief", report.as_rows(), started=began)  # run already over
+    log.record("morning brief", rows, started=began)  # run already over
     log.last_run("morning brief")           # RunRow | None
     log.rows("morning brief")               # oldest first
     log.projection_lines(expected=LOOPS)    # lines State.md MAY carry
 
     row.outcome in (OK, DEGRADED, UNCHECKED, FAILED, UNREADABLE)
+
+    `rows` is one record per source, every field text:
+        {"name": "jira", "source": "jira", "status": SKIPPED,
+         "reason": AUTH, "detail": "401 unauthorized"}
+    `status` is REACHED, SKIPPED or NOT_CONNECTED; any other is refused.
+    `reason` says why a row was skipped. Only this module's skip reasons
+    (AUTH, OVERFLOW, ...) print in a projection line; any other is kept in
+    the log and withheld there.
 
 CONTRACTS - break one and the guarantee is gone
     1. Rows live in the event log, never in the vault. `projection_*` RETURN
@@ -21,8 +29,8 @@ CONTRACTS - break one and the guarantee is gone
     3. `loop` renders VERBATIM in the projection - the one part not withheld or
        vocabulary-gated. Keep loop names literal. A name derived from a meeting
        title puts that title into a plaintext file synced to every device.
-    4. Feed it `smoke.as_rows()`, never rendered report text. Parsing your own
-       output makes the report's wording load-bearing.
+    4. Feed it rows, never rendered report text. Parsing your own output makes
+       the report's wording load-bearing.
     5. Pass the exception, not `str(exc)`. `str(RuntimeError())` is empty, and an
        empty failure scores the run as a success.
     6. The clock is injected, because a stamped report is otherwise unassertable.
@@ -48,6 +56,11 @@ KNOWN LIMIT
     code and leaves no row. So absence of a row is itself a finding, which is
     why the projection reports WHEN the last run was and not merely that one
     succeeded.
+
+    The rows this package writes are `REACHED` rows: `run.render` observes one
+    for the loop it rendered, `delivery` one per message posted. A source a
+    brief could not check is named in the push (`brief.Reader`) and is not on
+    the run row. The skip words are for a caller that has a skip to report.
 """
 
 from __future__ import annotations
@@ -58,8 +71,6 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
-from daydag.smoke import AUTH, FETCH, NO_PROBE, NOT_CONNECTED, OVERFLOW, REACHED, SHAPE, SKIPPED
-from daydag.smoke import FAILED as SMOKE_FAILED
 from daydag.voice import clipped
 
 if TYPE_CHECKING:  # pragma: no cover - import cycle only matters to type checkers
@@ -69,6 +80,42 @@ if TYPE_CHECKING:  # pragma: no cover - import cycle only matters to type checke
 #: can pull the run history without knowing which loops ever existed.
 RUN = "run"
 
+# -- what a row says about one source ---------------------------------------
+#
+# The words a row handed to `Run.observe` carries: a status on every row, a
+# reason on a skipped one. This module owns them; `run` and `delivery` import
+# `REACHED` from here for the rows they write. They were the `smoke`
+# pre-flight's words until it was retired with no caller, and the strings are
+# unchanged so a row already in the log reads the same.
+
+# -- statuses ---------------------------------------------------------------
+
+REACHED = "reached"
+SKIPPED = "skipped"
+#: Not a failure. Granola was deliberately never wired up, and reporting it as
+#: an outage sends someone to fix it every morning for the rest of time.
+NOT_CONNECTED = "not connected"
+
+# -- skip reasons -----------------------------------------------------------
+
+#: Nothing was asked of this source at all, so there is no answer to judge.
+NO_PROBE = "no probe"
+AUTH = "auth"
+#: The answer was too big to arrive. The expensive case: it looks like silence.
+OVERFLOW = "overflow"
+#: It answered, and the answer is not what this source looks like when it works.
+SHAPE = "shape"
+#: A mirror could not be fetched. Deliberately distinct from an API failure -
+#: one is fixed with `gh auth`, the other with a clone on disk, and reporting
+#: either as "github is down" sends the reader to the wrong place.
+FETCH = "fetch"
+#: The source failed and none of the reasons above says how. Named apart from
+#: the run outcome `FAILED` below, which is the same word about a different
+#: thing: this is why one source was skipped, that is how a whole run ended.
+SKIP_FAILED = "failed"
+
+# -- run outcomes -----------------------------------------------------------
+
 #: Every source that is connected at all answered.
 OK = "ok"
 #: The run finished and shipped, with at least one source named as unreachable.
@@ -77,10 +124,10 @@ DEGRADED = "degraded"
 #: The run raised before it finished. The row is what it managed to learn first.
 FAILED = "failed"
 #: The run reported no failure and also never observed a single source. Not `OK`:
-#: a loop that bailed before the smoke run, or that swallowed its own connector
-#: error and forgot to report it, looks identical to a healthy one otherwise -
-#: and "the agent last ran successfully at 6:40" would then be a lie told by a
-#: run that read nothing.
+#: a loop that bailed before it observed anything, or that swallowed its own
+#: connector error and forgot to report it, looks identical to a healthy one
+#: otherwise - and "the agent last ran successfully at 6:40" would then be a
+#: lie told by a run that read nothing.
 UNCHECKED = "unchecked"
 #: A row in the log that this version of the code cannot parse. Not an outcome
 #: any run produces - it is what a *reader* reports when the schema has moved
@@ -111,12 +158,12 @@ UNSTATED = "failure reported with no message"
 
 _STATUSES = (REACHED, SKIPPED, NOT_CONNECTED)
 
-#: `smoke`'s own skip reasons, and the empty string a reached row carries. The
+#: The skip reasons above, and the empty string a reached row carries. The
 #: closed vocabulary the projection is allowed to print: a reason is a word like
 #: `auth` or `overflow` that sends the reader somewhere, never a sentence a
 #: connector wrote. A reason outside this set is still kept in the log - see
 #: `Skip.line`.
-_KNOWN_REASONS = frozenset({"", NO_PROBE, AUTH, OVERFLOW, SHAPE, FETCH, SMOKE_FAILED})
+_KNOWN_REASONS = frozenset({"", NO_PROBE, AUTH, OVERFLOW, SHAPE, FETCH, SKIP_FAILED})
 
 #: The loop of a row whose `loop` field could not be read. Not a real loop: it
 #: means "some loop ran and this row cannot say which", and it is never itself
@@ -134,8 +181,9 @@ def _one_line(text: str) -> str:
 
     The mechanism is `voice.clipped`; what is local is `FAILURE_LIMIT`, which
     is a run log line's budget and nobody else's. This was a third hand-rolled
-    copy of `" ".join(text.split())[:cap]` - `brief` and `smoke` had the other
-    two, and they were consolidated for the same reason before it existed.
+    copy of `" ".join(text.split())[:cap]` - `brief` and the since-retired
+    `smoke` had the other two, and they were consolidated for the same reason
+    before it existed.
     """
     return clipped(text, FAILURE_LIMIT)
 
@@ -199,8 +247,8 @@ class Skip:
     A bare name is what a missing reason degrades to, not something this
     refuses - `line()` prints the name alone rather than `jira ()`. Nothing
     enforces a non-empty reason, because the enforcement would have to live in
-    the caller: `smoke` never emits one, and a row that arrived without a
-    reason is still worth logging as a skip that happened.
+    the caller, and a row that arrived without a reason is still worth logging
+    as a skip that happened.
     """
 
     name: str
@@ -211,12 +259,12 @@ class Skip:
     def line(self, *, free_text: bool = True) -> str:
         """This skip as one fragment: `jira (auth)`.
 
-        `free_text=False` prints the reason only if it is one of `smoke`'s own -
-        a closed vocabulary of words like `auth` and `overflow`. Nothing checks
-        what a caller puts in a row, and this fragment is rendered into the line
-        offered to `State.md`, so a reason carrying a connector's own sentence
-        (a url with a token in the query string) would land in a synced
-        plaintext file. The log keeps the reason either way.
+        `free_text=False` prints the reason only if it is one of this module's
+        skip reasons - a closed vocabulary of words like `auth` and `overflow`.
+        Nothing checks what a caller puts in a row, and this fragment is
+        rendered into the line offered to `State.md`, so a reason carrying a
+        connector's own sentence (a url with a token in the query string) would
+        land in a synced plaintext file. The log keeps the reason either way.
         """
         reason = self.reason
         if not free_text and reason not in _KNOWN_REASONS:
@@ -279,7 +327,7 @@ class RunRow:
 
         `free_text=False` is the form for a line leaving the log: it keeps the
         fact of a failure and drops its wording, and holds each skip's reason to
-        `smoke`'s own vocabulary. What is left is check names, loop names and a
+        the closed vocabulary. What is left is check names, loop names and a
         timestamp - all of them the agent's own words. The rest is whatever a
         connector chose to say, and a 403 that quotes the url it was refused can
         carry a token in the query string. Fine in the log, which is outside the
@@ -359,9 +407,9 @@ class RunRow:
 class Run:
     """A run in progress: what it has learned so far, before anything is written.
 
-    Mutable and deliberately dumb. It collects `smoke.as_rows()` output and
-    nothing else, so a loop can hand it a pre-flight report and then a second
-    one after a retry without the log having to reconcile them.
+    Mutable and deliberately dumb. It collects rows and nothing else, so a
+    loop can hand it one set and then a second after a retry without the log
+    having to reconcile them.
     """
 
     loop: str
@@ -369,11 +417,17 @@ class Run:
     _seen: dict[str, Mapping[str, str]] = field(default_factory=dict)
 
     def observe(self, rows: Iterable[Mapping[str, str]]) -> None:
-        """Take `smoke.as_rows()` output. Callable more than once.
+        """Take rows, one record per source. Callable more than once.
 
-        Keyed by check name, last write winning: a source re-probed and now
-        answering is reached, not reached *and* skipped. Order is first-seen, so
-        the report order `smoke` fixed is the order the row renders in.
+        Keyed by check name, last write winning: a source observed again and
+        now answering is reached, not reached *and* skipped. Order is
+        first-seen, so the order the caller gave is the order the row renders
+        in.
+
+        Raises:
+            ValueError: a row with no text `name`, a `status` that is not one
+                of the three, or a `source`, `reason` or `detail` that is not
+                text.
         """
         for row in rows:
             name, status = row.get("name", ""), row.get("status", "")
@@ -410,7 +464,7 @@ class Run:
 
         skipped = tuple(
             Skip(
-                # `Skip.line` already holds `reason` to smoke's closed
+                # `Skip.line` already holds `reason` to the closed
                 # vocabulary so a connector's own sentence cannot reach the
                 # vault. The name printed beside it had no such guard.
                 name=_one_line(row["name"]),
@@ -488,8 +542,8 @@ class RunLog:
         Args:
             loop: which loop ran. Rendered VERBATIM by `projection_*`, so keep
                 it a literal - see contract 3 in the module docstring.
-            rows: `smoke.as_rows()` output. Anything else raises, and the row is
-                still written before the raise.
+            rows: one record per source, as `Run.observe` takes them. Anything
+                else raises, and the row is still written before the raise.
             started: when the run BEGAN. Without it `at` is the moment this was
                 called, which is a different meaning from `run`'s `at` - two
                 loops using the two APIs would write one field two ways and
@@ -511,8 +565,8 @@ class RunLog:
             # the failure it came here to record in the first place.
             #
             # `Exception`, not `ValueError`: `rows` is whatever the caller
-            # passed. Handing over the `SmokeReport` instead of its `as_rows()`
-            # raises `TypeError` from the iteration, a list of strings raises
+            # passed. Handing over something that is not iterable raises
+            # `TypeError` from the iteration, a list of strings raises
             # `AttributeError`, and a generator can raise anything at all
             # halfway through - every one of which wrote no row while this
             # caught the one shape it had thought of.
@@ -529,7 +583,7 @@ class RunLog:
         """Run a loop and write its row either way. Yields a `Run` to observe into.
 
             with log.run("morning brief") as run:
-                run.observe(report.as_rows())
+                run.observe(rows)
 
         ``at`` is stamped on ENTRY, so it is the run's start time.
 

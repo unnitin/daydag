@@ -17,7 +17,7 @@ useless:
    iCloud-synced markdown file with no locking is a lost update, which is the
    reason ARCHITECTURE splits the stores at all.
 
-The rows come from `smoke.as_rows()` rather than from its rendered text, and the
+The rows are records written out by hand rather than rendered text, and the
 clock is injected, because a report that cannot be reproduced byte-for-byte in a
 test is a report nobody can assert anything about.
 """
@@ -32,12 +32,16 @@ from pathlib import Path
 import pytest
 
 from daydag import runlog as runlog_module
-from daydag import smoke
 from daydag.runlog import (
+    AUTH,
     DEGRADED,
     FAILED,
+    NOT_CONNECTED,
     OK,
+    OVERFLOW,
+    REACHED,
     RUN,
+    SKIPPED,
     UNCHECKED,
     UNREADABLE,
     RunLog,
@@ -60,9 +64,9 @@ def log():
 def clock():
     """A clock the test drives, so a timestamp assertion is exact rather than fuzzy.
 
-    `smoke.py` deliberately takes no clock - a stamped report would be
-    non-deterministic and therefore unassertable. The stamp has to happen
-    somewhere, so it happens here, injected, for the same reason.
+    A stamp read off the wall clock is non-deterministic and therefore
+    unassertable. The stamp has to happen somewhere, so it happens here,
+    injected.
     """
     ticks = iter(SIX_FORTY + timedelta(minutes=n) for n in range(0, 600))
     return lambda: next(ticks)
@@ -74,47 +78,64 @@ def runlog(log, clock):
 
 
 # --------------------------------------------------------------------------
-# fixtures: real smoke rows, produced by real probes, with no network
+# fixtures: rows written out by hand, in the shape `Run.observe` takes
 # --------------------------------------------------------------------------
 
-HEALTHY = {
-    "calendar": {"events": [{"id": "e1", "summary": "pod standup", "start": "2026-09-08T09:00"}]},
-    "gmail": {"messages": [{"id": "m1", "subject": 'Notes: "pod standup" Sep 8, 2026'}]},
-    "slack": {"id": "U000000000", "name": "principal"},
-    "notion": {"id": "00000000-0000-0000-0000-000000000000", "type": "person"},
-    "jira": {"issues": [{"key": "CDI-101", "status": "In Progress"}]},
-    "github api": {"repositories": [{"full_name": "org/createos-ai-platform"}]},
-    "github mirror": True,
-    "databricks": {"rows": [[1]]},
-}
+
+def _row(name, source, status=REACHED, reason="", detail=""):
+    """One source's row: the five text fields a caller hands the run log."""
+    return {"name": name, "source": source, "status": status, "reason": reason, "detail": detail}
 
 
-def _probes(**broken):
-    """Probes for every check: healthy unless this call names one as broken.
+#: A healthy run, one row per check, in report order: eight sources that
+#: answered and one that was never connected. Captured from the retired `smoke`
+#: pre-flight's `as_rows()` and inlined, so the log is fed exactly the rows it
+#: was fed before that module went.
+HEALTHY_ROWS = (
+    _row("calendar", "calendar", detail="one day of events"),
+    _row("gmail", "gmail", detail="gemini notes by sender and the meeting notes label"),
+    _row("slack", "slack", detail="one id resolved"),
+    _row("notion", "notion", detail="the authenticated user"),
+    _row("jira", "jira", detail="issues from a bounded jql on the live project"),
+    _row("github api", "github", detail="the api answering for this account"),
+    _row("github mirror", "github", detail="one mirror fetched"),
+    _row("databricks", "databricks", detail="select 1 answering with 1"),
+    _row(
+        "granola",
+        "granola",
+        NOT_CONNECTED,
+        detail="not wired up on purpose, the gemini notes cover the corpus",
+    ),
+)
 
-    A broken source is given as the thing the connector hands back or raises,
-    because those are the two ways a source actually fails and `smoke` reads
-    both.
+#: Three skips, each as `(reason, detail)`: the word that says why the source
+#: was not reached, and the one line kept about it.
+UNAUTHORIZED = (AUTH, "401 unauthorized")
+OVERFLOWED = (OVERFLOW, "response exceeds output limit")
+#: Expired Databricks OAuth, which arrives as a complaint about the output's
+#: schema. The reason is still `auth`, and the detail carries the fix.
+SCHEMA_TRAP = (
+    AUTH,
+    "outputSchema missing; expired oauth reads exactly like this, "
+    "so re-run the workspace login first",
+)
+
+
+def _rows(**skipped):
+    """The healthy rows, with each source named here skipped instead.
+
+    A skip is given as `(reason, detail)` and replaces that source's row in
+    place, so the order never moves.
     """
-    probes = {}
-    for name, payload in HEALTHY.items():
-        answer = broken.get(name.replace(" ", "_"), payload)
-        if isinstance(answer, BaseException):
-
-            def probe(exc=answer):
-                raise exc
-
-        else:
-
-            def probe(value=answer):
-                return value
-
-        probes[name] = probe
-    return probes
-
-
-def _rows(**broken):
-    return smoke.run(_probes(**broken)).as_rows()
+    unknown = set(skipped) - {row["name"] for row in HEALTHY_ROWS}
+    assert not unknown, f"no such row: {sorted(unknown)}"
+    rows = []
+    for row in HEALTHY_ROWS:
+        if row["name"] in skipped:
+            reason, detail = skipped[row["name"]]
+            row = {**row, "status": SKIPPED, "reason": reason, "detail": detail}
+        rows.append(dict(row))
+    return rows
 
 
 # --------------------------------------------------------------------------
@@ -134,7 +155,7 @@ def test_a_run_appends_exactly_one_row(runlog, log):
 
 def test_the_row_carries_the_four_fields_the_spec_names(runlog):
     """`timestamp · loop · sources reached · sources skipped`, verbatim from SPEC 7."""
-    row = runlog.record("morning brief", _rows(jira=ConnectionError("401 unauthorized")))
+    row = runlog.record("morning brief", _rows(jira=UNAUTHORIZED))
 
     assert row.at == SIX_FORTY.isoformat()
     assert row.loop == "morning brief"
@@ -151,7 +172,7 @@ def test_the_timestamp_comes_from_the_injected_clock(log):
 def test_two_runs_of_the_same_loop_are_both_kept(runlog, log):
     """Append, never overwrite. Yesterday's run is how you see when this started."""
     first = runlog.record("morning brief", _rows())
-    second = runlog.record("morning brief", _rows(jira=ConnectionError("401 unauthorized")))
+    second = runlog.record("morning brief", _rows(jira=UNAUTHORIZED))
 
     kept = [RunRow.from_payload(payload) for payload in log.recorded(RUN)]
     assert [row.at for row in kept] == [first.at, second.at]
@@ -162,7 +183,7 @@ def test_a_row_survives_the_round_trip_through_sqlite(tmp_path, clock):
     """The log is read back by a later process, which is the only time it matters."""
     path = tmp_path / "events.db"
     written = RunLog(EventLog.open(path), clock=clock).record(
-        "morning brief", _rows(jira=ConnectionError("401 unauthorized"))
+        "morning brief", _rows(jira=UNAUTHORIZED)
     )
 
     reread = RunRow.from_payload(EventLog.open(path).recorded(RUN)[0])
@@ -178,13 +199,13 @@ def test_a_skipped_source_is_named_with_its_reason(runlog):
     """The whole point. "couldn't check jira (auth)" beats "some sources failed"."""
     row = runlog.record(
         "morning brief",
-        _rows(jira=ConnectionError("401 unauthorized"), databricks="outputSchema missing"),
+        _rows(jira=UNAUTHORIZED, databricks=SCHEMA_TRAP),
     )
 
     named = {skip.name: skip for skip in row.skipped}
     assert set(named) == {"jira", "databricks"}
-    assert named["jira"].reason == smoke.AUTH
-    assert named["databricks"].reason == smoke.AUTH
+    assert named["jira"].reason == AUTH
+    assert named["databricks"].reason == AUTH
     assert named["jira"].detail, "a reason without a detail is half a diagnosis"
 
 
@@ -192,22 +213,22 @@ def test_the_line_names_every_skipped_source_and_its_reason(runlog):
     """The one line a human reads. Nothing may be summarised out of it."""
     row = runlog.record(
         "morning brief",
-        _rows(jira=ConnectionError("401 unauthorized"), calendar="response exceeds output limit"),
+        _rows(jira=UNAUTHORIZED, calendar=OVERFLOWED),
     )
     line = row.line()
 
     assert row.at in line and "morning brief" in line
-    for name, reason in (("jira", smoke.AUTH), ("calendar", smoke.OVERFLOW)):
+    for name, reason in (("jira", AUTH), ("calendar", OVERFLOW)):
         assert f"{name} ({reason})" in line, f"{name} is not named with its reason in {line!r}"
 
 
-def test_no_source_is_dropped_between_the_smoke_rows_and_the_run_row(runlog):
+def test_no_source_is_dropped_between_the_rows_and_the_run_row(runlog):
     """Every check that ran is accounted for under exactly one heading.
 
     A source that appears in neither list is a source nobody knows went
     unchecked, which is indistinguishable from one that answered.
     """
-    rows = _rows(jira=ConnectionError("401 unauthorized"))
+    rows = _rows(jira=UNAUTHORIZED)
     row = runlog.record("morning brief", rows)
 
     accounted = {*row.reached, *(skip.name for skip in row.skipped), *row.not_connected}
@@ -230,7 +251,7 @@ def test_a_row_with_no_check_name_is_refused_the_same_way(runlog):
     about what was wrong with it.
     """
     with pytest.raises(ValueError, match="no check name"):
-        runlog.record("morning brief", [{"source": "jira", "status": smoke.REACHED}])
+        runlog.record("morning brief", [{"source": "jira", "status": REACHED}])
 
 
 def test_a_malformed_row_still_leaves_a_run_row_behind(runlog, log):
@@ -243,14 +264,14 @@ def test_a_malformed_row_still_leaves_a_run_row_behind(runlog, log):
     good = {
         "name": "calendar",
         "source": "calendar",
-        "status": smoke.REACHED,
+        "status": REACHED,
         "reason": "",
         "detail": "one day of events",
     }
     with pytest.raises(ValueError, match="no check name"):
         runlog.record(
             "morning brief",
-            [good, {"source": "jira", "status": smoke.REACHED}],
+            [good, {"source": "jira", "status": REACHED}],
             failure=RuntimeError("mirror fetch died"),
         )
 
@@ -267,15 +288,15 @@ def test_a_malformed_row_still_leaves_a_run_row_behind(runlog, log):
     [
         pytest.param(["not a record"], id="a list of strings"),
         pytest.param(42, id="not iterable at all"),
-        pytest.param([{"name": 5, "status": smoke.REACHED}], id="a name that is not text"),
+        pytest.param([{"name": 5, "status": REACHED}], id="a name that is not text"),
     ],
 )
 def test_any_malformed_input_still_leaves_a_run_row_behind(runlog, log, bad_rows):
     """`rows` is whatever the caller passed, and it can fail in more ways than one.
 
-    Handing over the `SmokeReport` instead of its `as_rows()` raises `TypeError`
-    from the iteration, a list of strings raises `AttributeError`. Catching only
-    the shape you thought of writes no row at all.
+    Handing over something that is not iterable raises `TypeError` from the
+    iteration, a list of strings raises `AttributeError`. Catching only the
+    shape you thought of writes no row at all.
     """
     with pytest.raises(Exception):  # noqa: B017 - the type is the caller's, the row is the point
         runlog.record("morning brief", bad_rows, failure=RuntimeError("mirror fetch died"))
@@ -289,7 +310,7 @@ def test_any_malformed_input_still_leaves_a_run_row_behind(runlog, log, bad_rows
 
 def test_a_deliberately_unconnected_source_is_not_reported_as_a_failure(runlog):
     """Granola was never wired up. Reporting it as an outage sends someone to fix
-    it every morning for the rest of time - `smoke` says so, and the log agrees."""
+    it every morning for the rest of time - the row says so, and the log agrees."""
     row = runlog.record("morning brief", _rows())
 
     assert "granola" in row.not_connected
@@ -299,7 +320,7 @@ def test_a_deliberately_unconnected_source_is_not_reported_as_a_failure(runlog):
 
 
 def test_a_run_with_a_skip_is_degraded_not_ok(runlog):
-    row = runlog.record("morning brief", _rows(gmail=ConnectionError("401 unauthorized")))
+    row = runlog.record("morning brief", _rows(gmail=UNAUTHORIZED))
     assert row.outcome == DEGRADED
     assert row.completed, "degrading is guardrail 6 working, not the run failing"
 
@@ -311,7 +332,7 @@ def test_a_run_that_reached_nothing_says_so_rather_than_looking_clean(runlog):
 
 
 def test_a_run_that_observed_no_source_is_not_a_successful_run(runlog):
-    """A loop that bailed before the smoke run, or swallowed its own error.
+    """A loop that bailed before observing anything, or swallowed its own error.
 
     Otherwise it is identical to a healthy run in every field a reader checks,
     and "the agent last ran fine at 6:40" becomes a claim made by a run that
@@ -327,9 +348,9 @@ def test_a_run_that_observed_no_source_is_not_a_successful_run(runlog):
 def test_a_run_of_nothing_but_unconnected_sources_is_not_a_successful_run(runlog):
     """Rows arrived, and every one of them read nothing.
 
-    Counting observations rather than answers scores this `OK`. It is reachable
-    today with an all-unwired `checks=` subset, and permanently the day a second
-    connector is parked as `wired=False` during a migration.
+    Counting observations rather than answers scores this `OK`. A caller whose
+    every row is `not connected` reaches it, and so does a run the day a second
+    connector is parked as unwired during a migration.
     """
     row = runlog.record(
         "morning brief",
@@ -337,7 +358,7 @@ def test_a_run_of_nothing_but_unconnected_sources_is_not_a_successful_run(runlog
             {
                 "name": "granola",
                 "source": "granola",
-                "status": smoke.NOT_CONNECTED,
+                "status": NOT_CONNECTED,
                 "reason": "",
                 "detail": "not wired up on purpose",
             }
@@ -357,7 +378,7 @@ def test_a_run_that_fails_partway_still_writes_its_row(runlog, log):
     """The runs worth reading the log for are exactly the ones that did not finish."""
     with pytest.raises(RuntimeError, match="mirror fetch died"):
         with runlog.run("morning brief") as run:
-            run.observe(_rows(jira=ConnectionError("401 unauthorized")))
+            run.observe(_rows(jira=UNAUTHORIZED))
             raise RuntimeError("mirror fetch died")
 
     (payload,) = log.recorded(RUN)
@@ -372,7 +393,7 @@ def test_the_partial_row_keeps_what_was_reached_before_the_failure(runlog):
     """Half a run is still evidence. Which half is the diagnosis."""
     with pytest.raises(RuntimeError):
         with runlog.run("morning brief") as run:
-            run.observe(_rows(jira=ConnectionError("401 unauthorized")))
+            run.observe(_rows(jira=UNAUTHORIZED))
             raise RuntimeError("mirror fetch died")
 
     row = runlog.last_run()
@@ -439,7 +460,7 @@ def test_a_loop_name_is_bounded_like_every_other_word_on_the_line(runlog):
 def test_a_check_name_is_bounded_too(runlog):
     """Same claim, same gap: a skip's name renders raw into the projection.
 
-    `Skip.line` already holds `reason` to smoke's closed vocabulary because a
+    `Skip.line` already holds `reason` to the closed vocabulary because a
     connector's own sentence must not reach the vault. The name beside it had
     no such guard.
     """
@@ -456,7 +477,7 @@ def test_a_check_name_is_bounded_too(runlog):
 def test_a_later_observation_of_the_same_source_replaces_the_earlier_one(runlog):
     """A source re-probed and now answering is reached, not both at once."""
     with runlog.run("morning brief") as run:
-        run.observe(_rows(slack=ConnectionError("401 unauthorized")))
+        run.observe(_rows(slack=UNAUTHORIZED))
         run.observe(_rows())
 
     row = runlog.last_run()
@@ -478,14 +499,14 @@ def test_no_run_row_reaches_the_vault(tmp_path, runlog, log):
     connector's error text lands in a plaintext file synced to every device
     Nitin owns, and nothing about the vault ever says it got there.
     """
-    runlog.record("morning brief", _rows(jira=ConnectionError("401 unauthorized")))
+    runlog.record("morning brief", _rows(jira=UNAUTHORIZED))
     folder = StateFolder.create(tmp_path / "DayDAG")
     folder.update_state(chase=log.chase_items(), watch=[], notes_gaps=[])
 
     body = "".join(
         path.read_text(encoding="utf-8") for path in folder.root.rglob("*.md") if path.is_file()
     )
-    for leaked in ("morning brief", "401 unauthorized", smoke.AUTH, "reached:"):
+    for leaked in ("morning brief", "401 unauthorized", AUTH, "reached:"):
         assert leaked not in body, f"{leaked!r} reached a synced markdown file"
 
     # And the one line that IS offered to the vault carries no connector wording,
@@ -651,7 +672,7 @@ def test_a_skip_field_that_is_not_text_is_refused_on_the_way_in(runlog, log):
     with pytest.raises(ValueError, match="reason that is not text"):
         runlog.record(
             "morning brief",
-            [{"name": "jira", "source": "jira", "status": smoke.SKIPPED, "reason": None}],
+            [{"name": "jira", "source": "jira", "status": SKIPPED, "reason": None}],
         )
 
     assert runlog.rows()[0].outcome != UNREADABLE, "what it did write must stay readable"
@@ -708,7 +729,7 @@ def test_an_enriched_skip_reason_never_reaches_the_projection_verbatim(runlog, l
     assert "token=nope" not in runlog.projection_line("morning brief")
 
 
-def test_a_skip_reason_outside_smokes_vocabulary_is_withheld_from_the_projection(runlog, log):
+def test_a_skip_reason_outside_the_vocabulary_is_withheld_from_the_projection(runlog, log):
     """The string case, which no type check can catch.
 
     A reason is meant to be a word like `auth` that sends the reader somewhere.
@@ -872,7 +893,7 @@ def test_the_direct_form_can_be_told_when_the_run_started(runlog):
 # --------------------------------------------------------------------------
 
 
-def test_the_row_is_built_from_smoke_rows_and_never_from_rendered_text(runlog):
+def test_the_row_is_built_from_rows_and_never_from_rendered_text(runlog):
     """The handover note: the rows are the reusable part, not the text.
 
     Passing rows that no `render()` could have produced still works, which is
@@ -884,7 +905,7 @@ def test_the_row_is_built_from_smoke_rows_and_never_from_rendered_text(runlog):
             {
                 "name": "calendar",
                 "source": "calendar",
-                "status": smoke.REACHED,
+                "status": REACHED,
                 "reason": "",
                 "detail": "one day of events",
             }
@@ -895,13 +916,13 @@ def test_the_row_is_built_from_smoke_rows_and_never_from_rendered_text(runlog):
 
 def test_the_line_holds_the_house_voice(runlog):
     """It can surface in a DM, so SPEC section 5 applies: hyphens, no stray emoji."""
-    row = runlog.record("morning brief", _rows(jira=ConnectionError("401 unauthorized")))
+    row = runlog.record("morning brief", _rows(jira=UNAUTHORIZED))
     assert voice_violations(row.line()) == []
     assert voice_violations(runlog.projection_line("morning brief")) == []
 
 
 def test_the_module_reads_no_clock_of_its_own(runlog):
-    """Same constraint `smoke` holds, for the same reason: determinism.
+    """The clock is injected and nothing else supplies one: determinism.
 
     A module that can call `datetime.now()` will, and the test that was supposed
     to pin the timestamp starts passing for the wrong reason.

@@ -162,10 +162,11 @@ def test_every_sanctioned_glyph_still_passes(glyph):
 # --------------------------------------------------------------------------
 # the shared text primitives
 #
-# `brief.short` and `smoke._one_line` each hand-rolled "collapse to one line,
-# then clip" with their own cap and their own truncation rule. One idea, two
-# implementations, and the pair drifts the next time either is tuned - which is
-# the same note review left on the duplicated env-reference regex in #57.
+# `brief.short` and `_one_line` in the since-retired `smoke` each hand-rolled
+# "collapse to one line, then clip" with their own cap and their own truncation
+# rule. One idea, two implementations, and the pair drifts the next time either
+# is tuned - which is the same note review left on the duplicated env-reference
+# regex in #57.
 # --------------------------------------------------------------------------
 
 

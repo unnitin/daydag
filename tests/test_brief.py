@@ -518,6 +518,47 @@ def test_one_downed_source_costs_one_line_and_the_brief_still_ships():
     assert "top of the note" in text, "one dead source suppressed a healthy one"
 
 
+class _GmailRaises(FakeSources):
+    """Every source as given, except that gmail raises exactly what it is handed."""
+
+    def __init__(self, failure, **kwargs):
+        super().__init__(**kwargs)
+        self._failure = failure
+
+    def gmail(self, query):
+        raise self._failure
+
+
+@pytest.mark.guardrail
+@pytest.mark.parametrize(
+    "failure",
+    [
+        RuntimeError("connection reset by peer"),
+        TimeoutError("timed out"),
+        KeyError("token"),
+        ValueError(""),
+    ],
+)
+def test_whatever_a_source_raises_the_brief_ships_and_names_it(failure: Exception):
+    """Guardrail 6, for whatever is thrown and not only the error a fake picks.
+
+    A connector client raises what it likes. `Reader` turns each of these into
+    the source's name on `unreachable`: the brief comes back, the healthy
+    source still renders, and the dead one gets its one line.
+
+    Held by the `smoke` pre-flight over its own probes until that module was
+    retired with no caller. `Reader` is where a loop degrades a source.
+    """
+    result = _assemble(_GmailRaises(failure, events=[_event("a", "pod steering", 9)]))
+    text = result.render()
+
+    assert result.unreachable == ("gmail",)
+    assert "pod steering" in text, "one dead source suppressed a healthy one"
+    assert [line for line in text.splitlines() if "couldn't check" in line] == [
+        "- couldn't check gmail"
+    ]
+
+
 @pytest.mark.guardrail
 def test_every_source_down_still_ships_a_brief():
     """The worst case is still a message, not a silence he cannot distinguish
@@ -1007,9 +1048,15 @@ def _gemini(minutes_ago):
     }
 
 
+@pytest.mark.guardrail
 def test_no_slack_at_all_on_a_night_notes_landed_is_said_not_shown_as_quiet():
     """Shape A of #183 returned "No results found" with no error and rendered
-    exactly like a quiet night."""
+    exactly like a quiet night.
+
+    A guardrail since the `smoke` pre-flight retired: its "a call that did not
+    raise is not proof the source answered" case for an empty Slack answer has
+    this check as its live subject.
+    """
     quiet = _assemble(FakeSources(messages=[], mail=[_gemini(600)]))
 
     assert any(name.startswith("slack for sure") for name in quiet.unreachable)

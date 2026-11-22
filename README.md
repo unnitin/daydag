@@ -51,7 +51,6 @@ artifact is the load-bearing rule; the rest is plumbing.
 | `closure` | Open is a verdict, not a default: the reply under every ask is read before the ask is reported open |
 | `vault` | Targeted line edits to a note, with an iCloud-aware compare-and-swap |
 | `voice` | The template for every push, the sanctioned warning glyph and the one-line clip. The house voice itself is asserted by the suite (`tests/voice_check.py`), not at run time |
-| `smoke` | One pre-flight pass over every source: reached, skipped, or never connected |
 | `runlog` | One row per run in the event log, so a brief that never arrived can still be explained |
 | `recipes` | SPEC §4's prose as literal, testable queries |
 | `payloads` | Reading a connector's answer while it is still unvalidated - `recipes` asks, this reads |

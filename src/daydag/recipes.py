@@ -19,8 +19,7 @@ CONTRACTS
        `*all`: a 14-day 4-project query with unbounded fields returned 125,231
        chars. `JIRA_MAX_RESULTS_CAP` and `GH_LIMIT_CAP` are the caps: the
        Jira one bounds `jira_moved_on`'s page (asserted at import, below), the
-       GitHub one every `gh search`, and `smoke` builds its reported bounds
-       FROM them.
+       GitHub one every `gh search`.
     3. Slack is addressed by ID, never display name. `from:@someone` does not
        fail, it silently matches nothing.
     4. Gmail matches the SUBJECT: `Notes: "<title>" <date>`, plus the
@@ -700,9 +699,10 @@ def meeting_prep(day: date) -> str:
 #: a 14-day, 4-project query into 125,231 characters (#2 audit).
 #:
 #: ``resolutiondate`` and ``labels`` were added for the board join (#12), which
-#: is retired at tag `pre-retirement`. The list stays because `smoke` builds its
-#: reported Jira bound from it and the evening test pins `JIRA_MOVED_FIELDS` as
-#: a subset of it; `jira_moved_on` itself sends the five fields it reads.
+#: is retired at tag `pre-retirement`. No code in `src/` reads the list since
+#: the `smoke` pre-flight, which built its reported Jira bound from it, was
+#: retired; the evening test pins `JIRA_MOVED_FIELDS` as a subset of it, and
+#: `jira_moved_on` itself sends the five fields it reads.
 JIRA_FIELDS: tuple[str, ...] = (
     "key",
     "summary",
@@ -746,8 +746,9 @@ def _project_keys(projects: Iterable[str]) -> list[str]:
 #: ships four avatar URLs whatever `fields` says. Five fields and one project
 #: per call is ~2,500 an issue; fifteen stays well under the size that failed.
 JIRA_MOVED_MAX_RESULTS = 15
-# The one Jira read left must sit under the cap `smoke` reports, or the bound
-# it prints is a lie; `jira_search`, which enforced the cap, is retired.
+# The one Jira read left must sit under the page cap. `jira_search`, which
+# enforced the cap, is retired, and so is the `smoke` pre-flight that reported
+# it, so this assert is the cap's only reader.
 assert JIRA_MOVED_MAX_RESULTS <= JIRA_MAX_RESULTS_CAP
 
 #: What the wrap reads off a moved ticket, and nothing else.

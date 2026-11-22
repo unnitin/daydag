@@ -33,9 +33,9 @@ CONTRACTS - break one and the guarantee is gone
        it as `error.headline` - a retry replies into that thread rather than
        resending the interrupt.
     4. No Slack client is imported here. `Transport` is a callable the caller
-       injects, exactly like `smoke.py`'s probes and `brief.py`'s sources -
-       what makes this module testable without a network, and what keeps the
-       guardrail-suite tripwire in `tests/test_guardrails.py` meaningful.
+       injects, exactly like `brief.py`'s sources - what makes this module
+       testable without a network, and what keeps the guardrail-suite tripwire
+       in `tests/test_guardrails.py` meaningful.
     5. `runlog` is optional, and when given, a raised failure is recorded
        before it is re-raised. `RunLog.run` already does both halves; this
        module only has to hand it a `Run` to observe into.
@@ -65,8 +65,7 @@ from daydag.manifests import DM_SURFACE, Registry
 from daydag.payloads import error_text
 from daydag.prep import PrepPing, may_interrupt
 from daydag.recipes import is_user_id
-from daydag.runlog import Run, RunLog
-from daydag.smoke import REACHED
+from daydag.runlog import REACHED, Run, RunLog
 from daydag.voice import Push
 
 _T = TypeVar("_T")
@@ -89,7 +88,7 @@ class DeliveryError(RuntimeError):
 
     Raised for a caller mistake - a misconfigured principal id, a transport
     that did not actually post - never used to represent a Slack-side error;
-    those degrade like every other source (`daydag.smoke`), and a delivery
+    those degrade like every other source (`brief.Reader`), and a delivery
     failure is loud on purpose (see the module docstring's contract 5).
     """
 
@@ -191,12 +190,11 @@ def _principal_channel(identities: Mapping[str, str]) -> str:
 
 
 def _posted_row(name: str) -> dict[str, str]:
-    """One `smoke`-shaped observation: a message went out. Fed to `run.observe`.
+    """One run-log row: a message went out. Fed to `run.observe`.
 
-    Reuses `smoke`'s own vocabulary (`REACHED`) rather than a second literal
-    "reached" - the run log already reads this shape from `smoke.as_rows()`,
-    and a send is the same kind of fact: something was asked of a source and
-    it answered.
+    Uses `runlog.REACHED` rather than a second literal "reached" - the row is
+    the shape `Run.observe` takes for any source, and a send is the same kind
+    of fact: something was asked of a source and it answered.
     """
     return {"name": name, "source": "slack", "status": REACHED, "reason": "", "detail": "posted"}
 
@@ -206,10 +204,9 @@ def _send(
 ) -> SentMessage:
     """Call the transport once and turn its answer into a `SentMessage`.
 
-    Never trusts "it did not raise" as proof of success (the same lesson
-    `smoke` encodes for every other source): a transport that swallows its
-    own failure and returns something without a `ts` is refused here rather
-    than handed back as a message nothing can thread under.
+    Never trusts "it did not raise" as proof of success: a transport that
+    swallows its own failure and returns something without a `ts` is refused
+    here rather than handed back as a message nothing can thread under.
     """
     response = transport(channel=channel, text=text, thread_ts=thread_ts)
     ts = response.get("ts") if isinstance(response, Mapping) else None

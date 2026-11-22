@@ -1,10 +1,11 @@
 """The payload readers, tested away from any one source.
 
-These were private helpers inside `smoke` until review asked why they lived
-there. Tested here on their own because that is the actual argument for moving
-them: a boundary reader that only ever runs through one caller's checks is
-only ever tested through that caller's vocabulary, and the next edge to need
-one writes its own copy rather than trusting an untested private.
+These were private helpers inside the `smoke` pre-flight, since retired, until
+review asked why they lived there. Tested here on their own because that is
+the actual argument for moving them: a boundary reader that only ever runs
+through one caller's checks is only ever tested through that caller's
+vocabulary, and the next edge to need one writes its own copy rather than
+trusting an untested private.
 """
 
 from __future__ import annotations

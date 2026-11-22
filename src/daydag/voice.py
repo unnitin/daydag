@@ -22,9 +22,9 @@ WHY IT EXISTS
     collapse-and-clip.
 
     `one_line`/`clipped` live here because three modules had hand-rolled the
-    same `" ".join(text.split())[:cap]` - `brief`, `smoke` and `runlog`. The
-    caps stayed with their callers: a quote, a connector failure and a run row
-    are genuinely different budgets. Only the mechanism was shared.
+    same `" ".join(text.split())[:cap]` - `brief`, `runlog` and `smoke`, which
+    has since been retired. The caps stayed with their callers: a quote and a
+    run row are genuinely different budgets. Only the mechanism was shared.
 
 KNOWN LIMIT
     The house voice is not enforced here. Hyphens never dashes, emoji only
@@ -66,7 +66,7 @@ def clipped(text: Any, limit: int, *, ellipsis: str = "") -> str:
     string - a caller reserving room for a suffix can reach both.
 
     The budget is the caller's, not this function's. `brief` clips a quote at
-    one width and `smoke` a failure at another; what they shared was the
+    one width and `runlog` a failure at another; what they share is the
     collapse-then-clip, and only that is here.
     """
     line = one_line(text)

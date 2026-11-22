@@ -42,9 +42,11 @@ COVERED (behavioural - real code, real assertions)
       one planted second claim
     - a downed source degrades to a named "could not fetch" line and the rest
       of the report still ships
-    - a connector that raises, or answers with an overflow, degrades to a named
-      "couldn't check X" line and the pre-flight run still returns a report
-      (in `tests/test_smoke_run.py`, which carries its own guardrail marks)
+    - a source that raises, was never fetched, or came back as something other
+      than a list of records degrades to a named "couldn't check X" line and
+      the push still ships (in `tests/test_brief.py` for `brief.Reader` and
+      `tests/test_run.py` for the render path, which carry their own guardrail
+      marks; the `smoke` pre-flight that used to hold these is retired)
     - a stale mirror contributes no items, is reported as stale, and carries the
       time of the last fetch that actually worked
     - untrusted Slack text is parsed for ticket keys only, never echoed or acted on
@@ -66,9 +68,10 @@ TRIPWIRES (no implementation exists - these fail when one lands unguarded)
       alongside this rather than replacing it
     - no Jira write path (transition, comment, assign)
     - no inbound command surface, so no injection parser and no sender check
-    - no connector client besides the git mirror: every other source is probed
-      through a callable the caller injects (`daydag.smoke`), so nothing in the
-      package can reach a connector on its own
+    - no connector client besides the git mirror: every other source reaches
+      the package as a payload the agent fetched (`daydag.run`) or through a
+      callable the caller injects (`brief.Sources`, `delivery.Transport`), so
+      nothing in the package can reach a connector on its own
 
 GAPS - not covered here, and not pretended to be
     1. Decisions. The queue that read a "yes"/"no" beside a line retired with
@@ -934,13 +937,14 @@ CONNECTOR_PATTERNS = {
 def test_no_connector_client_exists_without_a_degrade_path():
     """TRIPWIRE. No source is read by code that lives in this package.
 
-    `Mirror.mark_fetch_failed` covers git, and `daydag.smoke` covers everything
-    else - but only over probes the caller injects, so there is still no client
-    here and no failure mode of one to drive. That is what this holds open: the
-    day a real client lands, its degrade path has to be built rather than
-    assumed from the smoke run. Databricks is the case that proves the point,
-    since expired OAuth surfaces there as a schema error rather than an auth
-    error, so "it returned something" is not proof the source was reachable.
+    `Mirror.mark_fetch_failed` covers git, and `brief.Reader` covers the sources
+    the morning brief and the EOD wrap read - but only over payloads the agent
+    fetched and callables the caller injects, so there is still no client here
+    and no failure mode of one to drive. That is what this holds open: the day
+    a real client lands, its degrade path has to be built rather than assumed
+    from the payload path. Databricks is the case that proves the point, since
+    expired OAuth surfaces there as a schema error rather than an auth error,
+    so "it returned something" is not proof the source was reachable.
     """
     _self_check_scanner()
     hits = _scan(CONNECTOR_PATTERNS, include_strings=False)
