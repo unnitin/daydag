@@ -11,7 +11,7 @@
 > `pre-simplification` and its branches stay on origin.
 >
 > **Status, 2026-11-21.** The retirement the October review sized ("what can go now") landed
-> as one PR of eight commits, each green alone: `smoke.py` retired (its nine status words
+> as one PR, a commit per cluster, each green alone: `smoke.py` retired (its nine status words
 > are `runlog`'s), `registry.py` folded into `manifests.py`, `board.py` into `pulse.py`,
 > `prep_selector.py` into `prep.py`, the 30-minute prep ping and its threaded send retired,
 > the voice and evidence scanners moved to `tests/voice_check.py`, the idle counters and
