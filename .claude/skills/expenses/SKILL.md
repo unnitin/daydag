@@ -1,6 +1,6 @@
 ---
 name: expenses
-description: "File Nitin's receipts into Ramp (Rippling until 2026-10-18). Finds unfiled receipts in Gmail (Uber parsed against real mail; DoorDash and others by a generic Total-line rule), drops Uber's charge summaries and tip duplicates, lists them with permalinks, forwards each to Rippling's receipts inbox ONLY after he says go, labels and logs it so nothing is offered twice, and reconciles a trip against an Amex activity export. Use for \"file my receipts\", \"expense my uber rides\", \"what's not in rippling yet\", \"reconcile my amex\", \"expenses for the LA trip\". Do NOT use for approving other people's Spend requests (a Rippling task in his inbox, not a loop) or for anything that writes to the vault."
+description: "File Nitin's receipts into Ramp (Rippling until 2026-10-18). Finds unfiled receipts in Gmail (Uber parsed against real mail; DoorDash and others by a generic Total-line rule), drops Uber's charge summaries and tip duplicates, lists them with permalinks, forwards each to Rippling's receipts inbox ONLY after he says go, labels and logs it so nothing is offered twice, and reconciles a trip against an Amex activity export. Airfare, accommodations and car rental go through Perk, not Ramp: it sets those aside and files nothing for them. Use for \"file my receipts\", \"expense my uber rides\", \"what's not in rippling yet\", \"reconcile my amex\", \"expenses for the LA trip\". Do NOT use for approving other people's Spend requests (a Rippling task in his inbox, not a loop) or for anything that writes to the vault."
 daydag:
   writes:
     # The marker on a forwarded mail, and its row in the event log. Nothing in
@@ -21,6 +21,40 @@ daydag:
 > Everything below that says Rippling describes the same loop against the old
 > sink; the mechanics did not change. `reference/rippling-expenses.md` has the
 > 2026-10-18 section with what was verified on Ramp.
+
+## What goes where: Perk for travel, Ramp for the rest
+
+**Airfare, accommodations and car rental go through Perk, never Ramp.**
+Everything else he pays on a trip - rideshare, meals, entertainment, wifi - is
+a Ramp reimbursement, and that is all this skill files. The AP manager said it
+on 2026-10-21, after approving a hotel folio this skill had staged in Ramp:
+
+> "all airfare, accommodations, and car rental spends should go through Perk,
+> which you have a profile for now. As we scale we are tightening our policy
+> around this."
+
+> "Ramp is only for all other reimbursements that are not airfare,
+> accommodations and car rentals (i.e - public ride share services, meals,
+> entertainment, etc.)"
+
+Both are from the Slack DM with the AP manager
+(`python -m daydag.people show ap-manager --log ~/.local/state/daydag/events.db`
+has the DM); `reference/rippling-expenses.md` has the dated section. So, on
+every run:
+
+- **A flight, a hotel folio or a car-rental receipt is set aside with one
+  line**: "goes through perk, not ramp", with its permalink or file path so he
+  can file it there. It is never forwarded, never staged and never part of
+  `go all`.
+- **`ramp-stage` holds the line for files.** A row in `files.json` whose
+  category names lodging, hotel, accommodation, airfare, flight or car rental
+  gets no Ramp step and is listed under "through perk, not ramp". Give each
+  file its true category; never relabel a folio to get it through.
+- **Nothing here files into Perk.** There is no Perk connector, and how an
+  out-of-pocket travel invoice is submitted there has not been verified from a
+  session. Tell him what is waiting for Perk and leave it with him.
+- **A travel line already in Ramp from before the rule stays as it is.** The
+  hotel on the October 2026 trip was approved there. Do not move or delete it.
 
 You are filing receipts for Nitin. He pays with a personal Amex, files one
 Rippling Spend reimbursement report per trip ("Trip to LA", "Steerco in LA")
@@ -62,9 +96,9 @@ silent drops on Rippling's side.
    adds (name, address, confirmation, check-in and check-out from its
    description), and every timed event with a street address - the dinner
    that explains an evening ride. Show him the trip render and ask one thing:
-   right? A wrong window is the one mistake every later step inherits. Flights
-   and the stay the travel desk booked are not his to claim; the render says
-   so. He names the report; the trip name is a proposal.
+   right? A wrong window is the one mistake every later step inherits. Flights,
+   the stay and a rental car go through Perk, never Ramp; the render says so.
+   He names the report; the trip name is a proposal.
 
 1. **Window.** From the trip, plus two days: Uber mails the receipt hours
    after the ride, so a last-day ride's receipt arrives the next morning.
@@ -172,8 +206,9 @@ server with write scopes: reimbursements, receipts, trips. Mechanics are in
 `src/daydag/expenses_ramp.py`; what was verified is in
 `reference/rippling-expenses.md`, 2026-10-18 section. Three things it changes:
 
-**1. Files can be filed from here.** Photographed slips, a hotel folio, the
-statement-line PDFs: `ramp_request_receipt_upload_link` gives a single-use URL
+**1. Files can be filed from here.** Photographed slips and statement-line
+PDFs for what Ramp takes (a hotel folio, an airline receipt or a car-rental
+invoice is Perk's, see "What goes where"): `ramp_request_receipt_upload_link` gives a single-use URL
 (30 minutes), `curl -F file=@<path>` from the session puts the bytes in Ramp
 and answers 201 with a `receipt_uuid`, `ramp_create_reimbursement_from_receipt`
 makes the draft. The bytes never pass through the model, which is why email
@@ -200,7 +235,8 @@ python -m daydag.expenses ramp-check batch.json ramp.json --expected expected.js
 ```
 
 where `expected.json` lists the lines filed from files (date, merchant,
-amount, category, kind). It prints the pending total against the expected
+amount, category, kind). Leave airfare, lodging and car rental out of it: they
+are not expected in Ramp. It prints the pending total against the expected
 total, every match with status, trip and GL, and both leftovers. Amount is the
 join, so a line Ramp read with a different amount shows on both lists with the
 gap in the header - that is the shape of the hotel on 2026-10-18.
@@ -218,6 +254,13 @@ runs only on "submit 1 2 3" over a list he has read; a submitted reimbursement
 reaches an approver and stops being editable in the ways that matter. Never
 delete or edit a reimbursement that is not his own, and never delete a PENDING
 one without his word - it is in someone's queue.
+
+**When it pays.** Ramp pays reimbursements in two runs a month. The AP
+manager, 2026-11-06: *"our expense reimbursements via Ramp are only initiated
+the 1st and the 15th of each month (with 2-3 business days before payments hit
+employee accounts)"*. A line joins a run only once it is approved, so one
+submitted batch can split across two runs. "Awaiting payment" with no date
+before the next run is normal: tell him the next run date before he asks AP.
 
 ## The report, by day
 
@@ -266,8 +309,8 @@ python -m daydag.expenses reconcile batch.json --amex /path/to/activity.csv
 ```
 
 Three lists: matched, receipts with no charge yet, charges with no receipt.
-The third is the one he acts on - a hotel or a lunch he still has to
-photograph into Rippling. **A statement line is never forwarded**: Rippling
+The third is the one he acts on - a lunch he still has to photograph into
+Ramp, or a hotel, flight or rental car that belongs in Perk. **A statement line is never forwarded**: Rippling
 needs the receipt, and the CSV is not one.
 
 ## What never happens
@@ -276,6 +319,9 @@ needs the receipt, and the CSV is not one.
   Python prints calls; you make them, after he says go, and only those.
 - **One recipient.** `Forward` has no field for another address; do not add
   one at the connector either.
+- **Airfare, accommodations and car rental never go to Ramp.** They are
+  Perk's (AP manager, 2026-10-21). Set aside with one line; not forwarded, not
+  staged, not in `go all`.
 - **A charge summary is never forwarded, nor a statement line.** Rippling
   rejects "bank transaction history, screenshots, credit card slips" as
   proof; Uber mails the summary first under the same subject, and the code
@@ -310,7 +356,10 @@ re-offer is possible. No CSV: skip reconcile, say so. An unverified source
   and a token needs a company admin. `expenses.py` is shaped so an API sink is
   a second `Forward`-like class behind `go`; build it when both exist, not
   before. Details and sources in the reference file.
-- **A new source** (Uber Eats, Lyft, a hotel). Add a `Source` row in
+- **Filing into Perk.** Airfare, accommodations and car rental are his to
+  file there; no connector reaches it. The skill only names what is waiting.
+- **A new source** (Uber Eats, Lyft, a parking app; never an airline, a hotel
+  or a car-rental desk - those are Perk's). Add a `Source` row in
   `expenses.py` with the sender and subject, `verified=False` until a real
   mail has been parsed, and a test on that mail's real shape. The generic rule
   covers it meanwhile and the render says so.

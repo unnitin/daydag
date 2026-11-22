@@ -174,3 +174,58 @@ def test_missing_env_names_are_named_never_guessed():
 def test_a_file_line_without_an_amount_is_refused():
     with pytest.raises(ValueError):
         ramp.files_from_payload([{"file": "/x/a.jpg", "date": "2026-10-05"}])
+
+
+# --------------------------------------------------------------------------
+# Perk, not Ramp: airfare, accommodations and car rental (AP's rule, 2026-10-21)
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "category",
+    ["Lodging", "Hotel", "hotel & lodging", "Accommodation", "Airfare", "Flights", "Car Rental"],
+)
+def test_airfare_lodging_and_car_rental_are_never_staged_in_ramp(category):
+    """A hotel folio was staged here and reimbursed in Ramp on the first trip;
+    AP approved it and said that those three go through Perk. So a file he
+    calls one of them gets no Ramp step at all."""
+    files = ramp.files_from_payload(
+        [file_line(file="/x/folio.pdf", merchant="Hotel Example", category=category)]
+    )
+    assert ramp.stage_files(files, identities=IDS) == []
+    assert [(n, f.path) for n, f in ramp.perk_bound(files)] == [(1, "/x/folio.pdf")]
+
+
+@pytest.mark.parametrize("category", ["Meals", "Rideshare & Taxis", "Ground Transportation", ""])
+def test_everything_else_still_goes_to_ramp(category):
+    files = ramp.files_from_payload([file_line(category=category)])
+    assert len(ramp.stage_files(files, identities=IDS)) == 1
+    assert ramp.perk_bound(files) == []
+
+
+def test_the_render_names_what_goes_through_perk_and_stages_only_the_rest():
+    files = ramp.files_from_payload(
+        [
+            file_line(
+                file="/x/folio.pdf", merchant="Hotel Example", amount="1177.95", category="Lodging"
+            ),
+            file_line(),
+        ]
+    )
+    text = ramp.render_staging(ramp.stage_files(files, identities=IDS), perk=ramp.perk_bound(files))
+    assert "files into ramp - 1 receipt(s)" in text
+    assert "through perk, not ramp - 1 file(s), no ramp step" in text
+    assert "- 1. Hotel Example $1177.95 2026-10-06 (Lodging) /x/folio.pdf" in text
+    # the meal keeps the number he saw it under, and the folio is never uploaded
+    assert '"n": 2' in text and '"n": 1' not in text
+    assert "file=@/x/folio.pdf" not in text
+    assert "file=@/x/slip.jpg" in text
+
+
+def test_a_run_with_nothing_for_perk_renders_as_it_did():
+    files = ramp.files_from_payload([file_line()])
+    stagings = ramp.stage_files(files, identities=IDS)
+    assert ramp.render_staging(stagings, perk=ramp.perk_bound(files)) == ramp.render_staging(
+        stagings
+    )
+    assert "perk" not in ramp.render_staging(stagings)
