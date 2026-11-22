@@ -237,6 +237,7 @@ def test_the_scheduling_table_is_a_projection_of_the_manifests(shipped):
     """ARCHITECTURE's Scheduling table, derived rather than hand-kept."""
     assert set(shipped.schedule()) == {
         "daily-loops",
+        "progress-deck",
         "team-practices",
         "weekly-feedback-scan",
         "weekly-planning-and-progress",
