@@ -48,7 +48,7 @@ artifact is the load-bearing rule; the rest is plumbing.
 | `pulse` | Repo state: local mirrors for history, API for review state. Also the reader of the watchlist's `repos` and `jira` blocks and the one definition of a ticket key; the board join and deltas are retired at tag `pre-retirement` until a loop needs them |
 | `repos` | The first step of every recap: fetch or clone the mirrors of every watched repo and fast-forward his clean working copies, without moving a pulse cursor |
 | `closure` | Open is a verdict, not a default: the reply under every ask is read before the ask is reported open |
-| `vault` | Targeted line edits to a note, with an iCloud-aware compare-and-swap |
+| `vault` | The write under `State.md` and `Style.md`: a whole-note replace that is atomic, a compare-and-swap against what was read, and refuses an iCloud placeholder. The line-edit planner was retired with no caller |
 | `voice` | The template for every push, the sanctioned warning glyph and the one-line clip. The house voice itself is asserted by the suite (`tests/voice_check.py`), not at run time |
 | `runlog` | One row per run in the event log, so a brief that never arrived can still be explained |
 | `recipes` | SPEC §4's prose as literal, testable queries |
