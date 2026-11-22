@@ -1,7 +1,7 @@
-"""Meeting prep pings (SPEC section 3.2, issue #20).
+"""Meeting prep (SPEC sections 3.2 and 3.8, issue #20).
 
-Written before `daydag.prep` exists. Each test names the behaviour someone
-wants, which is the only reason the module below has the shape it has.
+Written before `daydag.prep` existed. Each test names the behaviour someone
+wants, which is the only reason the module has the shape it has.
 
 Two things here are easy to get subtly wrong and are therefore asserted hard:
 
@@ -16,19 +16,30 @@ Two things here are easy to get subtly wrong and are therefore asserted hard:
   verbatim; SPEC section 5 bans em dashes. Somebody else's Slack message may
   contain one, and mangling it to satisfy the voice rules would break the rule
   that matters more. So the voice check runs over what the agent *wrote*.
+
+The second half of the file is the selector: naming the meeting he wants
+prepped (`prep.select`), and asking rather than guessing when the name matches
+two. Those tests moved here with `prep_selector` when it folded into `prep`.
+
+The 30-minute ping these began as was never scheduled, and the code only a
+poller needed retired (tag `pre-retirement`), with the tests of its due
+window. Its guardrails did not: the one destination and the id's shape are in
+`tests/test_guardrails.py`, against `delivery.deliver_push`, beside the
+tripwire that replaced the interrupt gate.
 """
 
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta, timezone
 
 import pytest
 
 from daydag import prep
 from daydag.config import Identities
-from daydag.ledger import NON_MEETING_KINDS, Ledger
+from daydag.ledger import NON_MEETING_KINDS, Ledger, Row, attendee_parts
+from daydag.prep import HORIZON_DAYS, Selection
+from daydag.prep import select as _select
 from daydag.recipes import RecipeError
-from daydag.voice import Push
 from voice_check import voice_violations
 
 PT = timezone(timedelta(hours=-7))
@@ -152,85 +163,7 @@ def test_an_unanswered_invite_still_gets_prepped():
 
 
 # ---------------------------------------------------------------------------
-# timing: 30 minutes before, and worthless after
-# ---------------------------------------------------------------------------
-
-
-def test_the_ping_is_due_thirty_minutes_before_the_meeting():
-    row = _row("11", "Nitin / VP-Data 1:1", MONDAY_9AM)
-    assert prep.due_at(row) == MONDAY_9AM - timedelta(minutes=30)
-
-
-def test_nothing_is_due_before_the_lead_time():
-    schedule = prep.Schedule()
-    row = _row("11", "Nitin / VP-Data 1:1", MONDAY_9AM)
-    assert schedule.due([row], MONDAY_9AM - timedelta(minutes=45), AUDIENCE) == []
-
-
-def test_the_ping_is_dropped_once_the_meeting_has_started():
-    """Time-boxed by definition: after the meeting it is worthless.
-
-    A late interrupt is worse than none - it spends the one interruption budget
-    the architecture allows on something already overtaken by events.
-    """
-    schedule = prep.Schedule()
-    row = _row("11", "Nitin / VP-Data 1:1", MONDAY_9AM)
-    assert schedule.due([row], MONDAY_9AM + timedelta(minutes=1), AUDIENCE) == []
-
-
-def test_a_due_ping_fires_once_and_not_again():
-    schedule = prep.Schedule()
-    row = _row("11", "Nitin / VP-Data 1:1", MONDAY_9AM)
-    now = MONDAY_9AM - timedelta(minutes=30)
-    assert [r.event_id for r, _ in schedule.due([row], now, AUDIENCE)] == ["11"]
-    assert schedule.due([row], now + timedelta(minutes=5), AUDIENCE) == []
-
-
-def test_a_recurring_meeting_is_keyed_on_the_instance_not_the_series():
-    """`ledger.Row.key` carries the start, and prep must key on the same thing.
-
-    A weekly 1:1 that fires once and never again is the failure mode; keying on
-    `event_id` alone produces exactly that and looks correct for a week.
-    """
-    schedule = prep.Schedule()
-    this_week = _row("11", "Nitin / VP-Data 1:1", MONDAY_9AM)
-    next_week = _row("11", "Nitin / VP-Data 1:1", MONDAY_9AM + timedelta(days=7))
-    assert this_week.event_id == next_week.event_id
-    assert schedule.due([this_week], MONDAY_9AM - timedelta(minutes=30), AUDIENCE)
-    assert schedule.due(
-        [next_week], MONDAY_9AM + timedelta(days=7) - timedelta(minutes=30), AUDIENCE
-    )
-
-
-def test_a_standup_is_never_due():
-    schedule = prep.Schedule()
-    row = _row("su", "DE Standup", MONDAY_9AM)
-    assert schedule.due([row], MONDAY_9AM - timedelta(minutes=30), AUDIENCE) == []
-
-
-def test_due_refuses_a_naive_now():
-    schedule = prep.Schedule()
-    row = _row("11", "Nitin / VP-Data 1:1", MONDAY_9AM)
-    with pytest.raises(prep.PrepError):
-        schedule.due([row], datetime(2026, 9, 7, 8, 30), AUDIENCE)
-
-
-def test_a_naive_meeting_start_fails_by_name_not_as_a_typeerror():
-    """A naive `Row.start` must not surface as a datetime comparison error.
-
-    `ledger.seed_day` passes `event["start"]` through untouched, so a calendar
-    read that loses its offset reaches here. Comparing it against an aware
-    `now` raises `TypeError` from inside the loop, which aborts the whole batch
-    of due pings with a message that names neither the meeting nor the cause.
-    """
-    schedule = prep.Schedule()
-    row = _row("11", "Nitin / VP-Data 1:1", datetime(2026, 9, 7, 9, 0))
-    with pytest.raises(prep.PrepError, match="VP-Data"):
-        schedule.due([row], MONDAY_9AM - timedelta(minutes=30), AUDIENCE)
-
-
-# ---------------------------------------------------------------------------
-# sources: the File 2 recipe, run just in time
+# sources: the File 2 recipe, as queries for one meeting
 # ---------------------------------------------------------------------------
 
 
@@ -472,6 +405,17 @@ def test_the_ping_records_why_the_meeting_qualified():
 # ---------------------------------------------------------------------------
 
 
+def _own_words(ping) -> str:
+    """What the agent composed: the render minus each point's evidence line.
+
+    `Point.render` puts a quote and its link on a line of their own, indented
+    under the point. Those words are somebody else's (house rule 1), so the
+    voice check runs over every other line of what `run` actually prints.
+    """
+    evidence = {f'  "{p.quote}" {p.permalink}' for p in ping.points if p.sourced}
+    return "\n".join(line for line in ping.render().splitlines() if line not in evidence)
+
+
 def test_the_ping_renders_clean_in_the_house_voice():
     ping = _ping([_point(), _point("the modeler handoff", "MODELER-OWNER is out from wed")])
     assert voice_violations(ping.render()) == [], ping.render()
@@ -487,76 +431,30 @@ def test_a_verbatim_quote_keeps_its_em_dash_and_the_agents_own_words_stay_clean(
 
     Rewriting someone's message to satisfy a style rule is the paraphrase the
     quoting rule exists to prevent. So the em dash survives, and the voice check
-    runs over what the agent wrote.
+    runs over what the agent wrote: the render `run` prints, with the quoted
+    line taken out.
     """
     dashed = "we merged everything — ready for 10k"
     ping = _ping([_point(quote=dashed)])
     assert dashed in ping.render(), "the quote was silently rewritten"
-    assert voice_violations(ping.authored_text()) == []
+    assert dashed not in _own_words(ping), "the quoted line was not excised"
+    assert voice_violations(_own_words(ping)) == []
     assert any("dash" in v for v in voice_violations(ping.render()))
 
 
 def test_an_unsanctioned_emoji_in_the_agents_own_words_is_caught():
     ping = _ping([_point("ship it \U0001f680")])
-    assert voice_violations(ping.authored_text())
+    assert voice_violations(_own_words(ping))
 
 
 # ---------------------------------------------------------------------------
-# the one interrupt
+# no send path
 # ---------------------------------------------------------------------------
-
-
-@pytest.mark.guardrail
-def test_the_prep_ping_is_the_only_push_allowed_off_schedule():
-    """ARCHITECTURE's interaction model, as a check rather than a paragraph."""
-    assert prep.may_interrupt(Push.PREP_PING) is True
-    for kind in Push:
-        if kind is not Push.PREP_PING:
-            assert prep.may_interrupt(kind) is False, kind
-
-
-@pytest.mark.guardrail
-def test_the_ping_goes_to_the_principals_own_dm_and_nowhere_else(identities):
-    assert prep.recipient(identities) == "UPRINCIPAL1"
-
-
-@pytest.mark.guardrail
-@pytest.mark.parametrize(
-    "value",
-    [
-        "",
-        "   ",
-        "nitin",
-        "@nitin",
-        "UPRINCIPAL1        # the person the agent works for",
-    ],
-)
-def test_a_principal_id_that_is_not_an_id_is_refused(tmp_path, value):
-    """Guardrail 1's one permitted destination is the one that must be checked.
-
-    `slack_search` already refuses a non-id because a display name matches
-    nothing *silently*. The DM target had no such floor, so a hand-edited `.env`
-    - the last line of the file, with an inline comment glued on, which is how
-    `.env.example` teaches the format - addressed the ping at a conversation id
-    that is not one, instead of failing loudly.
-    """
-    env = tmp_path / ".env"
-    env.write_text(f"SLACK_USER_PRINCIPAL={value}\n", encoding="utf-8")
-    with pytest.raises(prep.PrepError):
-        prep.recipient(Identities.from_file(env))
-
-
-@pytest.mark.guardrail
-def test_a_missing_principal_id_is_an_error_not_a_guess(tmp_path):
-    env = tmp_path / ".env"
-    env.write_text("SLACK_CH_POD=CPODCHANNEL\n", encoding="utf-8")
-    with pytest.raises(prep.PrepError):
-        prep.recipient(Identities.from_file(env))
 
 
 @pytest.mark.guardrail
 def test_prep_exposes_no_send_path():
-    """Guardrail 1. Prep builds the ping; something else, later, delivers it."""
+    """Guardrail 1. Prep builds the text; nothing in the module can post it."""
     exported = {name for name in dir(prep) if not name.startswith("_")}
     assert not exported & {"send", "post", "dm", "deliver", "reply", "forward"}
 
@@ -594,3 +492,346 @@ def test_a_missing_org_domain_means_nobody_is_declared_external(tmp_path):
 def test_prep_errors_are_recipe_errors_so_one_catch_covers_the_seam(identities):
     """`recipes` raises `RecipeError`; a caller of prep should catch one type."""
     assert issubclass(prep.PrepError, RecipeError)
+
+
+# ---------------------------------------------------------------------------
+# naming the meeting: `prep.select`
+#
+# `prep` preps the NEXT qualifying meeting. Asking for a particular one is a
+# different question - *"prep me for the Finance call"* - and it had nowhere to
+# go.
+#
+# The hard part is not matching. It is what to do when the selector matches more
+# than one meeting, which is the common case rather than the edge: "Wren" is in a
+# recurring 1:1 and also in a steering meeting, and a week holds several of each.
+# Invariant 5 says surface, do not resolve. Guessing which one he meant produces
+# prep for the wrong meeting, and prep for the wrong meeting is worse than none -
+# he reads it, trusts it, and walks into the other one cold.
+#
+# Names here are fixtures. The repo is public; real ones live in `.env` and
+# arrive as arguments.
+# ---------------------------------------------------------------------------
+
+NOW = datetime(2026, 9, 14, 9, 0, tzinfo=UTC)
+UNTIL = NOW + timedelta(days=HORIZON_DAYS)
+
+
+def select(rows, selector, **kw):
+    kw.setdefault("now", NOW)
+    kw.setdefault("until", UNTIL)
+    return _select(rows, selector, **kw)
+
+
+def _row_at(summary: str, *attendees: str, hours: int = 4, event_id: str = "") -> Row:
+    """Attendees may be bare addresses or `"Name <addr>"`; split the way
+    `Ledger.seed_day` does, so these rows look like real ones."""
+    start = NOW + timedelta(hours=hours)
+    parts = [attendee_parts(a) for a in attendees]
+    return Row(
+        event_id=event_id or summary.lower().replace(" ", "-"),
+        start=start,
+        end=start + timedelta(minutes=30),
+        summary=summary,
+        attendees=[addr for addr, _ in parts],
+        attendee_names=[name for _, name in parts],
+    )
+
+
+PRINCIPAL = "principal@example.com"
+
+
+# --------------------------------------------------------------------------
+# matching a person
+# --------------------------------------------------------------------------
+
+
+def test_a_first_name_matches_the_attendee_it_belongs_to():
+    rows = [
+        _row_at("1:1 Bi-Weekly | Nitin x Wren", PRINCIPAL, "wren.alder@example.com"),
+        _row_at("Pod Steering", PRINCIPAL, "bo.finch@example.com", hours=6),
+    ]
+
+    found = select(rows, "wren", now=NOW)
+
+    assert found.one is not None
+    assert found.one.summary.endswith("Wren")
+
+
+def test_a_full_name_needs_both_halves_to_match():
+    """ "Bo Finch" must not match a different Bo. Two tokens, both required."""
+    rows = [
+        _row_at("Sync", PRINCIPAL, "bo.alder@example.com"),
+        _row_at("Review", PRINCIPAL, "bo.finch@example.com", hours=6),
+    ]
+
+    found = select(rows, "bo finch", now=NOW)
+
+    assert found.one is not None
+    assert found.one.summary == "Review"
+
+
+def test_a_name_in_the_title_matches_even_with_no_attendee_list():
+    """An ATS interview lists only the principal - the other party comes
+    through a different calendar - so the title is all there is."""
+    rows = [_row_at("Interview - Wren Alder - Staff Engineer", PRINCIPAL)]
+
+    assert select(rows, "wren alder", now=NOW).one is not None
+
+
+# --------------------------------------------------------------------------
+# matching a title
+# --------------------------------------------------------------------------
+
+
+def test_a_phrase_matches_the_title_loosely():
+    rows = [
+        _row_at("Finance x Data meeting", PRINCIPAL, "a@example.com"),
+        _row_at("Pod Steering", PRINCIPAL, "b@example.com", hours=6),
+    ]
+
+    assert select(rows, "finance x data", now=NOW).one is not None
+
+
+def test_matching_ignores_case_and_spacing():
+    rows = [_row_at("Finance x Data meeting", PRINCIPAL, "a@example.com")]
+
+    assert select(rows, "  FINANCE X DATA  ", now=NOW).one is not None
+
+
+# --------------------------------------------------------------------------
+# the case that matters: more than one
+# --------------------------------------------------------------------------
+
+
+def test_two_matches_are_surfaced_rather_than_resolved():
+    """Invariant 5. Prep for the wrong meeting is worse than no prep - he reads
+    it, trusts it, and walks into the other one cold."""
+    rows = [
+        _row_at("1:1 | Nitin x Wren", PRINCIPAL, "wren.alder@example.com", hours=4),
+        _row_at("Pod Steering", PRINCIPAL, "wren.alder@example.com", hours=30),
+    ]
+
+    found = select(rows, "wren", now=NOW)
+
+    assert found.one is None
+    assert len(found.candidates) == 2
+
+
+def test_the_same_meeting_twice_in_the_horizon_is_still_ambiguous():
+    """A recurring 1:1 twice a week is the common case, not the edge. Silently
+    taking the sooner one is a guess dressed as an answer."""
+    rows = [
+        _row_at("1:1 | 2x weekly | Nitin x Wren", PRINCIPAL, "wren.alder@example.com", hours=4),
+        _row_at(
+            "1:1 | 2x weekly | Nitin x Wren",
+            PRINCIPAL,
+            "wren.alder@example.com",
+            hours=72,
+            event_id="later",
+        ),
+    ]
+
+    found = select(rows, "wren", now=NOW)
+
+    assert found.one is None
+    assert len(found.candidates) == 2
+
+
+def test_nothing_matching_says_what_it_looked_for():
+    rows = [_row_at("Pod Steering", PRINCIPAL, "a@example.com")]
+
+    found = select(rows, "wren", now=NOW)
+
+    assert found.one is None
+    assert found.candidates == ()
+    assert "wren" in found.render().lower()
+
+
+# --------------------------------------------------------------------------
+# the window
+# --------------------------------------------------------------------------
+
+
+def test_a_meeting_already_over_is_never_selected():
+    """Prep is for something coming up. A meeting this morning cannot be
+    prepped for this afternoon."""
+    rows = [_row_at("1:1 | Nitin x Wren", PRINCIPAL, "wren.alder@example.com", hours=-2)]
+
+    assert select(rows, "wren", now=NOW).one is None
+
+
+def test_a_meeting_past_the_horizon_is_not_selected():
+    """Bounded so the answer stays about this week. Two weeks out, the Slack
+    and mail evidence a prep is built from has not happened yet."""
+    rows = [
+        _row_at(
+            "1:1 | Nitin x Wren",
+            PRINCIPAL,
+            "wren.alder@example.com",
+            hours=24 * (HORIZON_DAYS + 2),
+        )
+    ]
+
+    assert select(rows, "wren", now=NOW).one is None
+
+
+def test_an_empty_selector_is_refused_rather_than_matching_everything():
+    """`""` as a substring is in every title. Matching all of them and taking
+    the first would look exactly like a working selector."""
+    rows = [_row_at("Pod Steering", PRINCIPAL, "a@example.com")]
+
+    with pytest.raises(ValueError):
+        select(rows, "   ", now=NOW)
+
+
+# --------------------------------------------------------------------------
+# it does not leak the principal
+# --------------------------------------------------------------------------
+
+
+def test_the_principal_is_not_matchable():
+    """He is on every meeting, so his own name selects all of them - which
+    reads as "ambiguous" on every query and hides a real miss."""
+    rows = [
+        _row_at("Pod Steering", PRINCIPAL, "a@example.com"),
+        _row_at("Finance x Data", PRINCIPAL, "b@example.com", hours=6),
+    ]
+
+    found = select(rows, "principal", now=NOW, principal=PRINCIPAL)
+
+    assert found.one is None
+    assert found.candidates == ()
+
+
+def test_selection_renders_the_candidates_with_their_times():
+    rows = [
+        _row_at("1:1 | Nitin x Wren", PRINCIPAL, "wren.alder@example.com", hours=4),
+        _row_at("Pod Steering", PRINCIPAL, "wren.alder@example.com", hours=30),
+    ]
+
+    rendered = select(rows, "wren", now=NOW).render()
+
+    assert "Pod Steering" in rendered
+    assert "1:1" in rendered
+    assert isinstance(Selection((), "x").render(), str)
+
+
+# --------------------------------------------------------------------------
+# what the review found
+# --------------------------------------------------------------------------
+
+
+def test_a_selector_with_no_word_in_it_raises_rather_than_matching_the_week():
+    """The guard is on the TOKENS. An empty token set is a subset of every
+    title's, so "---" passed a guard on the string and matched everything -
+    rendering "which one?" over the whole week instead of saying the selector
+    was bad."""
+    rows = [_row_at("Pod Steering", PRINCIPAL, "a@example.com")]
+
+    for bad in ("---", "@@", "?", "  "):
+        with pytest.raises(ValueError):
+            select(rows, bad)
+
+
+def test_a_partial_word_does_not_match():
+    """No substring path. "fin" finding Finance is the fuzziness KNOWN LIMIT
+    refuses, because it buys back the wrong-meeting failure."""
+    rows = [_row_at("Finance x Data meeting", PRINCIPAL, "a@example.com")]
+
+    assert select(rows, "fin").candidates == ()
+    assert select(rows, "finance").one is not None
+
+
+def test_a_display_name_never_reaches_the_address_the_principal_is_compared_to():
+    """The shape that broke everything: a name folded into the address string
+    made `"Nitin S <p@x>" == "p@x"` false and the skip died. Split at the seam,
+    the address is bare and the skip holds while the name still matches."""
+    rows = [_row_at("Sync", "Prin Cipal <principal@example.com>", "Wren Alder <wren@example.com>")]
+
+    assert select(rows, "prin", principal=PRINCIPAL).candidates == ()
+    assert select(rows, "wren alder", principal=PRINCIPAL).one is not None
+
+
+def test_candidates_render_in_his_zone_and_his_register():
+    """A 13:00 PT meeting delivered as 20:00Z listed as 20:00 while the brief
+    said 1:00 for the same meeting - he picks off a list that disagrees with
+    his calendar. Localised, lowercase, 12-hour, like every other push."""
+    from zoneinfo import ZoneInfo
+
+    pt = ZoneInfo("America/Los_Angeles")
+    rows = [
+        _row_at("Ruwen / Nitin 1-1", PRINCIPAL, "r@example.com", hours=4),
+        _row_at("D&T Program Review", PRINCIPAL, "r@example.com", hours=30),
+    ]
+
+    rendered = select(rows, "r", tz=pt).render()
+
+    assert "20:00" not in rendered and "13:00" not in rendered
+    assert "mon 14 sep" in rendered, rendered
+
+
+def test_the_match_bound_is_the_end_of_the_fetched_window_not_a_rolling_instant():
+    """`until` belongs to the caller: the plan fetched specific day windows and
+    a match past the last one is a meeting nobody fetched."""
+    rows = [_row_at("Late", PRINCIPAL, "a@example.com", hours=24 * HORIZON_DAYS - 1)]
+
+    assert select(rows, "late").one is not None
+    assert select(rows, "late", until=NOW + timedelta(days=HORIZON_DAYS - 1)).one is None
+
+
+def test_the_domain_half_of_an_address_is_not_matchable():
+    """Every colleague shares it, so a selector hitting the domain would match
+    the whole invite list and read as "ambiguous" on every query."""
+    rows = [
+        _row_at("Pod Steering", PRINCIPAL, "wren.alder@example.com"),
+        _row_at("Finance x Data", PRINCIPAL, "bo.finch@example.com", hours=6),
+    ]
+
+    found = select(rows, "example", now=NOW)
+
+    assert found.candidates == ()
+
+
+def test_the_principal_is_skipped_by_address_not_by_luck():
+    """`attendees` are EMAILS, so the principal has to arrive as one. The first
+    wiring passed a Slack id, which matches no address - the skip was dead
+    while looking wired, and the tests passed because the fixture principal
+    happened to be email-shaped.
+    """
+    rows = [_row_at("Pod Steering", "nitin.example@example.com", "wren.alder@example.com")]
+
+    by_email = select(rows, "nitin", now=NOW, principal="nitin.example@example.com")
+    # Deliberately not shaped like a real Slack id - the secret scanner cannot
+    # tell a fixture from the real thing and is right not to try. What matters
+    # is only that it is NOT an email address.
+    by_slack_id = select(rows, "nitin", now=NOW, principal="a-slack-id-not-an-address")
+
+    assert by_email.candidates == (), "the principal matched himself"
+    assert by_slack_id.candidates != (), (
+        "this must differ - it is what proves the skip depends on the address"
+    )
+
+
+def test_a_surname_that_exists_only_in_the_display_name_still_matches():
+    """Real addresses are often a bare first name - `jonathan@`, `alex@` - so
+    the surname lives only in google's `displayName`. Shaped as the address
+    alone, "jonathan strauss" cannot match and bare "jonathan" matches a
+    DIFFERENT Jonathan. `SKILL.md` requires the `"Full Name <addr>"` form.
+    """
+    rows = [
+        _row_at("Label Summit", PRINCIPAL, "Jonathan Strauss <jonathan@example.com>"),
+        _row_at("Pod Steering", PRINCIPAL, "jonathan.other@example.com", hours=6),
+    ]
+
+    found = select(rows, "jonathan strauss", now=NOW)
+
+    assert found.one is not None
+    assert found.one.summary == "Label Summit"
+
+
+def test_a_bare_address_still_matches_its_first_name():
+    """The display name is an addition, not a replacement - an attendee shaped
+    the old way must not stop matching."""
+    rows = [_row_at("Sync", PRINCIPAL, "wren.alder@example.com")]
+
+    assert select(rows, "wren", now=NOW).one is not None

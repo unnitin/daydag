@@ -55,9 +55,15 @@ COVERED (behavioural - real code, real assertions)
       via `NotesGap`, so a meeting whose own title is sensitive is withheld the
       same way a private chase or watch item is when the rule-7 switch is on
       (was GAP 3, #61)
-    - `daydag.delivery.deliver_push` and `deliver_prep_ping` have no
-      destination parameter at all - the resolved principal id is the only
-      channel a send can ever name (#10, full coverage in `tests/test_delivery.py`)
+    - `daydag.delivery.deliver_push` has no destination parameter at all - the
+      resolved principal id is the only channel a send can ever name (#10,
+      full coverage in `tests/test_delivery.py`)
+    - that id is read from a real `.env` and checked for its SHAPE: missing,
+      empty, a display name or an id with an inline comment glued on is
+      refused before anything is posted. These three were `prep.recipient`'s
+      guardrails in `tests/test_prep.py`; when the 30-minute ping retired
+      they moved onto `delivery`'s twin of that check, the one a send goes
+      through
     - a message for anyone else is a `Draft`, and no function in `daydag.delivery`
       accepts a `Draft` and a `Transport` together
     - every Atlassian tool an unattended run's allowlist names (`scripts/*.sh`)
@@ -75,6 +81,10 @@ TRIPWIRES (no implementation exists - these fail when one lands unguarded)
       the package as a payload the agent fetched (`daydag.run`) or through a
       callable the caller injects (`brief.Sources`, `delivery.Transport`), so
       nothing in the package can reach a connector on its own
+    - no push can fire on the package's own clock: nothing in `src/daydag/`
+      waits, polls or schedules. Was behavioural - `prep.may_interrupt`, "the
+      prep ping is the only push allowed off schedule" - until the ping's
+      machinery retired with nothing to fire it (tag `pre-retirement`)
 
 GAPS - not covered here, and not pretended to be
     1. Decisions. The queue that read a "yes"/"no" beside a line retired with
@@ -115,6 +125,7 @@ from pathlib import Path
 import pytest
 
 from daydag import delivery, manifests
+from daydag.config import Identities
 from daydag.manifests import PRIVATE_SURFACES, Registry, RegistryError
 from daydag.pulse import Item, Mirror, Pulse
 from daydag.state import EventLog, NotesGap, StateFolder
@@ -239,7 +250,7 @@ def folder(tmp_path: Path) -> StateFolder:
 #: Kept whole, including "slack send" (#10): `daydag.delivery` is now a real
 #: send path, but it holds no literal Slack-client symbol - the transport is
 #: an injected callable, never `slack_send_message`/`postMessage` themselves
-#: (contract 4). So this tripwire still fires exactly as before if some OTHER
+#: (contract 3). So this tripwire still fires exactly as before if some OTHER
 #: module in the package ever calls a Slack client directly, bypassing
 #: `daydag.delivery`'s channel resolution and its `Draft`/`Transport` split.
 #: What changed is not this dict, but that the send path it defends against
@@ -306,6 +317,153 @@ def test_the_only_autonomous_destination_is_the_resolved_principal_id():
         identities={"SLACK_USER_PRINCIPAL": "UPRINCIPAL1"},
     )
     assert seen["channel"] == "UPRINCIPAL1" == sent.channel
+
+
+def _env(tmp_path: Path, text: str) -> Identities:
+    """Identities read the way a run reads them: from a `.env` on disk."""
+    env = tmp_path / ".env"
+    env.write_text(text, encoding="utf-8")
+    return Identities.from_file(env)
+
+
+def _recorder() -> tuple[delivery.Transport, list[str]]:
+    """A transport that posts nothing, and every channel it was handed."""
+    channels: list[str] = []
+
+    def transport(*, channel: str, text: str, thread_ts: str | None = None):
+        channels.append(channel)
+        return {"ts": "100.001"}
+
+    return transport, channels
+
+
+@pytest.mark.guardrail
+def test_the_push_goes_to_the_principals_own_dm_and_nowhere_else(tmp_path: Path):
+    """BEHAVIOURAL. Guardrail 1, from a `.env` that holds other ids too.
+
+    Was `prep.recipient`'s guardrail (`test_the_ping_goes_to_...`). The 30-minute
+    ping retired with nothing to fire it; the destination rule did not, and the
+    code that holds it for a send is `deliver_push`. A real `.env` carries
+    channel ids beside the principal's - the one message goes to his and to
+    nothing else in the file.
+    """
+    identities = _env(
+        tmp_path,
+        "SLACK_USER_PRINCIPAL=UPRINCIPAL1\n"
+        "SLACK_CH_POD=CPODCHANNEL\n"
+        "ORG_EMAIL_DOMAIN=example.com\n"
+        "PREP_LEADERSHIP=sponsor@example.com\n",
+    )
+
+    transport, channels = _recorder()
+
+    sent = delivery.deliver_push(
+        "hello", kind=Push.MORNING_BRIEF, transport=transport, identities=identities
+    )
+
+    assert channels == ["UPRINCIPAL1"], f"a push went somewhere else: {channels}"
+    assert sent.channel == "UPRINCIPAL1"
+
+
+@pytest.mark.guardrail
+@pytest.mark.parametrize(
+    "value",
+    [
+        "",
+        "   ",
+        "nitin",
+        "@nitin",
+        "UPRINCIPAL1        # the person the agent works for",
+    ],
+)
+def test_a_principal_id_that_is_not_an_id_is_refused(tmp_path: Path, value: str):
+    """BEHAVIOURAL. Guardrail 1's one permitted destination is the one that must
+    be checked.
+
+    `slack_search` already refuses a non-id because a display name matches
+    nothing *silently*. The DM target had no such floor, so a hand-edited `.env`
+    - the last line of the file, with an inline comment glued on, which is how
+    `.env.example` teaches the format - addressed the push at a conversation id
+    that is not one, instead of failing loudly.
+
+    Was `prep.recipient`'s guardrail, same five values. `brief._principal` and
+    `run._principal` resolve the same key and do NOT check its shape - they
+    build queries with it - so this is held by `delivery`, the code that
+    addresses a message, and it now also asserts that nothing was posted.
+    """
+    identities = _env(tmp_path, f"SLACK_USER_PRINCIPAL={value}\n")
+    transport, channels = _recorder()
+
+    with pytest.raises(delivery.DeliveryError):
+        delivery.deliver_push(
+            "hello", kind=Push.MORNING_BRIEF, transport=transport, identities=identities
+        )
+    assert channels == [], "a destination that is not an id reached the transport"
+
+
+@pytest.mark.guardrail
+def test_a_missing_principal_id_is_an_error_not_a_guess(tmp_path: Path):
+    """BEHAVIOURAL. No fallback destination: another id in the file is not his.
+
+    Was `prep.recipient`'s guardrail; held today by `deliver_push`.
+    """
+    identities = _env(tmp_path, "SLACK_CH_POD=CPODCHANNEL\n")
+    transport, channels = _recorder()
+
+    with pytest.raises(delivery.DeliveryError):
+        delivery.deliver_push(
+            "hello", kind=Push.MORNING_BRIEF, transport=transport, identities=identities
+        )
+    assert channels == [], "with no principal id the push went somewhere anyway"
+
+
+#: What it takes for the package to fire a push at a moment of its own choosing:
+#: something that waits on a clock. Identifiers only - "sleep" in a string is
+#: prose - and anchored, so `registry.schedule` (the manifests' `schedule:` keys,
+#: printed as a table) is not a hit.
+SELF_FIRING_PATTERNS = {
+    "a wait": r"^(sleep|Timer|call_later|call_at|setitimer|alarm)$",
+    "a scheduler": (
+        r"^(sched|scheduler|apscheduler|BackgroundScheduler|BlockingScheduler|run_pending)$"
+    ),
+}
+
+
+@pytest.mark.guardrail
+def test_no_push_can_fire_on_the_packages_own_clock():
+    """TRIPWIRE. ARCHITECTURE's interaction model: nothing arrives off-schedule.
+
+    This was behavioural while the 30-minute prep ping had a send path -
+    `prep.may_interrupt`'s truth table, "the prep ping is the only push allowed
+    off schedule". Nothing was ever built to fire that ping, so the gate, the
+    due window and the threaded send retired together (tag `pre-retirement`)
+    and what is left of the property is an absence: no code in `src/daydag/`
+    waits on a clock, so a push exists only because somebody, or launchd, ran
+    a loop.
+
+    It fires the day a wait, a timer or a scheduler lands in the package. What
+    is required then is the gate back, not an exemption here: one function
+    naming which `Push` kinds may arrive unasked - it was `Push.PREP_PING` and
+    nothing else - consulted by whatever fires, with its truth table pinned in
+    this file.
+
+    Not covered, and not pretended to be: a schedule added OUTSIDE the package,
+    as a launchd job or a script under `scripts/`. That is a reviewer's read
+    against ARCHITECTURE's scheduling table, not this scan's.
+    """
+    _self_check_scanner()
+    for label, name in (("a wait", "sleep"), ("a wait", "Timer"), ("a scheduler", "sched")):
+        assert re.search(SELF_FIRING_PATTERNS[label], name), (
+            f"the {label!r} pattern no longer matches {name!r} - this tripwire is vacuous"
+        )
+    hits = _scan(SELF_FIRING_PATTERNS, include_strings=False)
+    assert not hits, _tripwire(
+        "a push that can fire on the package's own clock",
+        "one gate naming which Push kinds may arrive off-schedule (the retired "
+        "`prep.may_interrupt` allowed Push.PREP_PING and nothing else), consulted "
+        "by whatever fires; every other push waits for its scheduled slot.",
+        hits,
+    )
 
 
 @pytest.mark.guardrail

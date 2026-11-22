@@ -136,7 +136,7 @@ So the link is a ledger, and calendar is the driver.
 2. **Ingestion attaches, it doesn't discover.** Each sweep (every 30 min through the working day, #168) tries to match unattached rows against Gemini mail from `gemini-notes@google.com`, the Notion DB, and Granola. Matching is title-first: Gemini's subject is structured (`Notes: "<title>" <date>`), so an exact title match settles it outright. Only when the title matches zero or several rows does it fall back to scoring - arrival inside `[event end - 45 min, event end + the source's window]` · fuzzy title · attendee overlap. The lower bound is negative because meetings finish early and Gemini writes up when they actually end; the upper bound is per-source and wide - 18h for Gemini - because the lag is generation, not delivery (`ledger.ARRIVAL_WINDOW`). High score attaches; **ambiguous surfaces rather than guesses** (invariant 5) — two 1:1s back to back with near-identical titles is the case that breaks naive matching.
 3. **A row stays open across sweeps.** Notion lands ~a week late, so an unmatched row is re-checked, not closed. Late arrival backfills and re-runs ingestion for that meeting, which is why the ledger lives in the event log rather than being derived fresh each run.
 4. **Unmatched by the next morning becomes a brief line** — "tue: 3 meetings w/ no notes — X, Y, Z. recorded anywhere?" That is the actual guarantee. Not that every meeting has notes; that a missing one is *visible* the next morning instead of discovered a month later.
-5. **The ledger is also the prep trigger** (§3.2) and the OOO detector — same rows, already pulled.
+5. **The ledger is also prep's input** (§3.2: `prep.prep_worthy` narrows its rows, nothing re-qualifies them) and the OOO detector - same rows, already pulled.
 
 Ledger rows live in the event log. `DayDAG/State.md` shows only the open gaps, so the markdown stays short and hand-editable.
 
@@ -248,6 +248,8 @@ The scheduling table says when the agent *runs*. This says when it **expects som
 **Decisions are batched, never interrupted.** Guardrail 1 means a lot of things need a yes — every outbound draft, every loop the pulse thinks moved, every vault diff. If each one pinged on discovery, the DM becomes noise and gets ignored, which fails the guardrail more completely than not having it. So a pending decision waits for the next of the five scheduled pushes and rides along in a `decisions` section.
 
 **One interrupt exists:** the meeting-prep ping, 30 min before a qualifying meeting (§3.2). It's time-boxed by definition — after the meeting it's worthless — so it's the only thing allowed to arrive off-schedule.
+
+Status, 2026-11-21: that interrupt is the design and was never built. Nothing fires a prep ping, so the code written for a poller - `prep.Schedule`, `due_at`, `may_interrupt`, `recipient`, and `delivery.deliver_prep_ping` with its threaded reply - is retired at tag `pre-retirement`. What runs today: `prep` is a pull (`python -m daydag.run plan|render prep [--for "<meeting or person>"]`), the day-before `prep-ahead` is the one prep with a scheduled runner (`scripts/scheduled_loop.sh`), and nothing arrives off-schedule. A tripwire in `tests/test_guardrails.py` fails when a timer or a poller lands in `src/daydag/`, and names the gate to restore before one ships.
 
 ### The decision queue
 

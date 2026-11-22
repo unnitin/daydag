@@ -50,11 +50,12 @@ KNOWN LIMIT
     All eight loops in `LOOPS` render. `prep-ahead` plans in two stages (the day,
     then the reads for each call a prep rule matched) - see `prep_ahead`.
     Without `--for`, `prep` renders the NEXT meeting worth prepping; with it,
-    the one he named (`prep_selector`).
+    the one he named (`prep.select`).
     Either way its points come from the overnight Slack payload rather than
     the row-specific searches `prep.sources` would build, because the two-phase
-    plan cannot know the row before the fetch. FIRING a prep ping at a
-    meeting's start time is scheduling, and belongs to #25, not here.
+    plan cannot know the row before the fetch. Nothing FIRES a prep at a
+    meeting's start time: no poller was built, and the schedule, interrupt
+    gate and threaded delivery written for one are at tag `pre-retirement`.
 
     The plan is advisory. Nothing verifies the agent actually ran the query it
     was given rather than one of its own. What `render` does catch is a
@@ -95,8 +96,7 @@ from daydag.ledger import (
     title_from_gemini_subject,
 )
 from daydag.people import People
-from daydag.prep import Audience, Reason, build, point, prep_worthy
-from daydag.prep_selector import HORIZON_DAYS, select
+from daydag.prep import HORIZON_DAYS, Audience, Reason, build, point, prep_worthy, select
 from daydag.pulse import (
     FIRST_SIGHT,
     READ_FAILED,
@@ -1698,15 +1698,15 @@ def _prep(
 ) -> str:
     """The meeting to prep for, and what to raise in it.
 
-    Without a selector: the NEXT qualifying one, because a prep ping is the only
-    push allowed to interrupt (`prep.may_interrupt`) and is worth exactly as
-    much as its timing.
+    Without a selector: the NEXT qualifying one - the first row that has not
+    started and that `prep_worthy` accepts. SPEC 3.2 meant this to be fired
+    thirty minutes out; nothing fires it, so it runs when he runs it.
 
     With one: the meeting he NAMED, and `prep_worthy` is deliberately not
-    consulted. That gate answers "is this worth interrupting him for", which is
-    a question about an unprompted ping. He asked - a standup he wants prepped
-    is a standup he gets prepped, and refusing on the grounds that it is a
-    standup would be the tool arguing with the request.
+    consulted. That gate answers "is this worth prepping unprompted", which is
+    not the question when he asked. A standup he wants prepped is a standup he
+    gets prepped, and refusing on the grounds that it is a standup would be the
+    tool arguing with the request.
 
     Several matches surface as several (`Selection.render`). Prep for the wrong
     meeting is worse than none: he reads it, trusts it, and walks into the other
@@ -1748,9 +1748,9 @@ def _prep(
         row = found.one
         if row is None:
             return found.render()
-        # ASKED_FOR, unconditionally. He named it; the ping rules are not
-        # consulted, so they must not be credited - a named 1:1 stamped "1:1"
-        # would make the rules look better than they are.
+        # ASKED_FOR, unconditionally. He named it; `prep_worthy`'s rules are
+        # not consulted, so they must not be credited - a named 1:1 stamped
+        # "1:1" would make the rules look better than they are.
         return build(row, Reason.ASKED_FOR, _points(payloads)).render()
 
     # `open_rows` is already oldest-first; filtering keeps that order.
@@ -2273,14 +2273,14 @@ def main(argv: list[str] | None = None) -> int:
     # morning's shell step), so the pulse reads them rather than fetching again.
     fresh_within = MIRRORS_FRESH_FOR if "--prefetched" in args else None
     # `--for` names the meeting to prep. Without it `prep` takes the next
-    # qualifying one, which is the scheduled ping's behaviour.
+    # qualifying one.
     selector = ""
     if "--for" in args:
         after = args[args.index("--for") + 1 :]
         if not after or after[0].startswith("--"):
             # Falling through to the next-qualifying meeting here would prep a
             # meeting he did not ask about and say nothing - the wrong-meeting
-            # failure prep_selector calls worse than no prep.
+            # failure `prep.select` exists to prevent, worse than no prep.
             print("--for needs a meeting or a person after it", file=sys.stderr)
             return 2
         selector = after[0]

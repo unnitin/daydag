@@ -56,10 +56,9 @@ artifact is the load-bearing rule; the rest is plumbing.
 | `brief` | SPEC §3.1's morning brief: the assembler every other loop composes from |
 | `budget` | The morning push fitted to one Slack message: ranked, capped, every cut counted where he can find it, overflow in one threaded reply (#185) |
 | `eod_wrap` | SPEC §3.5's EOD wrap: what closed, what moved, tomorrow's first meeting |
-| `prep` | Meeting prep pings: the one interrupt, 30 min out, qualified by the ledger |
+| `prep` | Meeting prep: the next meeting worth it, or the one he named (asking, never guessing, when a name fits two), why it qualifies, and its talking points. Nothing ever scheduled SPEC §3.2's 30-minute ping, so the parts only a poller needs are retired at tag `pre-retirement` |
 | `week_ahead` | SPEC §3.6's Sunday week-ahead: a read of Friday's plan, assembled into one push |
-| `delivery` | The one autonomous send - the principal's DM - and the threaded prep reply |
-| `prep_selector` | Naming the meeting to prep for, and refusing to guess between two |
+| `delivery` | The one autonomous send: a rendered push to the principal's DM. The threaded prep reply is retired at tag `pre-retirement` with the ping |
 | `prep_ahead` | Day-before prep for the calls his `## Prep rules` name - rows he edits, not code |
 | `people` | Who someone is - ids, title, DM, groups, how often met - with stated facts outranking inferred ones |
 | `run` | The two-phase contract that makes a loop runnable: plan the fetch, assemble the push |
