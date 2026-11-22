@@ -359,3 +359,37 @@ def test_the_typo_line_names_the_repo_once(tmp_path, repo_landing_on_dev):
     mirror = store.sync([WatchedRepo("ExampleOrg", "svc", branch="devv")]).mirrors[0]
     rendered = Pulse(mirrors=[mirror]).render()
     assert rendered.count("ExampleOrg/svc") == 1, rendered
+
+
+def test_a_merge_button_landing_is_titled_by_its_pr_not_its_branch():
+    from daydag.pulse import _landing_title
+
+    assert (
+        _landing_title(
+            "Merge pull request #964 from ExampleOrg/feat/TDE-1007-all-labels",
+            "Label engine: every label, not the first page\n\nlonger body",
+        )
+        == "Label engine: every label, not the first page (#964)"
+    )
+
+
+def test_a_squash_landing_and_a_bodiless_merge_keep_their_subject():
+    from daydag.pulse import _landing_title
+
+    assert _landing_title("fix(auth): constrain intent IDs (#422)", "") == (
+        "fix(auth): constrain intent IDs (#422)"
+    )
+    assert _landing_title("Merge pull request #7 from ExampleOrg/x", "  \n") == (
+        "Merge pull request #7 from ExampleOrg/x"
+    )
+
+
+def test_a_landing_links_to_github_not_to_a_path_on_this_machine():
+    from daydag.pulse import WatchedRepo, github_link
+
+    assert github_link(WatchedRepo("ExampleOrg", "svc")).format(sha="abc123") == (
+        "https://github.com/ExampleOrg/svc/commit/abc123"
+    )
+    assert github_link(WatchedRepo("ExampleOrg", "svc").wiki_repo()) == (
+        "https://github.com/ExampleOrg/svc/wiki/_history"
+    )

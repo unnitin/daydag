@@ -9,7 +9,7 @@ network.
 
 import shutil
 import subprocess
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -620,6 +620,54 @@ def test_a_stale_mirror_is_dated_from_the_last_run_that_worked(dated_store, orig
     rendered = Pulse.from_sync(report).render()
     assert "2026-09-04 06:40 UTC" in rendered, "dated from a run that did not happen"
     assert "2026-09-07" not in rendered, "a failed fetch dated itself as fresh"
+
+
+def test_a_mirror_fetched_within_the_window_is_read_without_fetching(
+    dated_store, origins, add_commit, clock, git_out
+):
+    """The scheduled morning fetches in the shell, then renders minutes later.
+    The render must read what the shell fetched, not fetch it all again."""
+    store, log = dated_store
+    repo = WatchedRepo("ExampleOrg", "service-a")
+    origins.add("service-a")
+    store.sync([repo])  # cloned and stamped Friday 06:40
+    add_commit(origins["service-a"], "landed after the shell fetch")
+
+    clock.set(FRIDAY + timedelta(minutes=5))
+    report = store.sync([repo], fresh_within=timedelta(minutes=30))
+
+    assert report.mirrors[0].stale is False
+    assert log.last_fetch("ExampleOrg/service-a") == FRIDAY, "skipped, so no new stamp"
+    _, tip = git_out(store.path_for(repo), "log", "-1", "--format=%s", "HEAD")
+    assert tip != "landed after the shell fetch", "fetched again inside the window"
+
+
+def test_a_mirror_older_than_the_window_is_fetched(dated_store, origins, add_commit, clock):
+    store, log = dated_store
+    repo = WatchedRepo("ExampleOrg", "service-a")
+    origins.add("service-a")
+    store.sync([repo])
+
+    clock.set(FRIDAY + timedelta(hours=1))
+    store.sync([repo], fresh_within=timedelta(minutes=30))
+
+    assert log.last_fetch("ExampleOrg/service-a") == FRIDAY + timedelta(hours=1)
+
+
+def test_a_failed_shell_fetch_is_tried_again_not_trusted(dated_store, origins, clock):
+    """Only a clean fetch stamps, so a mirror the shell could not fetch has an
+    old stamp and gets its second chance inside the render."""
+    store, _ = dated_store
+    repo = WatchedRepo("ExampleOrg", "service-a")
+    origins.add("service-a")
+    store.sync([repo])  # Friday, clean
+    shutil.rmtree(origins["service-a"])
+
+    clock.set(MONDAY)
+    store.sync([repo])  # the shell's fetch fails: Monday is never stamped
+    report = store.sync([repo], fresh_within=timedelta(minutes=30))
+
+    assert report.mirrors[0].stale is True, "a failed fetch read as fresh"
 
 
 def test_a_failed_fetch_does_not_advance_the_recorded_time(dated_store, origins, clock):

@@ -222,7 +222,7 @@ def test_a_wiki_mirror_reads_on_from_its_own_stored_cursor(identities, tmp_path,
     log.record_cursor("ExampleOrg/svc.wiki", "bbb")
     seen: dict = {}
 
-    def capture(self, watched, cursors=None):
+    def capture(self, watched, cursors=None, fresh_within=None):
         seen.update(cursors or {})
         return run.SyncReport()
 
@@ -263,3 +263,24 @@ def test_a_mirror_nobody_read_stores_no_cursor(identities, fake_repo, git_env, t
     run.store_cursors(log, report)
 
     assert log.last_cursor("ExampleOrg/svc") is None
+
+
+def test_a_prefetched_pulse_reads_what_the_shell_fetched_without_fetching_again(
+    identities, fake_repo, git_env, tmp_path
+):
+    """The scheduled morning refreshes in the shell, then renders with
+    `--prefetched`. A landing after the shell's fetch waits for tomorrow; it is
+    not fetched inside the render, which is the whole point of the flag."""
+    log = EventLog.open(tmp_path / "events.db")
+    url_for = lambda _repo: str(fake_repo)  # noqa: E731
+    _, report = run.build_pulse(identities, log, url_for=url_for)
+    run.store_cursors(log, report)
+
+    (fake_repo / "f").write_text("415")
+    subprocess.run(["git", "add", "-A"], cwd=fake_repo, env=git_env, check=True)
+    subprocess.run(
+        ["git", "commit", "-qm", "Merge PR #415"], cwd=fake_repo, env=git_env, check=True
+    )
+
+    pulse, _ = run.build_pulse(identities, log, url_for=url_for, fresh_within=run.MIRRORS_FRESH_FOR)
+    assert "#415" not in pulse.render(), "fetched again inside the window"

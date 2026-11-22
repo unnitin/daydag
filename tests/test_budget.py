@@ -738,7 +738,7 @@ def test_full_leaves_the_shipping_cursors_where_they_were(tmp_path, monkeypatch,
     payloads = tmp_path / "payloads.json"
     payloads.write_text(json.dumps(hm.payloads()), encoding="utf-8")
     stored = []
-    monkeypatch.setattr(run, "build_pulse", lambda identities, log: (None, "report"))
+    monkeypatch.setattr(run, "build_pulse", lambda identities, log, **_k: (None, "report"))
     monkeypatch.setattr(run, "store_cursors", lambda log, report: stored.append(report))
     monkeypatch.chdir(tmp_path)
     argv = ["render", "morning", "--payloads", str(payloads), "--log", str(tmp_path / "e.db")]

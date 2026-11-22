@@ -1788,11 +1788,21 @@ def _points(payloads: Mapping[str, Any]) -> list[Any]:
     return points
 
 
+#: With `--prefetched`, a mirror fetched cleanly this recently is read as it is.
+#: The scheduled morning runs `daydag.repos sync` in the shell, then the headless
+#: render builds the pulse a few minutes later; refetching every mirror there
+#: doubled the network time inside a command the agent may only run for two
+#: minutes. Thirty minutes covers that gap with room to spare. Opt-in, because a
+#: hand-run `ship` twice in ten minutes should see what landed in between.
+MIRRORS_FRESH_FOR = timedelta(minutes=30)
+
+
 def build_pulse(
     identities: Mapping[str, str],
     log: EventLog | None,
     *,
     url_for: Callable[[Any], str] = github_url,
+    fresh_within: timedelta | None = None,
 ) -> tuple[Pulse, SyncReport]:
     """The pulse for this run: mirrors synced, each read on from its stored cursor.
 
@@ -1819,7 +1829,7 @@ def build_pulse(
             for target in (repo, repo.wiki_repo()) if repo.wiki else (repo,):
                 if cursor := log.last_cursor(target.slug):
                     cursors[target.slug] = cursor
-    report = store.sync(watchlist, cursors=cursors)
+    report = store.sync(watchlist, cursors=cursors, fresh_within=fresh_within)
     return Pulse.from_sync(report), report
 
 
@@ -2232,8 +2242,8 @@ def main(argv: list[str] | None = None) -> int:
         print(
             "usage: python -m daydag.run {plan|render} {"
             + "|".join(LOOPS)
-            + '} [--log PATH] [--write-state] [--mirrors] [--for "<meeting or person>"]'
-            + " [--calendar PATH] [--payloads PATH] [--full]"
+            + "} [--log PATH] [--write-state] [--mirrors [--prefetched]]"
+            + ' [--for "<meeting or person>"] [--calendar PATH] [--payloads PATH] [--full]'
         )
         return 2
 
@@ -2252,6 +2262,9 @@ def main(argv: list[str] | None = None) -> int:
     # `--mirrors` syncs the watchlist's repos and builds the pulse (#138), so
     # `ship` and the shipping sections have something to render.
     with_mirrors = "--mirrors" in args
+    # `--prefetched` says the mirrors were refreshed moments ago (the scheduled
+    # morning's shell step), so the pulse reads them rather than fetching again.
+    fresh_within = MIRRORS_FRESH_FOR if "--prefetched" in args else None
     # `--for` names the meeting to prep. Without it `prep` takes the next
     # qualifying one, which is the scheduled ping's behaviour.
     selector = ""
@@ -2300,7 +2313,11 @@ def main(argv: list[str] | None = None) -> int:
             pulse, report = None, None
             if with_mirrors:
                 try:
-                    pulse, report = build_pulse(identities, EventLog.open(log) if log else None)
+                    pulse, report = build_pulse(
+                        identities,
+                        EventLog.open(log) if log else None,
+                        fresh_within=fresh_within,
+                    )
                 except (RunError, ConfigError, PulseError) as unbuilt:
                     # Guardrail 6: no pulse is one degrade line in the push,
                     # never a dead run. `render` already says it for `ship`.
