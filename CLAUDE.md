@@ -85,7 +85,7 @@ gh api repos/CreateMusicGroup/createos-discovery-services --jq .pushed_at
 
 **Google Calendar:** query **day-by-day** — full-week pulls exceed output limits. Watch for OOO/flight events; a half-day "flight Thu" can hide a multi-week OOO (confirm real return dates via Gmail "Upcoming OOO" notices).
 
-**Databricks (only for on-demand `find`/`status`, never blocking a brief):** AI Platform workspace profile `${DATABRICKS_WORKSPACE_ID}`, host `https://${DATABRICKS_WORKSPACE_ID}.7.gcp.databricks.com`. Known trap: expired OAuth surfaces as "outputSchema / no structured output" errors, not auth errors — fix is `manage_workspace login`, then `SELECT 1` smoke test. Discovery data: `gold_dev.discovery`; `track_dna` bridges `cmg_artist_id` → `mr_id` for `weekly_worldwide`.
+**Databricks (only for on-demand `find`/`status`, never blocking a brief):** data-platform workspace `${DATABRICKS_WORKSPACE_NAME}`, profile `${DATABRICKS_WORKSPACE_ID}`, host `https://${DATABRICKS_WORKSPACE_ID}.7.gcp.databricks.com`, warehouse `${DATABRICKS_WAREHOUSE}`. VP-Data moved it there 9/6/26 because the new CreateOS network needed a workspace created with it (network config can't change after creation); the old workspace reads the same metastore but is due to go, so never point anything back at it. Known trap: expired OAuth surfaces as "outputSchema / no structured output" errors, not auth errors — fix is `manage_workspace login`, then `SELECT 1` smoke test. Discovery data: `gold_dev.discovery`; `track_dna` bridges `cmg_artist_id` → `mr_id` for `weekly_worldwide`.
 
 **Environment note:** in claude.ai/Cowork, Slack/Gmail/Calendar/Notion exist as connectors already. In Claude Code, the vault and `gh` are direct, but Slack/Gmail/GCal need MCP servers configured (`claude mcp add ...`) — check what's configured before assuming.
 
@@ -99,7 +99,7 @@ gh api repos/CreateMusicGroup/createos-discovery-services --jq .pushed_at
 
 ## 5. Voice (all agent output and drafts)
 
-Lowercase openers, casual capitalization. Short direct sentences. Numbered lists only when there's real structure. Shorthand: `def`, `w/`, `iirc`, `lmk`, `nw`, `tq`. **Hyphens, never em dashes.** Warm but unpolished, light humor. Signature phrases: "keep me honest", "keep us posted". Asks go to named people with direct @mentions. Emoji only from the sanctioned set: 🔴🟡🟢 ✓ ⭐ ⚠️. For Sponsor/external drafts: slightly more structured but still conversational.
+**Drafts in his name are written in standard English** (his call, 2026-10-19, on the Databricks cost-review email): a capital letter to start every sentence and the greeting, "I" capitalised, proper nouns and product names as their owners write them, shorthand spelled out (`with`, `let me know`, `thanks`, not `w/`, `lmk`, `tq`). The row lives under `## House` in `DayDAG/Style.md`. DayDAG's own messages to him (briefs, DM pushes) keep the casual register: lowercase openers, `def`, `w/`, `iirc`, `lmk`, `nw`, `tq`. Everywhere: short direct sentences. Numbered lists only when there's real structure. **Hyphens, never em dashes.** Warm and direct, light humor. Signature phrases: "keep me honest", "keep us posted". Asks go to named people with direct @mentions. Emoji only from the sanctioned set: 🔴🟡🟢 ✓ ⭐ ⚠️. For Sponsor/external drafts: slightly more structured but still conversational.
 
 ## 6. House rules (non-negotiable)
 
