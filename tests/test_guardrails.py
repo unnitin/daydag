@@ -37,7 +37,9 @@ COVERED (behavioural - real code, real assertions)
       `state.withholds_private()`
     - a pending decision never reads its own text as an answer
     - `sensitivity: private` is un-routable to any shared surface
-    - the registry's one-writer check fires regardless of declaration order
+    - the registry's one-writer check fires regardless of declaration order,
+      and `python -m daydag.manifests` exits 1 over the shipped skills plus
+      one planted second claim
     - a downed source degrades to a named "could not fetch" line and the rest
       of the report still ships
     - a connector that raises, or answers with an overflow, degrades to a named
@@ -78,6 +80,12 @@ GAPS - not covered here, and not pretended to be
        the ledger's ambiguous-note case in `tests/test_ledger.py`; there is no
        general discrepancy surface to test yet.
 
+    4. Undeclared writes. Nothing checks a write as it happens, so a skill that
+       writes an artifact it never put in `writes:` is caught by no code.
+       `Registry.check_write` was that check; it had no caller outside the
+       tests and retired with `registry.py`. Its guardrail covers the half with
+       a live subject: a DECLARED second claim fails `python -m daydag.manifests`.
+
     GAP 3 (`notes_gaps` had no sensitivity channel) moved to COVERED above,
     #61. GAP 1 and GAP 2 went the same way earlier - the unsourced `Item`
     (#69, see "Was GAP 1" below) and the undated stale mirror (#60, "was
@@ -93,15 +101,16 @@ from __future__ import annotations
 import ast
 import inspect
 import re
+import shutil
 import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
-from daydag import delivery
+from daydag import delivery, manifests
+from daydag.manifests import PRIVATE_SURFACES, Registry, RegistryError
 from daydag.pulse import Item, Mirror, Pulse
-from daydag.registry import PRIVATE_SURFACES, Registry, RegistryError
 from daydag.state import EventLog, NotesGap, StateFolder
 from daydag.voice import Push
 
@@ -324,7 +333,7 @@ def test_a_draft_never_reaches_the_transport():
 
 @pytest.mark.guardrail
 def test_delivery_respects_the_registry_for_a_private_skill():
-    """BEHAVIOURAL. `daydag.registry.route` is consulted, not bypassed, by delivery.
+    """BEHAVIOURAL. `Registry.route` is consulted, not bypassed, by delivery.
 
     The DM is inside `PRIVATE_SURFACES`, so a private skill may always reach
     it - but an unregistered skill still fails closed, which is what proves
@@ -835,11 +844,35 @@ def test_a_third_writer_is_caught_even_behind_two_clean_skills():
 
 
 @pytest.mark.guardrail
-def test_an_undeclared_write_is_refused_even_by_the_owner_of_another_file():
-    """BEHAVIOURAL. Owning one artifact does not license writing a neighbour."""
-    registry = Registry.load([{"name": "owner", "daydag": {"writes": ["vault:DayDAG/State.md"]}}])
-    with pytest.raises(RegistryError, match="undeclared"):
-        registry.check_write("owner", "vault:Weekly Notes/0907-0911.md")
+def test_claiming_a_neighbours_artifact_fails_the_shipped_manifest_check(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+):
+    """BEHAVIOURAL. Owning one artifact does not license claiming a neighbour's.
+
+    Drives `python -m daydag.manifests`, the preflight step, over a copy of the
+    shipped skills: clean, it exits 0; plant a skill that owns a file of its
+    own and also declares `vault:DayDAG/State.md`, and it exits 1 naming both
+    claimants.
+
+    Re-pointed from `Registry.check_write`, which had no caller outside the
+    tests and retired with `registry.py`. The write nobody declared is GAP 4.
+    """
+    skills = tmp_path / "skills"
+    for source in (REPO_ROOT / ".claude" / "skills").glob("*/SKILL.md"):
+        (skills / source.parent.name).mkdir(parents=True)
+        shutil.copy(source, skills / source.parent.name)
+    assert manifests.main([str(skills)]) == 0
+    assert "vault:DayDAG/State.md" in capsys.readouterr().out
+
+    (skills / "intruder").mkdir()
+    (skills / "intruder" / "SKILL.md").write_text(
+        "---\nname: intruder\ndaydag:\n"
+        "  writes: [vault:DayDAG/Intruder.md, vault:DayDAG/State.md]\n---\n",
+        encoding="utf-8",
+    )
+    assert manifests.main([str(skills)]) == 1
+    refusal = capsys.readouterr().err
+    assert all(word in refusal for word in ("vault:DayDAG/State.md", "daily-loops", "intruder"))
 
 
 # --------------------------------------------------------------------------

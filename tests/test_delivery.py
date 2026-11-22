@@ -28,8 +28,8 @@ import pytest
 from daydag import delivery
 from daydag.config import Identities
 from daydag.delivery import DeliveryError, deliver_push
+from daydag.manifests import Registry, RegistryError
 from daydag.prep import Point, PrepPing, Reason
-from daydag.registry import Registry, RegistryError
 from daydag.runlog import DEGRADED, FAILED, OK, RunLog
 from daydag.state import EventLog
 from daydag.voice import Push
@@ -263,7 +263,7 @@ def test_delivery_works_with_no_runlog_at_all():
 
 
 # ---------------------------------------------------------------------------
-# sensitivity routing: daydag.registry is consulted, not bypassed
+# sensitivity routing: `Registry.route` is consulted, not bypassed
 # ---------------------------------------------------------------------------
 
 

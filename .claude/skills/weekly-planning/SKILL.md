@@ -4,7 +4,8 @@ description: "Synthesize the week ahead into a plan + per-meeting talking points
 daydag:
   # The weekly note, the per-meeting prep file and the evergreen Workstreams
   # store. Workstreams moves to DayDAG at the custody cut (#37) and not before -
-  # until then a second `writes:` on it is a startup error, which is the point.
+  # until then a second `writes:` on it fails `python -m daydag.manifests`
+  # (preflight) and the test suite, which is the point.
   writes:
     # A trailing `/` is a folder the skill owns; the registry matches ids exactly.
     - vault:Weekly Notes/

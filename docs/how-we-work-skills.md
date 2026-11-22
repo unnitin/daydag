@@ -123,7 +123,7 @@ sit beside their existing `pr-review` skill and follow the same shape - read
 
 ## 4. DayDAG skill `team-practices` - execution plans
 
-Manifest, to be validated by `python -m daydag.registry` before anything else:
+Manifest, to be validated by `python -m daydag.manifests` before anything else:
 
 ```yaml
 ---

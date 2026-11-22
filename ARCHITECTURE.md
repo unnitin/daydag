@@ -66,7 +66,7 @@ flowchart TB
 
 DayDAG owns exactly two artifacts and one channel. Everything else it reads or drafts into. This is what keeps it from becoming the parallel task store principle 1 forbids.
 
-This table is **also a registry**, generated from the `daydag:` block of every `.claude/skills/*/SKILL.md` and checked before a loop runs, so a future skill can't quietly become a second writer. The manifests are the source; this table is the readable form of them. See [Extensibility](#extensibility--adding-skills-without-decaying).
+This table is **also a registry**, generated from the `daydag:` block of every `.claude/skills/*/SKILL.md` and checked in preflight and the test suite (`python -m daydag.manifests`), not before a loop runs, so a future skill can't declare itself a second writer and still pass. The manifests are the source; this table is the readable form of them. See [Extensibility](#extensibility--adding-skills-without-decaying).
 
 ## What DayDAG actually owns
 
@@ -187,7 +187,7 @@ Four files rather than one, because they have genuinely different edit patterns 
 
 Six rules the whole thing rests on. Each was expensive to learn or is expensive to break.
 
-1. **One writer per artifact.** The ownership table is the architecture; the rest is plumbing. Enforced mechanically by `daydag.registry` over the manifests `daydag.manifests` loads — a documented invariant is one a hurried author breaks, so it is a startup error instead.
+1. **One writer per artifact.** The ownership table is the architecture; the rest is plumbing. Enforced mechanically by `daydag.manifests`, which loads every skill's manifest and refuses a set with two writers for one artifact - a documented invariant is one a hurried author breaks, so it is a failed preflight and a failed test instead.
 2. **Read, don't re-derive.** If a routine already produced it, consume its output. Violated twice in one session — a chase list copied out of Workstreams, and a Sunday brief re-synthesising Friday's plan.
 3. **Evidence or silence.** Verbatim quote plus permalink, or say it can't be sourced. `weekly-feedback-scan` states the same rule as *"no link, no claim."* The two halves apply at different levels, and conflating them is what let an unsourced item ship as `- title ()` for a milestone: a *source* that could not be read is named in one line, because a reader needs to know what is missing; a single *claim* with no link is not weakened, it is refused, because "could not source this" spends attention on something nobody can check or act on. `pulse.Item` and `voice.render` both raise; anything that produces claims later should too.
 4. **Drafts, not sends.** Exactly one autonomous channel: the DM to Nitin. Everything else waits for a per-item yes.
@@ -318,14 +318,16 @@ daydag:
 ---
 ```
 
-DayDAG loads every manifest at the top of each loop and the registry does four jobs prose can't:
+`daydag.manifests` loads every manifest - in preflight and the test suite, not at the top of each loop - and the registry does four jobs prose can't:
 
-1. **Enforces one-writer.** Two skills declaring `writes:` on the same artifact is a startup error, not a corrupted Workstreams file discovered on a Friday. Invariant 1 stops being a convention.
-2. **Makes the schedule data.** The Scheduling table becomes a projection of the manifests. Adding a routine means shipping a skill, not editing this doc and remembering to also edit crontab.
-3. **Routes evidence.** `consumes:` is how the pulse feeds `weekly-progress-reporting` and `weekly-feedback-scan` without any of the three knowing about the others.
+1. **Enforces one-writer.** Two skills declaring `writes:` on the same artifact is a load error, not a corrupted Workstreams file discovered on a Friday. Invariant 1 stops being a convention.
+2. **Makes the schedule data.** The Scheduling table becomes a projection of the manifests. Adding a routine means shipping a skill, not editing this doc and remembering to also edit crontab. Today the projection is what `python -m daydag.manifests` prints; nothing fires a loop from it.
+3. **Checks the evidence wiring.** `consumes:` is how `weekly-progress-reporting` and `weekly-feedback-scan` name the pulse they are fed without any of the three knowing about the others, and a topic no loaded skill `emits:` is a load error. Nothing routes evidence from it yet - that is the bus below.
 4. **Carries sensitivity mechanically.** `sensitivity: private` lets the orchestrator *refuse* to route that skill's output into a brief or a channel draft. §10.1's strictest guardrail becomes a check instead of a paragraph — which is the only form of it that survives contact with a future author.
 
-**Built, and actually loaded.** All five shipped skills carry the block. `daydag.registry` holds the checks; `daydag.manifests` reads `.claude/skills/*/SKILL.md` and hands them over. That second half matters more than it looks: for a while the registry existed and nothing called it, so the one-writer check ran only over dictionaries typed into its own unit test — a check that cannot fail. It now runs over the real set from `python -m daydag.manifests` (a `scripts/preflight.sh` step, so every push) and from `tests/test_manifests.py`. Plant a second `writes:` on `Fact Base/Workstreams.md` and both go red.
+**Built, and actually loaded.** Every shipped skill carries the block. `daydag.manifests` reads `.claude/skills/*/SKILL.md` and runs the checks over what it read; the checks were a separate `daydag.registry` module until the two folded together. The reading half matters more than it looks: for a while the registry existed and nothing called it, so the one-writer check ran only over dictionaries typed into its own unit test - a check that cannot fail. It now runs over the real set from `python -m daydag.manifests` (a `scripts/preflight.sh` step, so every push) and from `tests/test_manifests.py`. Plant a second `writes:` on `Fact Base/Workstreams.md` and both go red.
+
+That is where it runs, and the only place. No loop loads the manifests before it starts, and nothing checks a write as it happens: no code catches a skill that writes an artifact it never declared.
 
 Two validation rules exist because the failures they catch are silent rather than loud: an unknown key in the block is an error (`write:` for `writes:` would leave an artifact with no declared owner, so a second writer sails through), and so is an unknown `sensitivity:` (`privat` reads as "not private").
 

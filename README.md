@@ -42,8 +42,7 @@ artifact is the load-bearing rule; the rest is plumbing.
 | Module | What it is |
 |---|---|
 | `config` | Identifiers resolved from a local `.env`. This repo is public; nothing real is committed |
-| `registry` | The ownership table as startup checks — two writers to one artifact is an error, not a convention |
-| `manifests` | Reads the `daydag:` block out of every `.claude/skills/*/SKILL.md`, so those checks run over what ships |
+| `manifests` | Reads the `daydag:` block out of every `.claude/skills/*/SKILL.md` and checks the set: two writers to one artifact is an error, not a convention. Run by preflight and the test suite, not by a loop |
 | `state` | The `DayDAG/` vault folder and the SQLite event log. Two stores, opposite requirements |
 | `ledger` | Calendar-driven meeting rows, so a meeting that produced **no** notes is visible |
 | `pulse` | Repo state: local mirrors for history, API for review state |
