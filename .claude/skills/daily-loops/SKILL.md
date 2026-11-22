@@ -122,9 +122,9 @@ Then write a payloads file keyed by source:
 - **Pass each attendee as google's own `{"email": ..., "displayName": ...}`
   dict, or as a bare address.** `Ledger.seed_day` splits name from address once
   at the seam. The name matters: plenty of addresses are a bare first name -
-  `jonathan@`, `alex@` - so the surname exists ONLY in `displayName`, and
-  without it `prep --for "jonathan strauss"` cannot match while bare
-  "jonathan" matches a different Jonathan. Do NOT fold the name into the
+  `leopold@`, `alex@` - so the surname exists ONLY in `displayName`, and
+  without it `prep --for "leopold strauss"` cannot match while bare
+  "leopold" matches a different Leopold. Do NOT fold the name into the
   address string yourself (`"Full Name <addr>"`): that was the first contract,
   and every consumer that compares addresses - external-party detection,
   leadership, note matching, the principal skip - broke at once.
@@ -266,7 +266,7 @@ but knowing which is which before you start saves a wasted round-trip.
 
 | Command | How |
 |---|---|
-| `prep <meeting or person>` | `python -m daydag.run plan prep --for "<name or title words>"`, then fetch, then `render prep --for ...`. Searches the next 7 days in his zone. When the name fits several meetings it ASKS - narrow with words from the title (`"ruwen / nitin"`), never pick one for him. Without `--for`, `prep` takes the next qualifying meeting |
+| `prep <meeting or person>` | `python -m daydag.run plan prep --for "<name or title words>"`, then fetch, then `render prep --for ...`. Searches the next 7 days in his zone. When the name fits several meetings it ASKS - narrow with words from the title (`"rowan / nitin"`), never pick one for him. Without `--for`, `prep` takes the next qualifying meeting |
 | `prep-ahead` | the day-before prep for the calls his `## Prep rules` (in `DayDAG/Watchlist.md`) name. Two plan stages: `plan prep-ahead` gives the next working day's calendar step; fetch it (keep `attachments` and `description`) and run `plan prep-ahead --calendar cal.json --log <db>` for one read per ingredient per matched call. Put each result under `prep_ahead.<event_id>.<put_under>`, then write up to 5 `points` (`what`, `why_now`, verbatim `quote`, `permalink`) and, only where the recipe says `ideas`, 1-3 `ideas`. A deck you cannot open goes in as `{"url", "error"}` - never summarise what you could not read. Drop notes whose quoted title is a different meeting - gmail's `subject:` matches words. Posts to his DM only. Rows, not code: to prep a new call, he adds a row |
 | `ship <repo>` | `render ship --mirrors --log <db>`: syncs the watchlist's repos into `MIRROR_DIR`, builds the `Pulse`, and stores each mirror's cursor so the next run reads on. Without `--mirrors` it degrades to a line; `--mirrors` on the morning, eod or week-ahead render adds their shipping sections |
 | `sweep` | you, following SPEC §3.8 - a pending-items pass across Slack/Gmail/Notion/Obsidian, triaged, every item with a permalink. **Before any line is reported open, run `chase` first**: it reads the reply under every ask State.md already carries, and a sweep that re-lists those from their ask text repeats the 2026-09-18 miss |

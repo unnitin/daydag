@@ -84,7 +84,7 @@ def test_silence_produces_no_shipping_block(fake_repo):
 def test_joins_slack_pr_and_note_on_the_ticket_key():
     """The valuable part: resolve an ask to a ticket, a PR and a status."""
     p = Pulse(mirrors=[])
-    p.observe_slack("jasmeet said he'd do DATA-812")
+    p.observe_slack("marisol said he'd do DATA-812")
     p.observe_pr(title="DATA-812 consolidate compute engines", number=412, state="merged")
     joined = p.by_ticket("DATA-812")
     assert joined.pr_number == 412 and joined.mentioned_in_slack

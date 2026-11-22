@@ -22,7 +22,7 @@ Workflow:
 
 ```js
 const { createDeck } = require('<skill>/scripts/bcg_style.js');
-const deck = createDeck({ title: 'Why the Data Platform', author: 'Nitin Srivastava' });
+const deck = createDeck({ title: 'Why the Data Platform', author: '<PRINCIPAL_NAME from .env>' });
 
 deck.cover({ title: 'Why the Data Platform', subtitle: 'One trusted set of tables the whole company reads from', meta: 'Data & AI · October 2026' });
 

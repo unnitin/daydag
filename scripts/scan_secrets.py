@@ -3,6 +3,11 @@
 
 Runs as a pre-commit hook and in CI. The repo is public; .env is the only
 place real IDs are allowed to live, and it is gitignored.
+
+People's names are checked too, from a list that is config on this machine
+(`NAMES_FILE`, one name per line, `#` for a comment). A list of real names
+cannot sit in a public repo, so CI and a fresh clone have none and check ids
+and addresses only.
 """
 
 from __future__ import annotations
@@ -37,35 +42,54 @@ ALLOW = re.compile(
 SKIP_FILES = {".env.example", "scripts/scan_secrets.py", "tests/test_scan_secrets.py"}
 SKIP_SUFFIXES = {".lock", ".png", ".jpg", ".gif", ".pdf"}
 
+#: The names this machine refuses to publish. Outside every checkout, so a
+#: worktree and the main checkout read the same list.
+NAMES_FILE = Path.home() / ".config" / "daydag" / "names.txt"
 
-def scan_text(text: str) -> list[tuple[int, str, str]]:
+
+def name_pattern(path: Path = NAMES_FILE) -> re.Pattern[str] | None:
+    """The listed names as one whole-word, any-case pattern; None with no list."""
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return None
+    names = [re.escape(n.strip()) for n in lines if n.strip() and not n.lstrip().startswith("#")]
+    if not names:
+        return None
+    return re.compile(r"(?<![A-Za-z])(?:" + "|".join(names) + r")(?![A-Za-z])", re.IGNORECASE)
+
+
+def scan_text(text: str, names: re.Pattern[str] | None = None) -> list[tuple[int, str, str]]:
     """Return (line_no, label, matched_value) for every disallowed identifier."""
+    patterns = [*PATTERNS, ("name", names)] if names else PATTERNS
     out = []
     for lineno, line in enumerate(text.splitlines(), 1):
-        for label, pat in PATTERNS:
+        for label, pat in patterns:
             for m in pat.finditer(line):
                 if not ALLOW.search(m.group(0)):
                     out.append((lineno, label, m.group(0)))
     return out
 
 
-def scan_file(path: Path) -> list[tuple[int, str, str]]:
+def scan_file(path: Path, names: re.Pattern[str] | None = None) -> list[tuple[int, str, str]]:
     if str(path) in SKIP_FILES or path.suffix in SKIP_SUFFIXES:
         return []
     try:
-        return scan_text(path.read_text(encoding="utf-8"))
+        return scan_text(path.read_text(encoding="utf-8"), names)
     except (UnicodeDecodeError, FileNotFoundError, IsADirectoryError):
         return []
 
 
 def main(argv: list[str]) -> int:
-    findings = [(p, *f) for p in map(Path, argv) for f in scan_file(p)]
+    names = name_pattern()
+    findings = [(p, *f) for p in map(Path, argv) for f in scan_file(p, names)]
     for path, lineno, label, value in findings:
         print(f"{path}:{lineno}: real {label} -> {value!r}", file=sys.stderr)
     if findings:
         print(
             f"\n{len(findings)} real identifier(s) blocked. This repo is public.\n"
-            "Move the value into .env and reference it as ${VAR_NAME}.",
+            "Move the value into .env and reference it as ${VAR_NAME}; "
+            "a person is a role token or an invented name.",
             file=sys.stderr,
         )
         return 1

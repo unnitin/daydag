@@ -236,8 +236,8 @@ One bullet per cross-functional partner — **Analytics-Partner, CTO, Gov-Lead**
 - **Sponsor** — interim audience / sponsor (Former-Sponsor departed CMG).
 - **VP-Data** — data platform / ingestion / devops / security (engineering lead).
 - **VP-AI** — A&R discovery + AI platform. **Enablement-Lead** — Kiwi / CreateOS Labs. **Gov-Lead** — governance / roadmap.
-- **Analytics-Partner** — analytics / data product. **CTO** — security / software / cross-functional. **Eng-3** — data engineering. **Kale** — BCG.
-- **Engineers**: Eng-5, Rishi, Revenue-Lead, Yang, Sergey, Jessie, Ryan, Modeler-Owner, Eng-Sr, Stakeholder-1, Former-Report, Eng-4, Ricardo, Vendor-Contact, Amardeep.
+- **Analytics-Partner** — analytics / data product. **CTO** — security / software / cross-functional. **Eng-3** — data engineering. The BCG contact is in the directory.
+- **Engineers**: Eng-5, Revenue-Lead, Modeler-Owner, Eng-Sr, Stakeholder-1, Former-Report, Eng-4, Vendor-Contact. Everyone else, and every real name, is in the people directory: `python -m daydag.people list --log ~/.local/state/daydag/events.db`.
 
 ## Slack channel IDs (check `Fact Base/Internal Links.md` for the canonical list — IDs change)
 - `${SLACK_CH_TEAM_DATA_ENGINEERING}` — team_data_engineering · `${SLACK_CH_ENG_PAIR}` — Eng-3/VP-Data

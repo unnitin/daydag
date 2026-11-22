@@ -97,9 +97,9 @@ KNOWN LIMIT
     that the token `wren` appears in each.
 
     So the display name matters. Plenty of real addresses are a bare first
-    name (`jonathan@`, `alex@`), and the surname exists only in google's
-    `displayName` - shaped as the address alone, "jonathan strauss" cannot
-    match and bare "jonathan" matches a different Jonathan. The name reaches
+    name (`leopold@`, `alex@`), and the surname exists only in google's
+    `displayName` - shaped as the address alone, "leopold strauss" cannot
+    match and bare "leopold" matches a different Leopold. The name reaches
     here as `Row.attendee_names`, split from the address once in
     `Ledger.seed_day` (`ledger.attendee_parts`). It is deliberately NOT folded
     into the address string: that was tried, and every other consumer of
@@ -108,7 +108,7 @@ KNOWN LIMIT
     once.
 
     A genuine nickname sharing no token with either ("Bill" against
-    `william.smith@` with no display name) still will not match. The honest fix
+    `walter.smith@` with no display name) still will not match. The honest fix
     is an alias in `.env`, not fuzzier matching here - fuzzier matching buys
     back the wrong-meeting failure `select` exists to prevent.
 """
@@ -353,7 +353,7 @@ def _person_tokens(address: str, name: str) -> set[str]:
     person without anyone storing a display name - and `example`/`com` are NOT
     matchable, because every colleague shares them and a selector that hit the
     domain would match the entire invite list. The display name adds the
-    surname a bare-first-name address lacks (`jonathan@` + "Jonathan Strauss").
+    surname a bare-first-name address lacks (`leopold@` + "Leopold Strauss").
     """
     return _tokens(address.split("@", 1)[0]) | _tokens(name)
 

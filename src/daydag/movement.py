@@ -231,7 +231,7 @@ def _key(text: str) -> str:
     """The identity of an item, for deduping it across the two stores.
 
     Built from `_terms` rather than from the raw line, because the same loop is
-    written differently in each: `- eddie · fruits metadata list · asked-on …`
+    written differently in each: `- basil · fruits metadata list · asked-on …`
     in the chase list and `- [ ] 🔴 fruits metadata list` in the weekly note.
     Keying on the raw head made those two different items and the wrap asked
     him to confirm one thing twice.
@@ -324,7 +324,7 @@ _GMAIL_ID = re.compile(r"(?<![0-9A-Za-z])[0-9a-f]{16}(?![0-9A-Za-z])")
 _SLACK_LINK = re.compile(r"archives/(?P<channel>[CDG][A-Z0-9]+)/p(?P<sec>\d{10})(?P<frac>\d{6})")
 #: `owner/name`, optionally as a github url, optionally with `/pull/N`. Loose
 #: on purpose: an anchor only ever matches a record that names the SAME repo,
-#: so a spurious one (`w/ seth`) costs nothing.
+#: so a spurious one (`w/ theo`) costs nothing.
 _REPO = re.compile(
     r"(?:github\.com/)?(?P<slug>[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9][A-Za-z0-9._-]*[A-Za-z0-9])"
     r"(?:/(?:pull|issues)/(?P<number>\d+))?"
@@ -481,7 +481,7 @@ def _words(*values: Any) -> frozenset[str]:
 
 
 #: Slack markup that names a person, a channel or a link - never the subject.
-#: `<@U123|Seth Jensen>` and a pasted URL's path segments matched open items on
+#: `<@U123|Theo Marlow>` and a pasted URL's path segments matched open items on
 #: the real 2026-09-25 evening.
 _SLACK_MARKUP = re.compile(r"<[@#!][^>]*>|<https?://[^>]*>|https?://\S+")
 
@@ -681,10 +681,10 @@ def _identity(text: str) -> str:
 
     The bold title when the row has one, since the rest is his annotation (the
     same reason sub-bullets are never matched on); then the owner field off
-    the front, since `nitin+seth · ...` names who, not what. On the real
+    the front, since `nitin+theo · ...` names who, not what. On the real
     2026-09-25 evening, matching the whole row proposed a 32-term red item as
     discussed because an unrelated message shared `draft` and `roadmap` with
-    its description, and a chase row because a DM said `nitin` and `seth`.
+    its description, and a chase row because a DM said `nitin` and `theo`.
     """
     found = _BOLD_TITLE.search(str(text))
     head = found["title"] if found else str(text)

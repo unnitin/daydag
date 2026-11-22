@@ -104,7 +104,7 @@ def test_a_backwards_range_is_refused():
 
 
 @pytest.mark.guardrail
-@pytest.mark.parametrize("sender", ["@miko", "miko", "<@miko>", "Miko Smith"])
+@pytest.mark.parametrize("sender", ["@nilo", "nilo", "<@nilo>", "Nilo Smith"])
 def test_a_display_name_is_refused_rather_than_silently_matching_nothing(sender):
     """`from:@name` returns zero results and no error - the worst failure mode.
 

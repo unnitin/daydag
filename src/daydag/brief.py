@@ -989,7 +989,7 @@ def _day_label(day: date) -> str:
     return f"{day:%a %b} {day.day}".lower()
 
 
-#: "Boris → you": the file's own way of saying the actions are his.
+#: "Viktor → you": the file's own way of saying the actions are his.
 _TO_HIM = re.compile(r"→\s*you\b", re.IGNORECASE)
 
 

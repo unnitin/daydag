@@ -30,7 +30,7 @@ Derived from `v072926` targets against the `v081426` progress narrative. **Nothi
 | 1 (VP-Data) | Gold Label-Engine join cutover complete, parallel pipelines retired | — |
 | 1 (VP-Data) | Artist/contributor model shipped; gold opened for Analytics self-serve | Named as *the* remaining dependency in both the doc and `Workstreams#Data platform` |
 | 1 (VP-Data) | Top-10 DSPs on one performance model | 6 of 10 at baseline |
-| 4 (VP-AI/Declan) | Internal-AI security/review path formalized (intake + risk register) | `Workstreams#Security` still reads "running manually" |
+| 4 (VP-AI/Fintan) | Internal-AI security/review path formalized (intake + risk register) | `Workstreams#Security` still reads "running manually" |
 
 ### Due Oct 31 / Dec 31
 

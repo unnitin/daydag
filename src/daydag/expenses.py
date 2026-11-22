@@ -1431,7 +1431,7 @@ RIPPLING_RECEIPTS_SENDER = "receipts@rippling.com"
 #: Ramp answers a forward to `reimbursements@ramp.com` from this address, in
 #: the forward's own thread, within seconds (verified 2026-10-18, 13 s):
 #: "Reimbursement created for this receipt / You have 1 draft reimbursement:
-#: / $11.98 at Uber / Draft reimbursement · Nitin Srivastava · 10/05/26 /
+#: / $11.98 at Uber / Draft reimbursement · <his full name> · 10/05/26 /
 #: Review draft <https://app.ramp.com/s/reimbursements/<uuid>?...>". No
 #: category in the reply; Ramp picks one when he opens the draft.
 RAMP_REPLY_SENDER = "do-not-reply@ramp.com"

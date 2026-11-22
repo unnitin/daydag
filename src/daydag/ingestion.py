@@ -114,7 +114,7 @@ OWNER_FORMS = frozenset(
 )
 
 #: Gemini writes everything in the third person, so the first-person signal
-#: SPEC section 3.3 illustrates with "I'll intro Daniel to CTO" never appears.
+#: SPEC section 3.3 illustrates with "I'll intro Marcel to CTO" never appears.
 #: Modality is what is left to separate a commitment from a description.
 MODALITIES = frozenset(
     {

@@ -142,16 +142,16 @@ def test_a_sunday_evening_arrives_as_one_assembled_week_ahead(
             _event("steering", "Pod Steering", datetime(2026, 9, 7, 10, 0, tzinfo=PT)),
             _event(
                 "sync",
-                "Ivan/Ruwen Sync",
+                "Otto/Rowan Sync",
                 datetime(2026, 9, 8, 10, 0, tzinfo=PT),
-                attendees=("nitin", "ruwen"),
+                attendees=("nitin", "rowan"),
             ),
             _event(
                 "ooo",
-                "Ruwen OOO",
+                "Rowan OOO",
                 datetime(2026, 9, 8, 0, 0, tzinfo=PT),
                 minutes=24 * 60,
-                attendees=("ruwen",),
+                attendees=("rowan",),
                 kind="ooo",
             ),
         ],
@@ -193,8 +193,8 @@ def test_a_sunday_evening_arrives_as_one_assembled_week_ahead(
     assert preps["Pod Steering"].plan.prep_note.endswith("Meeting Prep/0907-0911.md")
 
     # the travelling attendee is flagged on the meeting sharing his calendar
-    assert "Ruwen OOO" in text
-    assert "Ruwen OOO" not in [p.meeting for p in pushed.monday_preps]  # not itself a meeting
+    assert "Rowan OOO" in text
+    assert "Rowan OOO" not in [p.meeting for p in pushed.monday_preps]  # not itself a meeting
 
     # the pulse's landing, with the link the pulse itself built
     assert "shipping" in text

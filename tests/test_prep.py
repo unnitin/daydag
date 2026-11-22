@@ -760,7 +760,7 @@ def test_candidates_render_in_his_zone_and_his_register():
 
     pt = ZoneInfo("America/Los_Angeles")
     rows = [
-        _row_at("Ruwen / Nitin 1-1", PRINCIPAL, "r@example.com", hours=4),
+        _row_at("Rowan / Nitin 1-1", PRINCIPAL, "r@example.com", hours=4),
         _row_at("D&T Program Review", PRINCIPAL, "r@example.com", hours=30),
     ]
 
@@ -813,17 +813,17 @@ def test_the_principal_is_skipped_by_address_not_by_luck():
 
 
 def test_a_surname_that_exists_only_in_the_display_name_still_matches():
-    """Real addresses are often a bare first name - `jonathan@`, `alex@` - so
+    """Real addresses are often a bare first name - `leopold@`, `alex@` - so
     the surname lives only in google's `displayName`. Shaped as the address
-    alone, "jonathan strauss" cannot match and bare "jonathan" matches a
-    DIFFERENT Jonathan. `SKILL.md` requires the `"Full Name <addr>"` form.
+    alone, "leopold strauss" cannot match and bare "leopold" matches a
+    DIFFERENT Leopold. `SKILL.md` requires the `"Full Name <addr>"` form.
     """
     rows = [
-        _row_at("Label Summit", PRINCIPAL, "Jonathan Strauss <jonathan@example.com>"),
-        _row_at("Pod Steering", PRINCIPAL, "jonathan.other@example.com", hours=6),
+        _row_at("Label Summit", PRINCIPAL, "Leopold Strauss <leopold@example.com>"),
+        _row_at("Pod Steering", PRINCIPAL, "leopold.other@example.com", hours=6),
     ]
 
-    found = select(rows, "jonathan strauss", now=NOW)
+    found = select(rows, "leopold strauss", now=NOW)
 
     assert found.one is not None
     assert found.one.summary == "Label Summit"

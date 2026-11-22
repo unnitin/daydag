@@ -921,7 +921,7 @@ def test_a_ramp_reply_is_read_into_a_draft():
     """The shape Ramp actually sent on 2026-10-18, 13 s after the forward."""
     body = (
         "Reimbursement created for this receipt\n\nYou have 1 draft reimbursement:\n\n"
-        "$11.98 at Uber\nDraft reimbursement · Nitin Srivastava · 10/05/26\n\n"
+        "$11.98 at Uber\nDraft reimbursement · Nitin Example · 10/05/26\n\n"
         "[https://app.ramp.com/s/reimbursements/00000000-0000-0000-0000-000000000000"
         "?email=x%40y.com&utm_medium=email]\n\nReview draft\n"
         "[https://app.ramp.com/s/reimbursements/00000000-0000-0000-0000-000000000000?email=x]\n\n"
