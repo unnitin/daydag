@@ -16,7 +16,7 @@
 > `prep_selector.py` into `prep.py`, the 30-minute prep ping and its threaded send retired,
 > the voice and evidence scanners moved to `tests/voice_check.py`, the idle counters and
 > write paths in `state`, `ledger`, `config` and the vault line-edit planner retired.
-> Source went from 20,776 lines in 33 modules to 19,598 in 29; tests from 1,676 to 1,596.
+> Source went from 20,837 lines in 33 modules to 19,659 in 29; tests from 1,690 to 1,610.
 > Every loop's plan and render over the 18 real payload files on record was byte-identical
 > before and after. Restore point: tag `pre-retirement-2026-11-21`.
 >
