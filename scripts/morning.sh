@@ -60,7 +60,7 @@ fi
 PROMPT="Run DayDAG's morning brief unattended, following .claude/skills/daily-loops/SKILL.md.
 1. Run: .venv/bin/python -m daydag.run plan morning --log $EVENTS
 2. Perform every step it lists, exactly as given (Slack steps: pass keywords, filters, sort, sort_dir and after as the search tool's own fields). Write all results to $PAYLOADS as ONE JSON object keyed by each step's source; steps that share a source go into one list. A source you cannot reach: leave its key out - never guess.
-3. Run: .venv/bin/python -m daydag.run render morning --payloads $PAYLOADS --log $EVENTS
+3. Run: .venv/bin/python -m daydag.run render morning --payloads $PAYLOADS --log $EVENTS --mirrors --prefetched
 4. $DELIVER
 Never send anything to anyone but the principal's own DM. End with one line: posted, dry run, or failed and why."
 
@@ -91,7 +91,10 @@ rc=0
   echo "== $(date '+%F %T %Z') morning (post: $POST)"
   # Every local copy of a watched repo first (daydag.repos): the shell runs it,
   # so the headless run needs no permission for it, and a failure never stops
-  # the brief.
+  # the brief. The render's --mirrors (his call, 2026-11-21) then reads these
+  # mirrors for the brief's shipping section, and --prefetched stops it
+  # fetching them all again (run.MIRRORS_FRESH_FOR). It moves each repo's read position, so a
+  # DAYDAG_POST=no dry run uses up that window the same way a real one does.
   .venv/bin/python -m daydag.repos sync --log "$EVENTS" || echo "repos: refresh failed (exit $?)"
   # stdin from /dev/null: headless, there is no terminal to wait on, and a
   # `claude -p` given a closed pipe reads it as an empty prompt and moves on.
