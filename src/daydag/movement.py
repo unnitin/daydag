@@ -82,8 +82,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
-from daydag.board import keys_in
 from daydag.brief import red_items
+from daydag.pulse import keys_in
 from daydag.state import _BULLET, _HEADING, read_section
 
 #: Words that carry no identity. Everything he writes is about a plan, a team,

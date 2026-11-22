@@ -251,19 +251,14 @@ def test_a_titled_lookup_searches_the_subject():
     assert "from:gemini-notes@google.com" in query
 
 
-def test_the_subject_parser_is_the_ledger_s_own():
-    """One parser. A second implementation is a second set of bugs."""
-    assert recipes.title_from_gemini_subject is title_from_gemini_subject
-
-
 def test_a_real_subject_round_trips_into_a_lookup():
-    title = recipes.title_from_gemini_subject("Notes: “Discovery sync” Sep 3, 2026")
+    title = title_from_gemini_subject("Notes: “Discovery sync” Sep 3, 2026")
     assert title == "Discovery sync"
     assert 'subject:"Discovery sync"' in recipes.gmail_gemini_notes(title=title)
 
 
 def test_an_unparseable_subject_gives_no_title_and_so_no_titled_query():
-    assert recipes.title_from_gemini_subject("Re: lunch?") is None
+    assert title_from_gemini_subject("Re: lunch?") is None
     with pytest.raises(RecipeError):
         recipes.gmail_gemini_notes(title=None)
 

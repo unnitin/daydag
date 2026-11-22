@@ -60,6 +60,9 @@ COVERED (behavioural - real code, real assertions)
       channel a send can ever name (#10, full coverage in `tests/test_delivery.py`)
     - a message for anyone else is a `Draft`, and no function in `daydag.delivery`
       accepts a `Draft` and a `Transport` together
+    - every Atlassian tool an unattended run's allowlist names (`scripts/*.sh`)
+      is a read - the request half of "read the board, never drive it", read
+      off the shipped wrappers rather than driven
 
 TRIPWIRES (no implementation exists - these fail when one lands unguarded)
     - no literal Slack/Gmail/Calendar client call anywhere in `src/daydag/`
@@ -610,13 +613,15 @@ def test_no_jira_write_path_exists_unguarded():
     of one. Nobody else's ticket is transitioned or commented on.
 
     This was vacuous when it was written: there was no Jira client in the
-    package at all. `board.py` (#12) is now the package's first Jira reader,
-    so "there is nothing to drive" stopped being true - but "nothing here
-    drives it" still is, and that is what stays asserted here across the
-    *whole* package rather than just the one module most likely to grow a
-    write. `tests/test_board.py` carries the same check scoped to that module
-    (`test_the_module_exposes_no_way_to_drive_the_board`), parsing its source
-    directly rather than trusting this one to have caught everything.
+    package at all. There still is none - the eod plan hands the agent one
+    bounded read per project (`recipes.jira_moved_on`), and `pulse` reads the
+    project keys off the watchlist - but there is a board to drive now, so
+    "nothing here drives it" is what stays asserted here across the *whole*
+    package rather than just the one module most likely to grow a write.
+    `tests/test_pulse.py` carries the same check scoped to that module
+    (`test_the_module_exposes_no_way_to_drive_the_board`, which came with
+    `board.py` when it folded in), parsing its source directly rather than
+    trusting this one to have caught everything.
 
     The token is the strongest layer: `read:jira-work` plus Confluence read
     and no write scope at all, so a transition is refused one level below any
@@ -631,6 +636,48 @@ def test_no_jira_write_path_exists_unguarded():
         "yes, the same gate as a Slack draft; reads stay unrestricted.",
         hits,
     )
+
+
+#: An MCP tool as an allowlist names it: `mcp__<server>__<tool>`.
+_MCP_TOOL = re.compile(r"mcp__[\w-]+")
+
+#: How an Atlassian read tool's own name starts. Verbs that are allowed, not
+#: a list of ones that are not: the write tools `JIRA_WRITE_PATTERNS` names
+#: start create, edit, transition, add or assign, and a tool nobody has seen
+#: yet fails as well.
+ATLASSIAN_READ_VERBS = ("search", "get")
+
+
+@pytest.mark.guardrail
+def test_an_unattended_run_asks_for_atlassian_reads_only():
+    """What DayDAG asks to be granted, read off what ships: the Atlassian
+    tools in the unattended wrappers' allowlists. A write tool there is a
+    request to be granted one, and the request is the thing to catch in review.
+
+    A headless run can call only the tools its wrapper's `--allowedTools` list
+    names, so the wrappers in `scripts/` are where this repo asks for Atlassian
+    access at all. Every tool they name has to be a read. A bare server name
+    or a wildcard fails too: that asks for every tool the connector has.
+
+    This was `test_the_module_asks_for_read_scopes_only`, over a
+    `READ_ONLY_SCOPES` tuple in `board.py` that declared `read:jira-work` and
+    Confluence read. Nothing read the tuple, so it went when `board.py` folded
+    into `pulse.py`; the scopes themselves are granted in the connector,
+    outside this repo. The allowlists are the request the repo actually makes.
+    """
+    asked = sorted(
+        {
+            tool
+            for script in sorted((REPO_ROOT / "scripts").glob("*.sh"))
+            for tool in _MCP_TOOL.findall(script.read_text(encoding="utf-8"))
+            if "atlassian" in tool.casefold()
+        }
+    )
+
+    assert asked, "no wrapper asks for an Atlassian tool, so this asserts nothing"
+    for tool in asked:
+        name = tool.rsplit("__", 1)[-1]
+        assert name.startswith(ATLASSIAN_READ_VERBS), f"{tool!r} is not a read"
 
 
 # --------------------------------------------------------------------------

@@ -128,7 +128,6 @@ def test_combined_match_lead_and_notes_fields():
 
 def test_the_prep_section_does_not_leak_into_the_repo_or_board_parsers(tmp_path):
     """Three parsers read one file. A prep row must never become a repo."""
-    from daydag.board import read_board_watchlist
     from daydag.pulse import read_watchlist
 
     path = tmp_path / "Watchlist.md"
@@ -138,7 +137,7 @@ def test_the_prep_section_does_not_leak_into_the_repo_or_board_parsers(tmp_path)
 
     assert [r.name for r in read_watchlist(path).repos] == ["r"]
     assert not read_watchlist(path).unparsed
-    assert [p.key for p in read_board_watchlist(path).projects] == ["CDI"]
+    assert [p.key for p in read_watchlist(path).projects] == ["CDI"]
 
 
 # --------------------------------------------------------------------------

@@ -3,12 +3,20 @@
 The rules here are as load-bearing as the features - rule 1 ("state changes,
 not activity") is what keeps this from reading as a productivity metric on a
 named engineer.
+
+The last section is what `board.py` left behind when it folded in here: the
+`jira` block of the hand-edited watchlist, one definition of a ticket key, and
+the read-only guardrails that parse this module's source.
 """
 
+import ast
+import inspect
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 
+from daydag import pulse
 from daydag.pulse import (
     Item,
     Mirror,
@@ -19,6 +27,8 @@ from daydag.pulse import (
     WatchlistError,
     _parse_repo_line,
     _run_git,
+    keys_in,
+    read_watchlist,
 )
 
 
@@ -392,4 +402,211 @@ def test_a_landing_links_to_github_not_to_a_path_on_this_machine():
     )
     assert github_link(WatchedRepo("ExampleOrg", "svc").wiki_repo()) == (
         "https://github.com/ExampleOrg/svc/wiki/_history"
+    )
+
+
+# -- the watchlist's jira block and the ticket key (folded in from board.py) --
+
+WATCHLIST = """\
+# Watchlist
+
+## repos
+- CreateMusicGroup/some-service · wiki
+
+**jira**
+- CDI · the data team's board · jql: labels = ingest · workstream: Data Platform
+- DED
+- a line that names no project
+
+## projects
+- 7 · the pod that never moved to jira
+- not-a-number
+
+---
+- CDI-not-in-a-block
+"""
+
+
+def test_the_key_regex_is_pulses_and_is_not_reimplemented_here(monkeypatch):
+    """One definition of what a ticket key looks like, or they drift apart.
+
+    Driven rather than grepped: swap pulse's extractor and every reader in
+    this module has to change with it, which is only true if there is one.
+    """
+    monkeypatch.setattr(Pulse, "_keys", staticmethod(lambda text: {"XX-1"} if text else set()))
+
+    assert keys_in("nothing key-shaped in here") == {"XX-1"}
+
+
+def test_the_jira_block_parses_and_the_repos_and_projects_blocks_are_left_alone(tmp_path: Path):
+    path = tmp_path / "Watchlist.md"
+    path.write_text(WATCHLIST, encoding="utf-8")
+
+    watched = read_watchlist(path)
+
+    assert [p.key for p in watched.projects] == ["CDI", "DED"]
+    assert [r.slug for r in watched.repos] == ["CreateMusicGroup/some-service"]
+    # `unparsed` is repo lines only, because the pulse renders each one into
+    # the brief. A jira or projects bullet that names nothing never was one.
+    assert watched.unparsed == []
+
+
+def test_one_pass_reads_both_blocks_exactly_as_the_two_parsers_did(tmp_path: Path):
+    """The fold's own check, with the values the two parsers gave before it.
+
+    A bold label opens a block and a rule closes it; a nested bullet is read
+    like any other; backticks and brackets come off a key; a repeated key
+    repeats, because each entry is one Jira read; a lowercase or hyphenated
+    head is not a key; and a `projects` block is not read, so `ABC` under it
+    is nobody's project.
+    """
+    path = tmp_path / "Watchlist.md"
+    path.write_text(
+        "**repos**\n"
+        "- ExampleOrg/service-a · wiki\n"
+        "  - `ExampleOrg/service-b` · branch:dev\n"
+        "- ExampleOrg / typo\n"
+        "---\n"
+        "- ExampleOrg/after-the-rule\n"
+        "## jira\n"
+        "- CDI · live board · jql: labels = ingest\n"
+        "\t- `TDE` | data platform\n"
+        "- (DED)\n"
+        "- CDI\n"
+        "- cdi\n"
+        "- CDI-596\n"
+        "**projects**\n"
+        "- 7 · a pod board\n"
+        "- ABC\n"
+        "---\n"
+        "- XYZ\n"
+        "**Jira**:\n"
+        "- ZED\n",
+        encoding="utf-8",
+    )
+
+    watched = read_watchlist(path)
+
+    assert [(r.slug, r.wiki, r.branch) for r in watched.repos] == [
+        ("ExampleOrg/service-a", True, ""),
+        ("ExampleOrg/service-b", False, "dev"),
+    ]
+    assert watched.unparsed == ["ExampleOrg / typo"]
+    assert [p.key for p in watched.projects] == ["CDI", "TDE", "DED", "CDI", "ZED"]
+
+
+WRITE_SHAPED = (
+    "transition",
+    "comment",
+    "create",
+    "update_issue",
+    "editissue",
+    "assign",
+    "delete",
+    "post",
+    "put",
+    "patch",
+    "write",
+)
+
+#: Names `pulse.py` binds that carry a write verb as a substring and are not a
+#: write. Exact names, each with its reason: the scan below still fires on
+#: anything else, so a new one has to be argued in here in review.
+NOT_A_BOARD_WRITE = {
+    "__post_init__": "the dataclass hook that refuses an `Item` with no permalink",
+    "FORBIDDEN_IN_OUTPUT": "`put` inside `output`: the activity words a render must not carry",
+}
+
+
+def _defined_names(path: Path) -> list[str]:
+    """Every name this module defines or binds - not its prose.
+
+    Parsed rather than grepped, because the docstrings deliberately say the
+    word "transition" while explaining that there is no such call, and a scan
+    that trips on its own explanation is one people learn to route around.
+    """
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    names: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
+            names.append(node.name)
+        elif isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+            names.append(node.id)
+        elif isinstance(node, ast.Attribute):
+            names.append(node.attr)
+        elif isinstance(node, ast.alias):
+            names.append(node.name.split(".")[-1])
+    return names
+
+
+@pytest.mark.guardrail
+def test_the_module_exposes_no_way_to_drive_the_board():
+    """BEHAVIOURAL. Guardrail 4 is "read the board, never drive it".
+
+    The package holds no Jira client: the eod plan hands the agent one bounded
+    read per project (`recipes.jira_moved_on`), and this module is where those
+    project keys are read off the watchlist and where a ticket key is defined.
+    The token behind the real connector carries `read:jira-work` plus
+    Confluence read and no write scope at all, so a bug that tried to
+    transition a ticket would be refused one layer below this code. What this
+    test can prove is the half that lives here: no name the module defines or
+    binds, public or private, is shaped like a write.
+
+    It scanned `board.py` until that module folded in here, and scans all of
+    `pulse.py` now. `NOT_A_BOARD_WRITE` is the two names the wider file brings
+    that hold a verb by accident; each has to still exist to stay exempt.
+    """
+    source = Path(inspect.getfile(pulse))
+    defined = _defined_names(source)
+
+    gone = sorted(set(NOT_A_BOARD_WRITE) - set(defined))
+    assert not gone, f"an exemption for a name pulse.py no longer has: {gone}"
+    offenders = sorted(
+        {name for name in defined for verb in WRITE_SHAPED if verb in name.casefold()}
+        - set(NOT_A_BOARD_WRITE)
+    )
+
+    assert not offenders, (
+        f"\nGUARDRAIL 4: a board write surface appeared in {source.name}: {offenders}\n"
+        "The board belongs to the data team. A transition, a note on a ticket or\n"
+        "a new ticket is drafted for a per-action yes, exactly like a Slack\n"
+        "message - it is never sent from here. Do not weaken this test."
+    )
+
+
+@pytest.mark.guardrail
+def test_the_public_surface_is_readers_and_nothing_else():
+    """Belt and braces on the export list: `from daydag.pulse import *` must
+    not be able to reach a driver even if one is added privately."""
+    exported = [name for name in dir(pulse) if not name.startswith("_")]
+    offenders = [
+        name
+        for name in exported
+        for verb in WRITE_SHAPED
+        if verb in name.casefold() and name not in NOT_A_BOARD_WRITE
+    ]
+    assert not offenders, f"a write-shaped name is importable from daydag.pulse: {offenders}"
+
+
+@pytest.mark.guardrail
+def test_the_module_holds_no_connector_client():
+    """This module's half of "no connector client besides the git mirror"
+    (tests/test_guardrails.py carries the package-wide version). It is the git
+    mirror, reached through `subprocess`; every other read here is a path to a
+    hand-edited file or a string, and nothing takes a query to go run.
+
+    Checked against imported module names, not the whole source text - the
+    module docstring says "Atlassian" in prose, which a plain text search
+    would flag as if it were a client import.
+    """
+    tree = ast.parse(Path(inspect.getfile(pulse)).read_text(encoding="utf-8"))
+    imported: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported.update(alias.name.split(".")[0] for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            imported.add(node.module.split(".")[0])
+    banned = {"requests", "httpx", "urllib", "urllib3", "aiohttp", "atlassian", "jira"}
+    assert not imported & banned, (
+        f"a connector client import appeared in pulse.py: {imported & banned}"
     )

@@ -34,11 +34,11 @@ Three specifics worth not re-deriving:
 1. **`observe_pr` takes exactly three fields** - `title`, `number`, `state`
    (`pulse.py`). That is the entire API surface DayDAG consumes. Everything
    richer in the docstring is aspiration, not a call site.
-2. **Projects v2 is deliberately flagged, not read** (`board.py`: *"GitHub
-   Projects v2 is flagged, not read - the v2 API is GraphQL-only and a REST
-   call against it returns nothing useful rather than an error, which is why a
-   watched org project renders as one named line instead of silence"*).
-   So the `project` / `read:project` scope buys nothing.
+2. **Projects v2 is not read** (`pulse.py`, KNOWN LIMIT: *"A `projects`
+   block is not read: GitHub Projects v2 is GraphQL-only and nothing here
+   calls it"*). The v2 API has no REST form - a REST call against it returns
+   nothing useful rather than an error - and no line in a brief says a board
+   went unread. So the `project` / `read:project` scope buys nothing.
 3. **DayDAG never reads a GitHub token itself.** No `GH_TOKEN` or
    `GITHUB_TOKEN` anywhere in `src/`. Mirrors shell out to `git`; the token
    exists only for `gh api` calls made by the agent.

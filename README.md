@@ -45,9 +45,8 @@ artifact is the load-bearing rule; the rest is plumbing.
 | `manifests` | Reads the `daydag:` block out of every `.claude/skills/*/SKILL.md` and checks the set: two writers to one artifact is an error, not a convention. Run by preflight and the test suite, not by a loop |
 | `state` | The `DayDAG/` vault folder and the SQLite event log. Two stores, opposite requirements |
 | `ledger` | Calendar-driven meeting rows, so a meeting that produced **no** notes is visible |
-| `pulse` | Repo state: local mirrors for history, API for review state |
+| `pulse` | Repo state: local mirrors for history, API for review state. Also the reader of the watchlist's `repos` and `jira` blocks and the one definition of a ticket key; the board join and deltas are retired at tag `pre-retirement` until a loop needs them |
 | `repos` | The first step of every recap: fetch or clone the mirrors of every watched repo and fast-forward his clean working copies, without moving a pulse cursor |
-| `board` | The watchlist's `jira` and `projects` blocks, and ticket keys in a line; the join and deltas are retired at tag `pre-retirement` until a loop needs them |
 | `closure` | Open is a verdict, not a default: the reply under every ask is read before the ask is reported open |
 | `vault` | Targeted line edits to a note, with an iCloud-aware compare-and-swap |
 | `voice` | The template for every push, the sanctioned warning glyph and the one-line clip. The house voice itself is asserted by the suite (`tests/voice_check.py`), not at run time |

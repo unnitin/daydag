@@ -10,7 +10,6 @@ USING IT
     gh_recent_runs(repo, branch="dev")         # CI health on the watchlist's branch
     vault_path(ids, "Weekly Notes", weekly_note(day))
     week_range(day), week_label(day), next_week_label(day)
-    title_from_gemini_subject(subject)
 
 CONTRACTS
     1. Calendar is queried DAY BY DAY. One 5-day pull returned 156,681 chars
@@ -55,11 +54,7 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
-# One parser for Gemini subjects, re-exported rather than reimplemented. The
-# ledger owns it because the ledger is what a parsed title is *for*; a second
-# copy here would be a second set of bugs that disagree only on hard cases.
 from daydag.config import DEFAULT_TIMEZONE, resolve_reference
-from daydag.ledger import title_from_gemini_subject
 
 __all__ = [
     "GEMINI_LABEL",
@@ -99,7 +94,6 @@ __all__ = [
     "slack_search",
     "slack_sent_on",
     "slack_to_him_since",
-    "title_from_gemini_subject",
     "vault_path",
     "vault_relative",
     "vault_root",
@@ -567,6 +561,12 @@ def watched_channels(watchlist: str) -> list[str]:
     Pure over the file's text (contract 5). A line that does not lead with an
     id is his note and is skipped rather than guessed at - a display name here
     would become a search that silently matches nothing.
+
+    The block rules are this function's own, not `pulse.read_watchlist`'s,
+    which reads the repos and jira blocks of the same file: here only a `#`
+    heading opens or closes the block, so a `**channels**` label does not
+    open it, and a horizontal rule does not end it. Folding the two together
+    changes which lines count, so it is a decision, not a tidy-up.
     """
     out: list[str] = []
     block = ""
@@ -594,7 +594,6 @@ VAULT_PREFIX = "Create Music Group"
 
 WEEKLY_NOTES = "Weekly Notes"
 MEETING_PREP = "Meeting Prep"
-FACT_BASE = "Fact Base"
 DAYDAG = "DayDAG"
 
 
@@ -719,8 +718,9 @@ JIRA_FIELDS: tuple[str, ...] = (
 #: count can guarantee - but 100 issues of 7 fields stays comfortably inside it.
 JIRA_MAX_RESULTS_CAP = 100
 #: Atlassian project keys: 2-10 uppercase alphanumerics starting with a letter.
-#: A Jira project key. Public because `board` parses the same keys out of
-#: the watchlist and a second copy is how the two drift - which they had.
+#: A Jira project key. Public because `pulse.read_watchlist` parses the same
+#: keys out of the watchlist and a second copy is how the two drift - which
+#: they had.
 PROJECT_KEY = re.compile(r"^[A-Z][A-Z0-9]{1,9}$")
 
 

@@ -112,7 +112,7 @@ So: **clone, and also keep the API.** The clones are not a replacement for API a
 
 Jira is the data team's plan of record; GitHub Projects is where pods that never moved to Jira still live. Both are read-only to DayDAG (ownership table), both feed the same `shipping` block, and both are joined to Slack, PRs and meeting notes on the **ticket key** — `ABC-123` in a branch name, a PR title, a Slack line, a meeting-note next-step. That join is the whole point; it's what turns "jasmeet said he'd do the compute-engine consolidation" into a ticket, a PR and a status without Nitin holding the mapping in his head.
 
-What's watched lives in `DayDAG/Watchlist.md`: a `jira` block (project key · board/sprint · saved JQL · linked workstream) and a `projects` block (org project number · linked workstream). The `repos` block feeds the mirrors — one bullet per repo, `owner/repo` or its github url, with anything after a `·` treated as notes **except two markers**, each of which must be a field of its own rather than a word appearing somewhere in the prose:
+What's watched lives in `DayDAG/Watchlist.md`. The design is a `jira` block (project key · board/sprint · saved JQL · linked workstream) and a `projects` block (org project number · linked workstream). The code reads less than that today: `pulse.read_watchlist` takes the project key each `jira` bullet leads with, which is what the eod plan asks Jira about, and everything after the first `·` is his note, a saved JQL or workstream included. A `jira` bullet that does not lead with a key is skipped with no line saying so, and a `projects` block is not read at all. The same reader takes the `repos` block, which feeds the mirrors - one bullet per repo, `owner/repo` or its github url, with anything after a `·` treated as notes **except two markers**, each of which must be a field of its own rather than a word appearing somewhere in the prose:
 
 - `wiki` — also mirrors that repo's `<repo>.wiki.git`.
 - `branch:<name>` — where landings appear, when that is not the default branch. Omitted means `HEAD`, which in a bare mirror is the remote's default. This exists because it is otherwise unsayable and the failure is silent: a repo that lands on `dev` contributes no items, is not stale, is not unavailable, gets no degrade line, and reads as healthy and quiet (#128). A named branch that doesn't resolve is reported with the branch in the message, because that one is fixed by editing the watchlist rather than by looking at git.
@@ -121,10 +121,10 @@ A bullet that isn't a recognisable slug is skipped, because that file is hand-ed
 
 Two mechanical notes worth writing down before someone rediscovers them:
 
-- **Projects v2 is GraphQL-only.** The REST API does not expose the new project boards at all. Column moves come from `ProjectV2ItemFieldValue` on the org project — `gh project item-list --owner CreateMusicGroup --format json` wraps it. The old REST `/projects` endpoints are the deprecated classic boards and will return nothing useful.
+- **Projects v2 is GraphQL-only**, and nothing in `src/` reads a Projects board yet. The REST API does not expose the new project boards at all. Column moves come from `ProjectV2ItemFieldValue` on the org project - `gh project item-list --owner CreateMusicGroup --format json` wraps it. The old REST `/projects` endpoints are the deprecated classic boards and will return nothing useful.
 - **The Atlassian connector is authorised** (the #2 connector audit's follow-up) with a read-only token — `read:jira-work` plus Confluence read, no write scope at all. The eod plan reads it through `recipes.jira_moved_on`, one project and one day per call; when the token itself is missing or expired, that step is a "couldn't check" line, not a blocker.
 
-The two flags the board delta exists to catch stay as spec'd: *a ticket he believes exists but was never made*, and *a ticket closed with nobody saying so*. The join and snapshot diff that computed them (`board.py`, #12) were never called by a loop and were retired on 2026-10-11 at tag `pre-retirement` (PR #199); today the eod plan reads what moved per project through `recipes.jira_moved_on` and `movement` proposes it as evidence. Restore from the tag when a loop needs the join.
+The two flags the board delta exists to catch stay as spec'd: *a ticket he believes exists but was never made*, and *a ticket closed with nobody saying so*. The join and snapshot diff that computed them (`board.py`, #12) were never called by a loop and were retired on 2026-10-11 at tag `pre-retirement` (PR #199); what was left of `board.py`, the watchlist's `jira` block and the ticket-key helper, has since folded into `pulse.py`. Today the eod plan reads what moved per project through `recipes.jira_moved_on` and `movement` proposes it as evidence. Restore from the tag when a loop needs the join.
 
 ### Calendar ↔ Gemini — the meeting ledger
 
@@ -163,7 +163,7 @@ Create Music Group/
     README.md          # what this folder is, what writes each file — read this first
     State.md           # chase list · watch items · snoozes · open notes-gaps  (agent-written, hand-correctable)
     Decisions.md       # pending decisions; Nitin answers in place              (both write it)
-    Watchlist.md       # repos · Jira projects · GH Projects · channels          (config; Nitin's, agent proposes)
+    Watchlist.md       # repos · Jira projects · channels · prep rules           (config; Nitin's, agent proposes)
     Style.md           # what feedback taught, one rule per row with scope and lifetime (Nitin's; agent appends `inferred` rows)
     Proposals/         # proposed diffs awaiting a yes, one file each            (agent-written, deleted on apply)
     Archive/           # pre-cutover snapshots of anything DayDAG took custody of

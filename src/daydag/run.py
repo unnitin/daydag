@@ -85,7 +85,6 @@ from daydag import (
     recipes,
     week_ahead,
 )
-from daydag.board import read_board_watchlist
 from daydag.config import ConfigError, resolve_reference, timezone_for
 from daydag.ledger import (
     CANCELLED,
@@ -106,6 +105,7 @@ from daydag.pulse import (
     Pulse,
     PulseError,
     SyncReport,
+    Watchlist,
     github_url,
     mirror_root,
     read_watchlist,
@@ -889,19 +889,30 @@ def _evening_sweep(
             for channel in recipes.watched_channels(watchlist)
         )
     ]
-    steps += _jira_steps(path if watchlist else None, day)
-    steps += _github_steps(path if watchlist else None, day)
+    watched = _watched(path if watchlist else None)
+    steps += _jira_steps(watched, day)
+    steps += _github_steps(watched, day)
     return steps
 
 
-def _jira_steps(watchlist: Path | None, day: date) -> list[Step]:
+def _watched(path: Path | None) -> Watchlist:
+    """The watchlist's repos and jira projects, read once for both steps.
+
+    No path or an unreadable file is an empty watchlist rather than a raise:
+    the Jira steps then fall back to the default board and the one GitHub
+    step says there are no watched repos.
+    """
+    if path is None:
+        return Watchlist()
+    try:
+        return read_watchlist(path)
+    except PulseError:
+        return Watchlist()
+
+
+def _jira_steps(watched: Watchlist, day: date) -> list[Step]:
     """One bounded JQL per watched project - the three-project form overflowed."""
-    projects: list[str] = []
-    if watchlist is not None:
-        try:
-            projects = [project.key for project in read_board_watchlist(watchlist).projects]
-        except PulseError:  # unreadable; degrade to the default board
-            projects = []
+    projects = [project.key for project in watched.projects]
     how = (
         "searchJiraIssuesUsingJql with exactly these jql, fields and maxResults (read-only); "
         "concatenate every step's issues into ONE `jira` list, each with its webUrl"
@@ -912,18 +923,13 @@ def _jira_steps(watchlist: Path | None, day: date) -> list[Step]:
     ]
 
 
-def _github_steps(watchlist: Path | None, day: date) -> list[Step]:
+def _github_steps(watched: Watchlist, day: date) -> list[Step]:
     """Merged, reviewed and closed across every watched repo - one search each.
 
     A merged PR is evidence of movement and never closure (#18): the wrap
     renders it under "moved", and nothing it reads can close a loop.
     """
-    repos: list[str] = []
-    if watchlist is not None:
-        try:
-            repos = [repo.slug for repo in read_watchlist(watchlist).repos]
-        except PulseError:
-            repos = []
+    repos = [repo.slug for repo in watched.repos]
     if not repos:
         return [
             Step(
