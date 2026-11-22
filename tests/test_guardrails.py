@@ -828,6 +828,9 @@ def test_no_jira_write_path_exists_unguarded():
 #: An MCP tool as an allowlist names it: `mcp__<server>__<tool>`.
 _MCP_TOOL = re.compile(r"mcp__[\w-]+")
 
+#: A grant of every tool under a prefix: `mcp__*`, `mcp__<server>__*`.
+_MCP_WILDCARD = re.compile(r"mcp__[\w-]*\*")
+
 #: How an Atlassian read tool's own name starts. Verbs that are allowed, not
 #: a list of ones that are not: the write tools `JIRA_WRITE_PATTERNS` names
 #: start create, edit, transition, add or assign, and a tool nobody has seen
@@ -844,7 +847,10 @@ def test_an_unattended_run_asks_for_atlassian_reads_only():
     A headless run can call only the tools its wrapper's `--allowedTools` list
     names, so the wrappers in `scripts/` are where this repo asks for Atlassian
     access at all. Every tool they name has to be a read. A bare server name
-    or a wildcard fails too: that asks for every tool the connector has.
+    or a wildcard fails too: that asks for every tool the connector has. So
+    does a wrapper that grants a wildcard of MCP tools without naming
+    Atlassian, or that skips the allowlist altogether - either one grants the
+    Atlassian writes without ever spelling the word.
 
     This was `test_the_module_asks_for_read_scopes_only`, over a
     `READ_ONLY_SCOPES` tuple in `board.py` that declared `read:jira-work` and
@@ -852,11 +858,19 @@ def test_an_unattended_run_asks_for_atlassian_reads_only():
     into `pulse.py`; the scopes themselves are granted in the connector,
     outside this repo. The allowlists are the request the repo actually makes.
     """
+    wrappers = {
+        script.name: script.read_text(encoding="utf-8")
+        for script in sorted((REPO_ROOT / "scripts").glob("*.sh"))
+    }
+    for name, text in wrappers.items():
+        assert "--dangerously-skip-permissions" not in text, f"{name} skips the allowlist"
+        assert not _MCP_WILDCARD.search(text), f"{name} grants a wildcard of MCP tools"
+
     asked = sorted(
         {
             tool
-            for script in sorted((REPO_ROOT / "scripts").glob("*.sh"))
-            for tool in _MCP_TOOL.findall(script.read_text(encoding="utf-8"))
+            for text in wrappers.values()
+            for tool in _MCP_TOOL.findall(text)
             if "atlassian" in tool.casefold()
         }
     )
