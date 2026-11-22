@@ -259,3 +259,57 @@ What the first real use established:
   expected $2,146.35; the $25.82 gap is the hotel at the folio's gross, which
   he chose to leave. One DRAFT, hotel $1,177.95 with the folio attached, left
   unsubmitted pending his word.
+
+## 2026-10-21: travel goes through Perk, not Ramp
+
+Three days after the first Ramp batch the AP manager approved the hotel folio
+that batch had staged in Ramp, and said where it should have gone. From the
+Slack DM with the AP manager (the directory holds the DM:
+`python -m daydag.people show ap-manager`), verbatim:
+
+- 2026-10-21: *"I just approved an hotel reimbursement for you in Ramp.
+  However, please note that all airfare, accommodations, and car rental spends
+  should go through Perk, which you have a profile for now. As we scale we are
+  tightening our policy around this."*
+- 2026-10-21: *"CMG has been using Perk for all airfare, accommodations, car
+  rental reimbursements. [...] Ramp is only for all other reimbursements that
+  are not airfare, accommodations and car rentals (i.e - public ride share
+  services, meals, entertainment, etc.)"*
+- 2026-10-21, the recap: *"Rippling Credit Cards were deactivated in Rippling
+  10/15 and everyone who has a Rippling CC now has (should have) a Ramp credit
+  card. Perk continues to be the platform employees should use for airfare,
+  accommodations, and car rentals. All other reimbursements via Ramp, and
+  approved credit cards spends"*
+
+What that changes here:
+
+- **The split.** Perk: airfare, accommodations, car rental. Ramp: everything
+  else he pays (rideshare, meals, entertainment, wifi). Rippling is payroll
+  only. Perk is the TravelPerk the travel desk already books through (see
+  "The shape of his calendar").
+- **The code.** `expenses_ramp.stage_files` leaves out a file whose category
+  names lodging, hotel, accommodation, airfare, flight or car rental, and the
+  render lists it under "through perk, not ramp". The trip render says the
+  same. The mail route never carried these: its sources are rideshare and
+  meals.
+- **What is already in Ramp stays.** The October hotel line was approved
+  there. The unsubmitted $1,177.95 hotel draft noted above is his to delete or
+  leave; nothing here touches it.
+- **Not verified.** How an out-of-pocket travel invoice is submitted in Perk
+  from his profile. He said he "used to submit travel invoices to perk"; the
+  steps have not been watched from a session, and no Perk connector exists.
+  The Perk notice he saw ("using ramp after october 15th") was, per the AP
+  manager, meant for Rippling cards only.
+
+## 2026-11-06: when Ramp pays
+
+He asked why half of the 2026-10-18 batch was still "awaiting payment" with no
+date. The AP manager, same DM, verbatim: *"our expense reimbursements via Ramp
+are only initiated the 1st and the 15th of each month (with 2-3 business days
+before payments hit employee accounts). Even though all of your expenses were
+submitted at the same time, not all were approved at once, which is what
+triggers reimbursements entering the payment initiation state."*
+
+So a line is paid in the first run after it is approved, the money lands two
+to three business days after the 1st or the 15th, and a run date on a weekend
+slides (the 15 Nov run was expected by the 18th).

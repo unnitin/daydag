@@ -955,3 +955,11 @@ def test_other_mail_from_ramp_is_not_a_draft():
         "snippet": "Your expense download is ready",
     }
     assert ex.drafts_in([msg]) == []
+
+
+def test_the_trip_render_says_travel_goes_through_perk_not_ramp():
+    """AP's rule, 2026-10-21: airfare, accommodations and car rental go through
+    Perk. The trip render is where he confirms the frame, so it says it there."""
+    text = ex.trip_from_calendar(calendar(), name="Trip to LA").render()
+    assert "go through perk, never ramp" in text
+    assert "travel desk" not in text

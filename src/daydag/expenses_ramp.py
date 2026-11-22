@@ -19,6 +19,7 @@ USING IT
     expected_from_batch(batch) + expected_from_file(payload)
     ramp_check(expected, items).render()
     stage_files(files, trip_uuid=...)        # -> [Staging], each .steps()
+    perk_bound(files)                        # -> [(n, file)] held back: perk's, not ramp's
 
 CONTRACTS
     1. Nothing here sends (expenses.py contract 1 holds): `stage_files` prints
@@ -40,6 +41,12 @@ CONTRACTS
        and its selection left out; nothing here guesses a UUID. If Finance
        renames an account the UUID still resolves; if they retire one the
        edit fails loudly and .env gets re-read from a current row.
+    5. Airfare, accommodations and car rental are not staged here. They go
+       through Perk (AP's rule, 2026-10-21, said after a hotel folio staged
+       here was reimbursed in Ramp). `stage_files` leaves out a file whose
+       category names one of them and `perk_bound` lists it, so the render
+       says where it goes instead of printing an upload for it. The category
+       is his word for the file; nothing is guessed from the merchant.
 
 WHAT WAS VERIFIED (2026-10-18)
     - `ramp_edit_reimbursement` on a PENDING reimbursement accepts trip_uuid
@@ -75,6 +82,8 @@ __all__ = [
     "expected_from_batch",
     "expected_from_file",
     "files_from_payload",
+    "goes_through_perk",
+    "perk_bound",
     "ramp_check",
     "ramp_items_in",
     "stage_files",
@@ -116,6 +125,31 @@ GL_KEY_BY_CATEGORY: dict[str, str] = {
     "Hotel & Lodging": "RAMP_GL_LODGING",
     "Airfare": "RAMP_GL_AIRFARE",
 }
+#: What goes through Perk and never through Ramp: airfare, accommodations and
+#: car rental (AP's rule, 2026-10-21, said after a hotel folio staged here was
+#: reimbursed in Ramp). Matched as words inside the category he gave the file,
+#: lower-cased, so "Hotel & Lodging" and "Car Rental" both read. Nothing is
+#: guessed from the merchant or the amount: the category is his word for the
+#: file. The lodging and airfare GL rows above stay because `ramp-check` still
+#: reads the lines filed in Ramp before the rule.
+PERK_WORDS = (
+    "airfare",
+    "airline",
+    "flight",
+    "lodging",
+    "hotel",
+    "accommodation",
+    "car rental",
+    "rental car",
+)
+
+
+def goes_through_perk(category: str) -> bool:
+    """Whether a file in this category is Perk's to take, not Ramp's."""
+    named = " ".join(category.lower().split())
+    return any(word in named for word in PERK_WORDS)
+
+
 #: Every travel GL at CMG starts with this; anything else on a trip line is flagged.
 TRAVEL_GL_PREFIX = "6071"
 
@@ -514,16 +548,42 @@ def stage_files(
     trip_uuid: str = "",
     identities: Mapping[str, str] | None = None,
 ) -> list[Staging]:
-    return [Staging(n, f, trip_uuid, identities) for n, f in enumerate(files, start=1)]
+    """The Ramp steps for each file that is Ramp's to take.
+
+    A file whose category goes through Perk gets no steps (`perk_bound` lists
+    those). Each staging keeps the file's position in ``files`` as its number,
+    so `go 2` means the second line he wrote whether or not the first was held.
+    """
+    return [
+        Staging(n, f, trip_uuid, identities)
+        for n, f in enumerate(files, start=1)
+        if not goes_through_perk(f.category)
+    ]
 
 
-def render_staging(stagings: Sequence[Staging]) -> str:
+def perk_bound(files: Sequence[FileReceipt]) -> list[tuple[int, FileReceipt]]:
+    """The files `stage_files` left out, each with its number in ``files``."""
+    return [(n, f) for n, f in enumerate(files, start=1) if goes_through_perk(f.category)]
+
+
+def render_staging(
+    stagings: Sequence[Staging], perk: Sequence[tuple[int, FileReceipt]] = ()
+) -> str:
     head = [
         f"files into ramp - {len(stagings)} receipt(s), four steps each; "
         "nothing runs until he says go",
         "submit is a separate go: `submit 1 2` -> ramp_submit_reimbursement per uuid",
-        "",
     ]
+    if perk:
+        head.append(
+            f"through perk, not ramp - {len(perk)} file(s), no ramp step "
+            "(airfare, accommodations and car rental are perk's):"
+        )
+        head += [
+            f"- {n}. {f.merchant} ${f.amount} {f.purchased_on.isoformat()} ({f.category}) {f.path}"
+            for n, f in perk
+        ]
+    head.append("")
     body = json.dumps(
         [{"n": s.n, "file": s.receipt.path, "steps": s.steps()} for s in stagings], indent=2
     )

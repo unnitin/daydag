@@ -840,8 +840,8 @@ class Trip:
         if not self.flights and not self.stay:
             lines.append("no flight or stay on the calendar - the dates are the only frame")
         lines.append(
-            "flights and the stay the travel desk booked are theirs to pay, not yours to "
-            "claim - only what you paid goes in the report"
+            "flights, the stay and a rental car go through perk, never ramp - "
+            "this report is everything else you paid"
         )
         return "\n".join(lines)
 
@@ -1914,7 +1914,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             identities = Identities.from_file(env) if env.exists() else None
             print(
                 ramp.render_staging(
-                    ramp.stage_files(files, trip_uuid=args.trip_uuid, identities=identities)
+                    ramp.stage_files(files, trip_uuid=args.trip_uuid, identities=identities),
+                    perk=ramp.perk_bound(files),
                 )
             )
     except ExpenseError as exc:
