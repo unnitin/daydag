@@ -24,6 +24,10 @@ This is the **forward-looking** companion to the `weekly-progress-reporting` ski
 
 > **Format note (read first):** the weekly note uses the **Priorities** layout below — a single triaged task list (`🔴 High / 🟡 Medium / 🟢 Lower-ongoing`) with `(mine)/(tracking)/(x-team)` tags and links out to `[[Workstreams#…]]`. This **replaced an older "Section A–D" layout** (Section A action items → B context → C meetings → D done) used through ~0615-0619. Always match the **most recent** weekly note in the vault; if it has drifted again, follow the latest note, not this template.
 
+## Before you start: refresh the local repos
+
+In Claude Code, from the daydag repo: `.venv/bin/python -m daydag.repos sync --log ~/.local/state/daydag/events.db` (his call, 2026-11-20: every daily and weekly recap updates the local repos first). It fetches DayDAG's mirror of every `Watchlist.md` repo and fast-forwards his clean working copies; a repo it cannot fetch is one line, never a stall. Skip it when `weekly-planning-and-progress` or `weekly-progress-reporting` already ran it this session.
+
 ---
 
 ## Files to produce
