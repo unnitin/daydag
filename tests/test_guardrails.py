@@ -50,10 +50,11 @@ COVERED (behavioural - real code, real assertions)
     - a stale mirror contributes no items, is reported as stale, and carries the
       time of the last fetch that actually worked
     - untrusted Slack text is parsed for ticket keys only, never echoed or acted on
-    - the vault write path joins only literal names onto the folder root
-    - `notes_gaps` carries the same sensitivity channel `chase` and `watch` do,
-      via `NotesGap`, so a meeting whose own title is sensitive is withheld the
-      same way a private chase or watch item is when the rule-7 switch is on
+    - the vault write path joins only literal names onto the folder root, and
+      a `State.md` that is a symlink out of the vault is never written through
+    - `notes_gaps` carries the same sensitivity channel `chase` does, via
+      `NotesGap`, so a meeting whose own title is sensitive is withheld the
+      same way a private chase item is when the rule-7 switch is on
       (was GAP 3, #61)
     - `daydag.delivery.deliver_push` has no destination parameter at all - the
       resolved principal id is the only channel a send can ever name (#10,
@@ -125,6 +126,7 @@ from pathlib import Path
 import pytest
 
 from daydag import delivery, manifests
+from daydag.call_notes import CHASED
 from daydag.config import Identities
 from daydag.manifests import PRIVATE_SURFACES, Registry, RegistryError
 from daydag.pulse import Item, Mirror, Pulse
@@ -617,7 +619,6 @@ def test_a_loop_rewrites_no_vault_file_but_state_md_and_only_with_its_old_text_k
 
     folder.update_state(
         chase=[{"owner": "vp-data", "ask": "compute consolidation"}],
-        watch=[{"what": "nightly ingest job"}],
         notes_gaps=["1:1 with no notes"],
     )
 
@@ -664,6 +665,34 @@ def test_the_vault_write_path_joins_only_literal_names(tmp_path: Path):
     for path in (folder.state_path, folder.decisions_path, folder.watchlist_path):
         assert path.resolve().is_relative_to(folder.root.resolve())
     assert sorted(p.name for p in (tmp_path / "vault").iterdir()) == ["DayDAG"]
+
+
+@pytest.mark.guardrail
+def test_a_state_file_linked_out_of_the_vault_is_never_written_through(tmp_path: Path):
+    """BEHAVIOURAL. The write half of "a symlink pointing out of the vault is
+    refused".
+
+    That refusal was `vault.Vault.note`, which resolved a path against the
+    vault root before anything read it. No caller built a note through it and
+    it was retired on 2026-11-21, so nothing refuses a link today: a
+    `State.md` that is a symlink is READ through. What the code that runs does
+    hold is the half that loses data. The write is a temp file and
+    `os.replace`, which swaps the link for a file inside the folder - the
+    file it pointed at is not written.
+    """
+    folder = StateFolder.create(tmp_path / "vault" / "DayDAG")
+    outside = tmp_path / "outside.md"
+    outside.write_text(folder.read_state(), encoding="utf-8")
+    folder.state_path.unlink()
+    folder.state_path.symlink_to(outside)
+    before = outside.read_bytes()
+
+    filed = folder.update_state(chase=[{"key": "NEW-1", "owner": "vp-ai", "ask": "wave 2 scope"}])
+
+    assert filed == 1, "nothing was written, so nothing was exercised"
+    assert outside.read_bytes() == before, "the write went through the link, out of the vault"
+    assert "wave 2 scope" in folder.read_state()
+    assert folder.state_path.resolve().is_relative_to(folder.root.resolve())
 
 
 # --------------------------------------------------------------------------
@@ -865,28 +894,30 @@ def test_a_private_item_reaches_state_md_like_a_normal_one_and_no_other_vault_fi
 
     The principal, 2026-09-25, after discussing the tradeoff: "i think we
     should treat sensitive items the same" / "i think wire everything
-    consistently for now, we can change later". So a private chase or watch
-    item is written to `State.md` exactly as a normal one is. What still
+    consistently for now, we can change later". So a private chase item or
+    notes gap is written to `State.md` exactly as a normal one is. What still
     holds: it lands in `State.md` and in no other vault file, and the event
     log keeps its private mark, so the rule can be switched back
     (`state.WITHHOLD_PRIVATE`, pinned below) with nothing to re-derive.
+
+    Both lists `update_state` takes. It took a third, `watch`, until
+    2026-11-21 (no caller passed it); the private item on the second list
+    here is a notes gap now.
     """
     marker = "growth-area-carry-forward"
     log = EventLog.open(":memory:")
-    log.record("carry_forward", owner="sam", ask=marker, key="k", sensitivity="private")
-    log.record(
-        "loop_opened", sensitivity="normal", key="DATA-812", ask="compute consolidation", day=0
-    )
+    log.record(CHASED, owner="sam", ask=marker, key="k", sensitivity="private")
+    log.record(CHASED, sensitivity="normal", key="DATA-812", ask="compute consolidation", day=0)
 
     folder.update_state(
         chase=log.chase_items(),
-        watch=[{"what": f"{marker} watch", "sensitivity": "private"}, {"what": "nightly job"}],
+        notes_gaps=[{"title": f"{marker} review", "sensitivity": "private"}, "Pod Steering"],
     )
 
     assert _files_holding(folder, marker) == [Path("State.md")]
     written = folder.read_state()
-    assert f"{marker} watch" in written
-    assert "compute consolidation" in written and "nightly job" in written
+    assert f"{marker} review" in written
+    assert "compute consolidation" in written and "Pod Steering" in written
     assert [i.sensitivity for i in log.chase_items() if i.ask == marker] == ["private"]
 
 
@@ -894,25 +925,21 @@ def test_a_private_item_reaches_state_md_like_a_normal_one_and_no_other_vault_fi
 def test_switching_rule_7_back_withholds_private_items_from_every_vault_file(
     folder: StateFolder, withholding
 ):
-    """BEHAVIOURAL. The pre-#180 guarantee, under its one switch: chase, watch
-    and notes_gaps alike, and in every file of the folder - a private item in
+    """BEHAVIOURAL. The pre-#180 guarantee, under its one switch: chase and
+    notes_gaps alike, and in every file of the folder - a private item in
     Watchlist or a Proposal would have leaked just as completely."""
     marker = "growth-area-carry-forward"
     log = EventLog.open(":memory:")
-    log.record("carry_forward", owner="sam", ask=marker, key="k", sensitivity="private")
-    log.record(
-        "loop_opened", sensitivity="normal", key="DATA-812", ask="compute consolidation", day=0
-    )
+    log.record(CHASED, owner="sam", ask=marker, key="k", sensitivity="private")
+    log.record(CHASED, sensitivity="normal", key="DATA-812", ask="compute consolidation", day=0)
 
     folder.update_state(
         chase=log.chase_items(),
-        watch=[{"what": marker, "sensitivity": "private"}, {"what": "nightly ingest job"}],
         notes_gaps=[{"title": marker, "sensitivity": "private"}, "Pod Steering"],
     )
 
     assert not _files_holding(folder, marker), "private content reached the vault"
     assert "compute consolidation" in folder.read_state(), "the filter ate the normal items too"
-    assert "nightly ingest job" in folder.read_state()
     assert "Pod Steering" in folder.read_state()
 
 

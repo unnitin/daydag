@@ -34,6 +34,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from daydag.call_notes import CHASED
 from daydag.pulse import Mirror, Pulse
 from daydag.runlog import (
     FAILURE_LIMIT,
@@ -131,7 +132,7 @@ def test_a_morning_run_leaves_its_row_in_the_log_and_nothing_in_the_vault(
         assert [item.title for item in pulse.items()] == ["CDI-596 cutover rehearsal"]
 
         log.record(
-            "loop_opened",
+            CHASED,
             sensitivity="normal",
             key="CDI-596",
             owner="VP-Data",
@@ -139,14 +140,14 @@ def test_a_morning_run_leaves_its_row_in_the_log_and_nothing_in_the_vault(
             day=1,
         )
         log.record(
-            "carry_forward",
+            CHASED,
             sensitivity="private",
             key="perf-conversation",
             owner="VP-Data",
             ask="perf-conversation follow-up",
             day=1,
         )
-        folder.update_state(chase=log.chase_items(), watch=[], notes_gaps=[])
+        folder.update_state(chase=log.chase_items(), notes_gaps=[])
 
     # -- the row is in the log, stamped, and names what it could not read --
     (payload,) = log.recorded(RUN)

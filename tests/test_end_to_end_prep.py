@@ -150,7 +150,6 @@ def test_a_whole_morning_passes_through_every_module(tmp_path):
             source="gemini",
         )
     )
-    ledger.close_day()
     gaps = ledger.notes_gaps(as_of=MONDAY_9AM + timedelta(days=1))
     assert "Pod Steering" in gaps, "prepping a meeting does not excuse it from the gap list"
 

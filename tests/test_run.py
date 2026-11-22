@@ -21,6 +21,7 @@ from datetime import UTC, date, datetime
 import pytest
 
 from daydag import brief, recipes, run
+from daydag.call_notes import CHASED
 from daydag.config import Identities
 from daydag.state import StateFolder
 
@@ -1231,7 +1232,7 @@ def test_a_carried_chase_item_keeps_its_quote_and_permalink(identities, tmp_path
     folder.update_state(chase=[{"owner": "VP-Data", "ask": "the compute plan"}])
     log = tmp_path / "events.db"
     EventLog.open(log).record(
-        "carry_forward",
+        CHASED,
         sensitivity="normal",
         owner="VP-AI",
         ask="confirm the cutover",

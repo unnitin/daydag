@@ -344,6 +344,41 @@ def test_a_missing_vault_root_names_the_key():
         recipes.vault_path({}, "DayDAG", "State.md")
 
 
+@pytest.mark.guardrail
+def test_a_local_path_escaping_the_vault_is_refused(tmp_path):
+    """The decoy: `Weekly Notes/` also exists at the vault's parent (#6), and a
+    write once landed `claude-write-test.md` there.
+
+    Was `test_vault.py::test_a_path_escaping_the_vault_is_refused`, on
+    `vault.Vault.note` - a root check nothing built a note through, retired on
+    2026-11-21. The refusal that runs is this one: `vault_path` is how a local
+    path into the vault is built, and it will not build one that walks out.
+    """
+    documents = tmp_path / "Documents"
+    (documents / "Create Music Group").mkdir(parents=True)
+    (documents / "Weekly Notes").mkdir()
+    (documents / "Weekly Notes" / "claude-write-test.md").write_text("x", encoding="utf-8")
+    identities = {"VAULT_ROOT": str(documents)}
+
+    with pytest.raises(RecipeError, match="escapes the vault"):
+        recipes.vault_path(identities, "../Weekly Notes/claude-write-test.md")
+    with pytest.raises(RecipeError, match="escapes the vault"):
+        recipes.vault_path(identities, "..", "Weekly Notes", "claude-write-test.md")
+
+
+@pytest.mark.guardrail
+def test_an_absolute_local_path_outside_the_vault_is_refused(tmp_path):
+    """Was `test_vault.py::test_an_absolute_path_outside_the_vault_is_refused`.
+    A segment that is an absolute path would replace the vault root outright
+    in a join, so `vault_path` refuses it rather than joining it."""
+    identities = {"VAULT_ROOT": str(tmp_path / "Documents")}
+
+    with pytest.raises(RecipeError, match="escapes the vault"):
+        recipes.vault_path(identities, str(tmp_path / "elsewhere.md"))
+    with pytest.raises(RecipeError, match="escapes the vault"):
+        recipes.vault_path(identities, "DayDAG", str(tmp_path / "elsewhere.md"))
+
+
 # ---------------------------------------------------------------------------
 # jira - bounded, because an unbounded one has already blown the limit
 # ---------------------------------------------------------------------------

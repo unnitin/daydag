@@ -124,7 +124,6 @@ def test_a_whole_evening_arrives_as_one_assembled_wrap(tmp_path, git_env):
             }
         ]
     )
-    ledger.close_day()
     assert ledger.notes_gaps(as_of=MONDAY_WRAP) == ["VP-Data 1:1"], (
         "the fixture must be meaningful: last week's instance really has no note"
     )

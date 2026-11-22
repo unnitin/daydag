@@ -130,3 +130,24 @@ def withholding(monkeypatch):
     from daydag import state
 
     monkeypatch.setattr(state, "WITHHOLD_PRIVATE", True)
+
+
+@pytest.fixture
+def hand_written_watch():
+    """Put watch items in `State.md` the way they get there: written in by hand.
+
+    Nothing derives one. `update_state` took a `watch=` list until 2026-11-21
+    and no loop passed it, so a test that needs the brief to have a watch
+    item to read writes the bullet, as he or the agent does. Through
+    `StateDoc.append`, so the bullet lands at the end of `## Watch items` and
+    the rest of the file is carried byte for byte.
+    """
+    from daydag.state import StateDoc
+
+    def _write(folder, *items: str) -> None:
+        doc = StateDoc.parse(folder.read_state())
+        for what in items:
+            doc.append("Watch items", [f"- {what}", ""])
+        folder.state_path.write_text(doc.render(), encoding="utf-8")
+
+    return _write

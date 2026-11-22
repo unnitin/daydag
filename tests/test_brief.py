@@ -217,6 +217,44 @@ def test_a_ticked_item_is_closed_and_does_not_come_back():
     assert red_items("- [x] 🔴 done already") == []
 
 
+@pytest.mark.guardrail
+def test_an_item_ticked_in_place_is_closed_with_nothing_moved_to_done():
+    """reference/vault-recipes: closed items are ticked in place. Practice
+    wins (invariant 6).
+
+    The note's own preamble says a closed item is struck and moved to
+    `# Done this week`; in practice every closed item is `- [x]` where it sits
+    and Done holds nothing but its comment. So the tick IS the close: read
+    where it sits it is closed and not open, and an empty Done changes neither
+    answer.
+
+    Was `test_vault.py::test_ticking_does_not_move_the_item_to_done`, on the
+    tick planner nothing called (retired 2026-11-21). Nothing in the package
+    ticks a checkbox - the agent edits the note - so the half of the practice
+    the code holds today is the reader's, and that is what this pins.
+    """
+    from daydag.brief import closed_red_items
+
+    note = (
+        "# Week of August 17-21, 2026\n"
+        "\n"
+        "# Priorities\n"
+        "## 🔴 High - needs my hand this week\n"
+        "- [ ] **Compute consolidation** *(mine)* - land the plan\n"
+        "- [x] **Wave 2 scope** *(tracking: VP-AI)* - shipped\n"
+        "\n"
+        "# Done this week\n"
+        "<!-- nothing moves here; items are ticked in place -->\n"
+    )
+
+    assert [text for _, text in closed_red_items(note)] == [
+        "**Wave 2 scope** *(tracking: VP-AI)* - shipped"
+    ]
+    assert [text for _, text in red_items(note)] == [
+        "**Compute consolidation** *(mine)* - land the plan"
+    ]
+
+
 def test_a_legend_naming_every_colour_is_not_a_priority():
     assert red_items("- triage: 🔴 high, 🟡 medium, 🟢 low") == []
 
@@ -464,11 +502,9 @@ def _busy_sources():
     )
 
 
-def test_a_full_brief_reads_in_his_voice(state, fake_repo):
-    state.update_state(
-        chase=[{"owner": "VP-Data", "ask": "silver trigger"}],
-        watch=[{"what": "10k e2e run"}],
-    )
+def test_a_full_brief_reads_in_his_voice(state, fake_repo, hand_written_watch):
+    state.update_state(chase=[{"owner": "VP-Data", "ask": "silver trigger"}])
+    hand_written_watch(state, "10k e2e run")
     text = _assemble(
         _busy_sources(),
         state=state,

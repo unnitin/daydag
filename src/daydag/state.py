@@ -2,15 +2,14 @@
 
 USING IT
     folder = StateFolder.create(root)       # DayDAG/, idempotent
-    folder.update_state(chase=..., watch=..., notes_gaps=...)  # APPENDS
+    folder.update_state(chase=..., notes_gaps=...)  # APPENDS
 
     log = EventLog.open(path)               # SQLite, OUTSIDE the vault
-    log.record("loop_opened", sensitivity=classify_sensitivity(ask, quote, origin=kind),
-               **payload)                 # kind: the Slack conversation type
+    log.record("call_note_item", sensitivity=classify_sensitivity(title, body, step),
+               **payload)                 # the one VAULT_BOUND kind; call_notes files it
     log.record("meeting", event)            # a connector's record, whole - `kind` and all
     log.record_cursor("org/repo", sha); log.last_cursor("org/repo")
     log.chase_items()
-    log.median_days_to_answer()
 
 CONTRACTS
     1. Every record carries a sensitivity MARK, and ONE switch decides what
@@ -21,13 +20,14 @@ CONTRACTS
        True and `_visible` withholds private items from the vault while
        `call_notes` quotes them minimally in the DM - the rule before #180 -
        with nothing to re-derive, because the mark was never dropped.
-    2. `update_state` runs `chase`, `watch` AND `notes_gaps` through one
-       `_visible` gate before anything is rendered - one filter, so the
-       switch in (1) cannot be wired to two of the three lists and forgotten
-       on the third. It was once wired to `chase` and not to its twin
-       `watch`, and a private carry-forward reached a synced file (#63's
-       sibling); `notes_gaps` had no sensitivity field to filter on at all
-       until `NotesGap` gave it one (#61).
+    2. `update_state` runs `chase` AND `notes_gaps` through one `_visible`
+       gate before anything is rendered - one filter, so the switch in (1)
+       cannot be wired to one list and forgotten on the other. It was once
+       wired to `chase` and not to its twin `watch`, and a private
+       carry-forward reached a synced file (#63's sibling); `notes_gaps` had
+       no sensitivity field to filter on at all until `NotesGap` gave it one
+       (#61). (`watch` is no longer a list this writes: no caller passed it,
+       and the `Watch items` section is written by hand.)
     3. One shape per list, held on BOTH sides of the log/vault seam. A chase
        entry is a `ChaseItem` - `EventLog.chase_items()` returns one and
        `update_state` coerces whatever it is handed before rendering, so the two
@@ -48,12 +48,13 @@ CONTRACTS
        what `closure.asks_in` honours. (The queue that rendered and aged
        decisions was retired in PR #199; nothing ages a decision out today.)
     7. A VAULT-BOUND kind cannot be recorded without saying how sensitive it
-       is. `record("loop_opened", ...)` with no `sensitivity`, or with anything
-       other than exactly "private" or "normal", raises; the gate in (2)
-       filters what is MARKED private when the switch is on, and a gate that
-       depends on the writer remembering to mark - or spelling the mark the
-       way `_is_private` reads it - is not a gate (#105). Still enforced with
-       the switch off: switching back must find every record already marked.
+       is. `record("call_note_item", ...)` with no `sensitivity` raises, and
+       so does any kind given a mark other than exactly "private" or
+       "normal"; the gate in (2) filters what is MARKED private when the
+       switch is on, and a gate that depends on the writer remembering to
+       mark - or spelling the mark the way `_is_private` reads it - is not a
+       gate (#105). Still enforced with the switch off: switching back must
+       find every record already marked.
        `classify_sensitivity` is the answer to pass: private for anything
        from a DM, or carrying personnel / comp / M&A vocabulary - house rule
        7's three categories. Meeting titles reach the vault through
@@ -63,9 +64,11 @@ CONTRACTS
 WHY IT EXISTS
     The folder is markdown a human corrects by hand, and that is the reason
     this is not a black box - a hand edit is an event and wins over anything
-    derived. The event log is SQLite because markdown cannot answer "median
-    days to answer", and because five scheduled loops appending to one
-    iCloud-synced file with no locking is a lost update.
+    derived. The event log is SQLite because markdown cannot answer a question
+    over history - which rows of a kind exist, which came last - and because
+    five scheduled loops appending to one iCloud-synced file with no locking
+    is a lost update. (`median_days_to_answer`, the metric this sentence used
+    to name, was retired on 2026-11-21: no code recorded the answers it read.)
 """
 
 from __future__ import annotations
@@ -73,7 +76,6 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
-import statistics
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
@@ -98,7 +100,7 @@ from daydag.voice import WARN
 #: we can change later".
 #:
 #: True: the rule before #180, both halves. `_visible` withholds private
-#: items from `chase`, `watch` and `notes_gaps`, and `call_notes` goes back
+#: items from `chase` and `notes_gaps`, and `call_notes` goes back
 #: to minimal quoting in the DM (a private line withheld, a step from a
 #: private note shown by title, a private sentence never the attendance
 #: quote). Every record still carries its mark (`classify_sensitivity`,
@@ -350,7 +352,7 @@ class ChaseItem(Mapping[str, Any]):
     sensitivity: str = "normal"
     #: Everything else the caller recorded. The nine above are GUARANTEED to
     #: exist; they were never meant to be all there is. Whitelisting them
-    #: dropped `day` - which `loop_opened` records on every call - and made
+    #: dropped `day` - which every row recorded at the time carried - and made
     #: contract 3's "drop-in" false: an existing `item["day"]` became a
     #: KeyError. Carried, not merged into the fields, so a payload cannot
     #: overwrite a guaranteed one.
@@ -427,7 +429,7 @@ class NotesGap:
     CONTRACTS
         1. `title` is what `update_state` prints. A meeting's own title can be
            the sensitive fact - a comp conversation, an exit interview - so it
-           carries `sensitivity` exactly like `chase` and `watch` already do.
+           carries `sensitivity` exactly like a `chase` item already does.
         2. `from_value` also accepts a bare string, read as
            ``sensitivity="normal"`` - `ledger.notes_gaps()` still returns
            ``list[str]``, and no existing caller has to change to keep
@@ -437,9 +439,9 @@ class NotesGap:
         Issue #61 / the guardrail file's GAP 3: `notes_gaps` was a list of
         bare strings with no sensitivity tag to read, so a meeting whose own
         title was sensitive had no way to be withheld - its caller had to
-        pre-filter, which is exactly the failure direction `chase` and
-        `watch` are filtered inside `update_state` to avoid: "the boundary has
-        to hold even when a caller forgets."
+        pre-filter, which is exactly the failure direction `chase` is
+        filtered inside `update_state` to avoid: "the boundary has to hold
+        even when a caller forgets."
     """
 
     title: str
@@ -477,8 +479,8 @@ def _is_private(item: Any) -> bool:
     """Whether ``item`` is tagged ``sensitivity: private``.
 
     The one place every vault-list filter reads from - `_visible` is what
-    calls this, not `update_state`'s three loops individually, which is the
-    difference between a check that can be forgotten on a third list and one
+    calls this, not `update_state`'s loops individually, which is the
+    difference between a check that can be forgotten on one list and one
     that cannot.
     """
     return item.get("sensitivity") == "private"
@@ -488,12 +490,13 @@ def _visible(items: Iterable[Any]) -> list[Any]:
     """Every item in ``items`` the vault may show: all of them while
     `withholds_private()` is False, the non-private ones when it is True.
 
-    `update_state`'s one gate for `chase`, `watch` and `notes_gaps` alike - the
-    filter that a private carry-forward once slipped past because `watch` had
-    no version of it while `chase` already did (and, before #61, `notes_gaps`
-    had no `sensitivity` field to check at all). One function, applied the
-    same way three times, is what makes "forgotten on the third list" a
-    contradiction rather than a recurring incident.
+    `update_state`'s one gate for `chase` and `notes_gaps` alike - the filter
+    that a private carry-forward once slipped past because `watch`, a list
+    the writer took then, had no version of it while `chase` already did
+    (and, before #61, `notes_gaps` had no `sensitivity` field to check at
+    all). One function, applied the same way to every list, is what makes
+    "forgotten on one of them" a contradiction rather than a recurring
+    incident.
     """
     if not withholds_private():
         return list(items)
@@ -603,10 +606,10 @@ class Block:
     def equals(self, text: str) -> bool:
         """Whether the bullet IS ``text``, rather than containing it.
 
-        For the lists whose entries are short proper nouns - a watch item, a
-        notes gap titled `1:1` or `Standup`. A substring test there is dropped
-        by any line anywhere in the file that happens to contain the word, and
-        the gap is then silently never reported.
+        For a list whose entries are short proper nouns - a notes gap titled
+        `1:1` or `Standup`. A substring test there is dropped by any line
+        anywhere in the file that happens to contain the word, and the gap is
+        then silently never reported.
         """
         return _flatten(self.head).strip(" -·") == _flatten(text).strip(" -·")
 
@@ -749,9 +752,9 @@ class StateDoc:
         * whole line, because `contains("1:1")` is true of almost any file -
           "prep for the 1:1 with the CFO" is not a duplicate of the gap `1:1`;
         * one section, because `contains` searches all of them by design
-          (contract 3) and a watch item named `1:1` is not the same fact as a
-          notes gap named `1:1`. Cross-section suppression there would drop
-          whichever of the two was written second.
+          (contract 3) and a watch item he wrote as `1:1` is not the same
+          fact as a notes gap named `1:1`. Cross-section suppression there
+          would drop the gap.
         """
         found = self.section(section)
         return any(block.equals(text) for block in found.blocks) if found else False
@@ -904,7 +907,6 @@ class StateFolder:
     def update_state(
         self,
         chase: Iterable[ChaseItem | Mapping[str, Any]] = (),
-        watch: Iterable[Mapping[str, Any]] = (),
         notes_gaps: Iterable[str | Mapping[str, Any]] = (),
     ) -> int:
         """Append anything derived that is not already in ``State.md``; return
@@ -915,11 +917,12 @@ class StateFolder:
         `eod` run that derived nothing rendered exactly that over four
         hand-written chase items and six run-log lines.
 
-        ``chase``, ``watch`` and ``notes_gaps`` still pass through ``_visible``
-        first - one filter, applied the same way to all three, so the
-        `WITHHOLD_PRIVATE` switch cannot be wired to two of them and
-        forgotten on the third. Appending rather than replacing must not route
-        around the gate a private carry-forward once slipped past.
+        ``chase`` and ``notes_gaps`` both pass through ``_visible`` first -
+        one filter, applied the same way to each, so the `WITHHOLD_PRIVATE`
+        switch cannot be wired to one of them and forgotten on the other.
+        Appending rather than replacing must not route around the gate a
+        private carry-forward once slipped past. `Watch items` is read by the
+        brief and written by hand; this adds nothing to it.
 
         ``chase`` is coerced to :class:`ChaseItem` and ``notes_gaps`` to
         :class:`NotesGap` whether a caller passes one already or a bare dict
@@ -964,19 +967,11 @@ class StateFolder:
                 continue
             doc.append("Chase list", lines)
             appended += 1
-        for item in _visible(watch):
-            what = str(item.get("what", ""))
-            # `is_line` and not `contains`: a watch item is a short phrase, and
-            # a substring test is satisfied by any line anywhere in the file -
-            # the run log, a sub-bullet, a struck row - which drops the item
-            # silently.
-            if not what or doc.is_line(what, section="Watch items"):
-                continue
-            doc.append("Watch items", [f"- {what}", ""])
-            appended += 1
         for gap in _visible(NotesGap.from_value(raw) for raw in notes_gaps):
-            # Same as `watch`, and more exposed: a meeting title is routinely
-            # `1:1` or `Standup`, which a substring test finds everywhere.
+            # `is_line` and not `contains`: a meeting title is routinely `1:1`
+            # or `Standup`, and a substring test is satisfied by any line
+            # anywhere in the file - the run log, a sub-bullet, a struck row -
+            # which drops the gap silently.
             if not gap.title or doc.is_line(gap.title, section="Notes gaps"):
                 continue
             doc.append("Notes gaps", [f"- {gap.title}", ""])
@@ -1007,8 +1002,9 @@ class StateFolder:
 #: rows are not here: their titles reach `State.md` through the ledger's
 #: `notes_gaps`, and `run._project` classifies each one on the way out.
 #: `call_note_item` is `call_notes.CHASED` - an actionable item from a
-#: meeting note (#180).
-VAULT_BOUND = frozenset({"loop_opened", "carry_forward", "call_note_item"})
+#: meeting note (#180). `loop_opened` and `carry_forward` were here until
+#: 2026-11-21; no code recorded a row of either.
+VAULT_BOUND = frozenset({"call_note_item"})
 
 #: House rule 7's categories, as the words that carry them - the MARK, which
 #: `WITHHOLD_PRIVATE` decides the effect of. A FLOOR, not a
@@ -1169,7 +1165,7 @@ class EventLog:
         )
         self._db.commit()
 
-    def _rows(self, kind: str | None = None) -> list[tuple[str, str, dict[str, Any]]]:
+    def _rows(self) -> list[tuple[str, str, dict[str, Any]]]:
         """Decoded events, skipping any row whose payload will not parse.
 
         Skipped rather than raised. This feeds `chase_items`, which feeds
@@ -1180,13 +1176,8 @@ class EventLog:
         list could show anyway; `payloads` hands the raw text back for callers
         that want to say so.
         """
-        sql = "SELECT kind, sensitivity, payload FROM events"
-        args: tuple[Any, ...] = ()
-        if kind is not None:
-            sql += " WHERE kind = ?"
-            args = (kind,)
         rows = []
-        for k, s, p in self._db.execute(sql, args):
+        for k, s, p in self._db.execute("SELECT kind, sensitivity, payload FROM events"):
             try:
                 rows.append((k, s, json.loads(p)))
             except ValueError:
@@ -1299,8 +1290,8 @@ class EventLog:
 
     def chase_items(self, kinds: Iterable[str] = VAULT_BOUND) -> list[ChaseItem]:
         """Chase entries as `ChaseItem` (#63), each tagged with its sensitivity
-        mark. ``kinds`` narrows to some of `VAULT_BOUND` - `ingest` files only
-        its own (#180).
+        mark. ``kinds`` narrows to some of `VAULT_BOUND` - `ingest` names its
+        own (#180), which today is the whole set.
 
         Was a bare dict merging the sensitivity column in - a payload recorded
         with only `key` rendered as `- ?` in `State.md`, a formatting glitch
@@ -1314,13 +1305,3 @@ class EventLog:
             for kind, sensitivity, payload in self._rows()
             if kind in wanted
         ]
-
-    def median_days_to_answer(self) -> float:
-        """Section 8's chase-efficacy metric - the reason this store exists."""
-        opened = {p["key"]: p["day"] for _, _, p in self._rows("loop_opened")}
-        spans = [
-            p["day"] - opened[p["key"]]
-            for _, _, p in self._rows("loop_answered")
-            if p["key"] in opened
-        ]
-        return statistics.median(spans) if spans else 0.0

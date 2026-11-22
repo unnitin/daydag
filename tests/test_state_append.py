@@ -92,6 +92,36 @@ def test_an_update_never_removes_an_item_it_did_not_derive(folder):
     assert "wave 2 scope" in text, "the derived item was not appended"
 
 
+@pytest.mark.guardrail
+def test_every_byte_outside_the_appended_block_survives(folder):
+    """The ARCHITECTURE invariant, and house rule 3: never rewrite a note
+    wholesale.
+
+    The write itself replaces the whole file (`vault.plan_rewrite`), so what
+    keeps this true is the writer: the text it hands over is the bytes it read
+    with ONE block spliced in. Asserted on the bytes rather than by looking
+    for the lines that should still be there - a reflowed blank line or a
+    normalised tab passes every `in` check in this file.
+
+    Was `test_vault.py::test_every_byte_outside_the_edited_line_survives`, on
+    the line-edit planner nothing called (retired 2026-11-21).
+    """
+    before = folder.state_path.read_bytes()
+
+    folder.update_state(chase=[{"key": "NEW-1", "owner": "vp-ai", "ask": "wave 2 scope"}])
+
+    after = folder.state_path.read_bytes()
+    grown = len(after) - len(before)
+    assert grown > 0, "nothing was appended, so nothing was exercised"
+    at = next(
+        (i for i, (was, now) in enumerate(zip(before, after, strict=False)) if was != now),
+        len(before),
+    )
+    # the untouched regions are the ORIGINAL bytes, either side of one insertion
+    assert after[:at] + after[at + grown :] == before, "a byte outside the new block changed"
+    assert b"wave 2 scope" in after and b"wave 2 scope" not in before
+
+
 def test_the_sections_the_writer_never_emits_survive(folder):
     """`Owed by you`, its nested heading, `Done` and the run log are all
     sections no version of `update_state` renders. They are still his."""
@@ -187,15 +217,11 @@ def test_a_struck_item_is_never_re_added_or_un_struck(folder):
     assert "~~vp-data · answer on the Rich call" in text, "the strike was removed"
 
 
-def test_watch_items_and_notes_gaps_append_the_same_way(folder):
-    folder.update_state(
-        watch=[{"what": "the backfill re-run"}],
-        notes_gaps=["Pod Steering"],
-    )
+def test_notes_gaps_append_the_same_way(folder):
+    folder.update_state(notes_gaps=["Pod Steering"])
 
     text = folder.read_state()
     assert "nightly ingest job, since the schema change" in text, "the hand-written watch item went"
-    assert "the backfill re-run" in text
     assert "Pod Steering" in text
 
 
@@ -215,7 +241,6 @@ def test_a_private_item_is_still_filtered_on_the_append_path_when_rule_7_is_on(f
 
     folder.update_state(
         chase=[{"key": "P-1", "owner": "vp-data", "ask": marker, "sensitivity": "private"}],
-        watch=[{"what": marker, "sensitivity": "private"}],
         notes_gaps=[{"title": marker, "sensitivity": "private"}],
     )
 
@@ -318,6 +343,56 @@ def test_a_quoted_line_separator_cannot_freeze_the_file(folder):
     assert "compute consolidation" in folder.read_state()
 
 
+#: What `_render_chase` files for `NEW`, with its trailing blank.
+NEW_ROW = "- vp-ai · wave 2 scope · status open\n\n".encode()
+
+
+@pytest.mark.guardrail
+def test_an_exotic_line_separator_does_not_move_where_a_row_lands(folder):
+    """U+2028 arrives routinely in text pasted from Slack or Google Docs.
+
+    ``str.splitlines()`` breaks on it; splitting on ``\\n`` does not. The test
+    above pins a separator this writer put in. This one is a separator in a
+    line HE wrote: the new row lands at the end of its section and every byte
+    either side of it is the original - not filed inside the pasted quote, and
+    the file not refused.
+
+    Was `test_vault.py::test_an_exotic_line_separator_does_not_shift_line_numbers`,
+    on the retired line-edit planner. The line model that has to hold in the
+    code that runs is `StateDoc`'s.
+    """
+    head = (
+        "# State\n\n## Chase list\n\n"
+        "- vp-data · the compute plan\n"
+        f'\t- he said: *"hello{LINE_SEPARATOR}world"*\n\n'
+    ).encode()
+    tail = b"## Watch items\n\n- nightly ingest job\n"
+    folder.state_path.write_bytes(head + tail)
+
+    folder.update_state(chase=NEW)
+
+    assert folder.state_path.read_bytes() == head + NEW_ROW + tail
+
+
+@pytest.mark.guardrail
+def test_a_crlf_state_file_keeps_its_carriage_returns(folder):
+    """Same root cause, reached by an ordinary Windows-authored file: split on
+    anything but ``\\n`` and every ``\\r`` is dropped on the way back out.
+
+    The new row is written with a bare ``\\n`` - the writer has one line ending
+    - and every ``\\r`` that was in the file is still there.
+
+    Was `test_vault.py::test_a_crlf_note_keeps_its_carriage_returns`.
+    """
+    head = "# State\r\n\r\n## Chase list\r\n\r\n- vp-data · the compute plan\r\n\r\n".encode()
+    tail = b"## Watch items\r\n\r\n- nightly ingest job\r\n"
+    folder.state_path.write_bytes(head + tail)
+
+    folder.update_state(chase=NEW)
+
+    assert folder.state_path.read_bytes() == head + NEW_ROW + tail
+
+
 def test_a_run_that_cannot_write_state_costs_one_line_not_the_whole_push(tmp_path, monkeypatch):
     """Guardrail 6. `main` prints the RETURN VALUE, so letting `StateNotWritable`
     propagate threw away a fully assembled brief over a file the writer had
@@ -392,16 +467,18 @@ def test_two_identical_items_in_one_call_are_filed_once(folder):
     assert folder.read_state().count("compute consolidation") == 1
 
 
-def test_a_short_watch_item_is_matched_as_a_whole_line_not_a_substring(folder):
+def test_a_short_notes_gap_is_matched_as_a_whole_line_in_its_own_section(folder):
     """A notes gap titled `1:1` or `Standup` is an ordinary calendar summary. A
     substring test is satisfied by any line anywhere in the file - the run log,
-    a sub-bullet, a struck row - and the gap is then silently never reported."""
+    a sub-bullet, a struck row - and the gap is then silently never reported.
+    Nor is a watch item he wrote as `1:1` the same fact: the match is scoped
+    to `Notes gaps`, so the gap is still filed beside it."""
     folder.state_path.write_text(
-        "# State\n\n## Chase list\n\n- prep for the 1:1 with the CFO\n\n## Watch items\n",
+        "# State\n\n## Chase list\n\n- prep for the 1:1 with the CFO\n\n## Watch items\n\n- 1:1\n",
         encoding="utf-8",
     )
 
-    folder.update_state(notes_gaps=["1:1"], watch=[{"what": "1:1"}])
+    folder.update_state(notes_gaps=["1:1"])
 
     assert folder.read_state().count("- 1:1") == 2, folder.read_state()
 

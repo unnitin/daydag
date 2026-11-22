@@ -32,6 +32,7 @@ from pathlib import Path
 import pytest
 
 from daydag import runlog as runlog_module
+from daydag.call_notes import CHASED
 from daydag.runlog import (
     AUTH,
     DEGRADED,
@@ -501,7 +502,7 @@ def test_no_run_row_reaches_the_vault(tmp_path, runlog, log):
     """
     runlog.record("morning brief", _rows(jira=UNAUTHORIZED))
     folder = StateFolder.create(tmp_path / "DayDAG")
-    folder.update_state(chase=log.chase_items(), watch=[], notes_gaps=[])
+    folder.update_state(chase=log.chase_items(), notes_gaps=[])
 
     body = "".join(
         path.read_text(encoding="utf-8") for path in folder.root.rglob("*.md") if path.is_file()
@@ -529,7 +530,7 @@ def test_a_damaged_run_row_cannot_blank_the_chase_list(runlog, log):
     do with the chase list at all.
     """
     log.record(
-        "loop_opened",
+        CHASED,
         sensitivity="normal",
         key="CDI-596",
         owner="VP-Data",

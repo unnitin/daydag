@@ -1615,9 +1615,10 @@ def _ingest(
     item text). A note that is not Gemini-shaped or came back without its
     body is named under "unplaced", never guessed at and never marked seen.
 
-    Files ONLY `call_notes.CHASED` rows. `loop_opened` and `carry_forward`
-    stay the morning / EOD projection's to file - this loop does not take
-    over their cadence in passing.
+    Files ONLY `call_notes.CHASED` rows, by name - today the one kind in
+    `state.VAULT_BOUND`, so the narrowing is a statement of scope: a kind
+    added there later is the morning / EOD projection's to file, not this
+    loop's in passing.
     """
     mail = payloads.get("gmail")
     if not isinstance(mail, list):
