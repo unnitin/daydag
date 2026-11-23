@@ -10,7 +10,6 @@ USING IT
     gh_recent_runs(repo, branch="dev")         # CI health on the watchlist's branch
     vault_path(ids, "Weekly Notes", weekly_note(day))
     week_range(day), week_label(day), next_week_label(day)
-    title_from_gemini_subject(subject)
 
 CONTRACTS
     1. Calendar is queried DAY BY DAY. One 5-day pull returned 156,681 chars
@@ -19,8 +18,7 @@ CONTRACTS
        `*all`: a 14-day 4-project query with unbounded fields returned 125,231
        chars. `JIRA_MAX_RESULTS_CAP` and `GH_LIMIT_CAP` are the caps: the
        Jira one bounds `jira_moved_on`'s page (asserted at import, below), the
-       GitHub one every `gh search`, and `smoke` builds its reported bounds
-       FROM them.
+       GitHub one every `gh search`.
     3. Slack is addressed by ID, never display name. `from:@someone` does not
        fail, it silently matches nothing.
     4. Gmail matches the SUBJECT: `Notes: "<title>" <date>`, plus the
@@ -56,11 +54,7 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
-# One parser for Gemini subjects, re-exported rather than reimplemented. The
-# ledger owns it because the ledger is what a parsed title is *for*; a second
-# copy here would be a second set of bugs that disagree only on hard cases.
 from daydag.config import DEFAULT_TIMEZONE, resolve_reference
-from daydag.ledger import title_from_gemini_subject
 
 __all__ = [
     "GEMINI_LABEL",
@@ -100,7 +94,6 @@ __all__ = [
     "slack_search",
     "slack_sent_on",
     "slack_to_him_since",
-    "title_from_gemini_subject",
     "vault_path",
     "vault_relative",
     "vault_root",
@@ -568,6 +561,12 @@ def watched_channels(watchlist: str) -> list[str]:
     Pure over the file's text (contract 5). A line that does not lead with an
     id is his note and is skipped rather than guessed at - a display name here
     would become a search that silently matches nothing.
+
+    The block rules are this function's own, not `pulse.read_watchlist`'s,
+    which reads the repos and jira blocks of the same file: here only a `#`
+    heading opens or closes the block, so a `**channels**` label does not
+    open it, and a horizontal rule does not end it. Folding the two together
+    changes which lines count, so it is a decision, not a tidy-up.
     """
     out: list[str] = []
     block = ""
@@ -595,7 +594,6 @@ VAULT_PREFIX = "Create Music Group"
 
 WEEKLY_NOTES = "Weekly Notes"
 MEETING_PREP = "Meeting Prep"
-FACT_BASE = "Fact Base"
 DAYDAG = "DayDAG"
 
 
@@ -700,9 +698,10 @@ def meeting_prep(day: date) -> str:
 #: a 14-day, 4-project query into 125,231 characters (#2 audit).
 #:
 #: ``resolutiondate`` and ``labels`` were added for the board join (#12), which
-#: is retired at tag `pre-retirement`. The list stays because `smoke` builds its
-#: reported Jira bound from it and the evening test pins `JIRA_MOVED_FIELDS` as
-#: a subset of it; `jira_moved_on` itself sends the five fields it reads.
+#: is retired at tag `pre-retirement`. No code in `src/` reads the list since
+#: the `smoke` pre-flight, which built its reported Jira bound from it, was
+#: retired; the evening test pins `JIRA_MOVED_FIELDS` as a subset of it, and
+#: `jira_moved_on` itself sends the five fields it reads.
 JIRA_FIELDS: tuple[str, ...] = (
     "key",
     "summary",
@@ -719,8 +718,9 @@ JIRA_FIELDS: tuple[str, ...] = (
 #: count can guarantee - but 100 issues of 7 fields stays comfortably inside it.
 JIRA_MAX_RESULTS_CAP = 100
 #: Atlassian project keys: 2-10 uppercase alphanumerics starting with a letter.
-#: A Jira project key. Public because `board` parses the same keys out of
-#: the watchlist and a second copy is how the two drift - which they had.
+#: A Jira project key. Public because `pulse.read_watchlist` parses the same
+#: keys out of the watchlist and a second copy is how the two drift - which
+#: they had.
 PROJECT_KEY = re.compile(r"^[A-Z][A-Z0-9]{1,9}$")
 
 
@@ -746,8 +746,9 @@ def _project_keys(projects: Iterable[str]) -> list[str]:
 #: ships four avatar URLs whatever `fields` says. Five fields and one project
 #: per call is ~2,500 an issue; fifteen stays well under the size that failed.
 JIRA_MOVED_MAX_RESULTS = 15
-# The one Jira read left must sit under the cap `smoke` reports, or the bound
-# it prints is a lie; `jira_search`, which enforced the cap, is retired.
+# The one Jira read left must sit under the page cap. `jira_search`, which
+# enforced the cap, is retired, and so is the `smoke` pre-flight that reported
+# it, so this assert is the cap's only reader.
 assert JIRA_MOVED_MAX_RESULTS <= JIRA_MAX_RESULTS_CAP
 
 #: What the wrap reads off a moved ticket, and nothing else.

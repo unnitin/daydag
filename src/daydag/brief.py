@@ -6,16 +6,17 @@ USING IT
                                 #   It is not instantiable itself.
     brief = assemble(now=..., identities=ids, sources=sources, ...)
     brief.render()
-    unsourced_claims(text)      # -> claims with no permalink; must be empty
-    red_items(note)             # -> [(level, text)] under a red heading
+    red_items(note)             # -> [(line number, text)] of the open red items
 
 CONTRACTS
     1. Silence is information (SPEC 3.7 rule 3). An empty section is OMITTED,
        not labelled. "no updates" trains the reader to skim, and a brief people
        skim stops being read.
     2. Evidence or silence (guardrail 3). Every claim renders with a permalink
-       or a file path, or says out loud that it could not be sourced.
-       `unsourced_claims` makes that mechanical rather than advisory.
+       or a file path, or says out loud that it could not be sourced. The
+       suite makes that mechanical rather than advisory: `unsourced_claims`
+       in `tests/voice_check.py` scans the rendered text and must come back
+       empty. No loop runs it on its own output.
     3. Degrade, never stall (guardrail 6). A source that raises costs one
        "couldn't check X" line and the brief still ships.
     4. Sources are INJECTED, as an object of four methods - not as data. The
@@ -61,7 +62,6 @@ from daydag.state import StateFolder, is_struck, link_only, read_rows, row_owner
 from daydag.voice import Push, clipped, render
 
 __all__ = [
-    "ADMISSIONS",
     "NOT_SHOWN",
     "QUOTE_CAP",
     "UNSOURCED",
@@ -84,7 +84,6 @@ __all__ = [
     "red_priorities",
     "render_push",
     "split_citation",
-    "unsourced_claims",
 ]
 
 
@@ -98,8 +97,8 @@ class BriefError(RuntimeError):
 
 
 #: The sanctioned warning glyph: plain U+26A0, not its emoji-presentation twin.
-#: Written as an escape because the difference is invisible in most editors and
-#: `voice.voice_violations` fails the whole brief over it.
+#: The difference is invisible in most editors, and the suite's
+#: `voice_violations` (`tests/voice_check.py`) fails the whole brief over it.
 WARN = "⚠"
 
 #: What a claim says when it has no evidence. Guardrail 3's second half: "if the
@@ -110,23 +109,6 @@ UNSOURCED = "couldn't source this one"
 #: (`daydag.budget`). An admission, not a claim: the rows are one tap away in
 #: the reply under the DM.
 NOT_SHOWN = "not shown here"
-
-#: Phrases that count as admitting an absence. A line carrying one of these is
-#: making a claim *about* a gap, so it needs no permalink - the gap is the fact.
-ADMISSIONS = (
-    UNSOURCED,
-    "couldn't check",
-    "couldn't source",
-    "could not fetch",
-    "could not read",
-    "no note found",
-    "not watched",
-    "not understood",
-    NOT_SHOWN,
-    # The State.md writer declining (`StateNotWritable`): a failed write, said
-    # once at the foot of the push, is a gap and not an assertion.
-    "couldn't update",
-)
 
 #: A parenthesised citation: a URL, a `path#sha`, or a vault note path. Matched
 #: on the rendered line rather than on an object, because a permalink held on
@@ -181,8 +163,12 @@ class Sources(Protocol):
 # --------------------------------------------------------------------------
 
 
-def _short(text: str) -> str:
-    """A quote, clipped to the brief's own budget. See `voice.clipped`."""
+def short(text: str) -> str:
+    """A quote, clipped to the brief's own budget. See `voice.clipped`.
+
+    Public: `run`, `prep_ahead` and `call_notes` quote through it, so the one
+    quote budget is held here and not spelt again in each.
+    """
     return clipped(text, QUOTE_CAP, ellipsis="...")
 
 
@@ -195,34 +181,11 @@ def claim(text: str, *permalinks: str | None, quote: str | None = None) -> str:
     overnight message: text, then a permalink or a path in parens, or the
     admission that there is none.
     """
-    body = f'{text}: "{_short(quote)}"' if quote else text
+    body = f'{text}: "{short(quote)}"' if quote else text
     links = [str(link) for link in permalinks if link]
     if not links:
         return f"- {body} ({UNSOURCED})"
     return "- " + body + "".join(f" ({link})" for link in links)
-
-
-def unsourced_claims(text: str) -> list[str]:
-    """Every bullet in ``text`` that asserts something without evidence.
-
-    The mechanical form of guardrail 3, applied to a rendered brief. A bullet
-    passes if it carries a citation or if it admits it has none; headings and
-    the greeting are not claims and are ignored.
-
-    Known limit, stated rather than hidden: a claim whose own text happens to
-    contain a parenthesised ``#`` or ``.md`` reads as sourced. The check is a
-    floor under the rendering, not a proof of provenance.
-    """
-    unsourced: list[str] = []
-    for line in text.splitlines():
-        if not line.startswith("- "):
-            continue
-        if _EVIDENCE.search(line):
-            continue
-        if any(admission in line for admission in ADMISSIONS):
-            continue
-        unsourced.append(line)
-    return unsourced
 
 
 @dataclass(frozen=True)
@@ -627,7 +590,8 @@ def split_citation(line: str) -> tuple[str, str]:
 
     ``claim`` writes ``- text (link) (link)`` or ``- text (couldn't source this
     one)``; the tail is every trailing parenthesised group that is evidence (a
-    URL, ``path#anchor`` or ``.md`` path - the same rule as `unsourced_claims`)
+    URL, ``path#anchor`` or ``.md`` path - `_EVIDENCE`, the rule the suite's
+    `unsourced_claims` reads too)
     or the unsourced admission. A quote that ends in its own parenthesis is
     closed by a quote mark first, so it stays in the body.
     """
@@ -958,10 +922,10 @@ def assemble(
                 return None
             return checks.get((head, row_citation(head, subs) or ""), RowCheck("unchecked"))
 
-        chase = [_line_from_state(h, s, mark(h, s)) for h, s in owed_rows]
-        owed_by = [_line_from_state(h, s, mark(h, s)) for h, s in owed_by_rows]
+        chase = [line_from_state(h, s, mark(h, s)) for h, s in owed_rows]
+        owed_by = [line_from_state(h, s, mark(h, s)) for h, s in owed_by_rows]
         watch = [
-            _line_from_state(head, subs)
+            line_from_state(head, subs)
             for head, subs in read_rows(written, "Watch items")
             if not is_struck(head)
         ]
@@ -1007,7 +971,8 @@ def assemble(
             "day": _day_label(day),
             # Not `len(events)` when the read failed: zero events and an unread
             # calendar are the same number and not the same fact, and the header
-            # is not a `- ` line, so `unsourced_claims` never sees it assert one.
+            # is not a `- ` line, so the suite's `unsourced_claims` never sees it
+            # assert one.
             "count": "?" if "calendar" in read.unreachable else len(shown),
         },
     )
@@ -1069,12 +1034,15 @@ def row_citation(body: str, subs: Sequence[str] = ()) -> str | None:
     return link or next((url for url in map(link_only, subs) if url), None)
 
 
-def _line_from_state(body: str, subs: Sequence[str] = (), check: RowCheck | None = None) -> str:
+def line_from_state(body: str, subs: Sequence[str] = (), check: RowCheck | None = None) -> str:
     """A State.md row as a claim, marked by what this run read of its thread.
 
     Open is a verdict, not a default (#187): a row whose reply was read and
     found carries the closing quote for him to strike; one that could not be
     read says so. A row read and still open is shown as it is.
+
+    Public: the morning plan (`run._morning_checks`) ranks the rows it will
+    check from these same lines, so plan and brief agree on which are shown.
     """
     text, link = split_link(body)[0], row_citation(body, subs)
     # The mark LEADS the line: a fitted morning clips a long row's words from
@@ -1107,12 +1075,6 @@ def chase_rows(
         if not is_struck(head):
             (owed_by if _owned_by_him(row_owner(head), owns) else owed).append((head, subs))
     return owed, owed_by
-
-
-#: Public names for the two helpers `run` and `week_ahead` were re-spelling -
-#: one bullet-from-State.md rule and one quote budget, held here.
-line_from_state = _line_from_state
-short = _short
 
 
 def _seed_and_gaps(ledger: Ledger, events: Sequence[Mapping[str, Any]], now: datetime) -> list[str]:

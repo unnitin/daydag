@@ -10,7 +10,7 @@ daydag:
   #
   # The one artifact below is an id, not a surface. It lives on the
   # `drive:private` surface, which is the name `route()` reasons about and one
-  # of the three in registry.PRIVATE_SURFACES - so this skill's own output is
+  # of the three in manifests.PRIVATE_SURFACES - so this skill's own output is
   # routable and nothing else is.
   writes:
     - drive:${GDRIVE_FEEDBACK_LOG_FOLDER}/

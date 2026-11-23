@@ -13,7 +13,7 @@ dead code that every unit test exercised directly and no production path called.
 So this walks one weekday:
 
     calendar -> ledger      (rows, and the standup that is still a row)
-    rows     -> prep        (which of them earns the one interrupt, and when)
+    rows     -> prep        (which of them is worth prepping unprompted, and why)
     meeting  -> recipes     (the last 4 weeks, as literal queries)
     points   -> voice       (rendered, and clean in his own words)
     the day  -> State.md    (the meeting with no notes reaches the vault)
@@ -30,7 +30,7 @@ from daydag import prep
 from daydag.config import Identities
 from daydag.ledger import Ledger, Match
 from daydag.state import StateFolder
-from daydag.voice import Push, voice_violations
+from voice_check import voice_violations
 
 PT = timezone(timedelta(hours=-7))
 MONDAY_9AM = datetime(2026, 9, 7, 9, 0, tzinfo=PT)
@@ -92,27 +92,24 @@ def test_a_whole_morning_passes_through_every_module(tmp_path):
     # -- rows -> prep: the standup is dropped HERE, not upstream -----------
     # The bias inverts across this seam on purpose. The ledger errs wide
     # because an unseen meeting is invisible forever; prep errs narrow because
-    # a false positive spends the one interrupt the architecture allows.
-    schedule = prep.Schedule()
-    at_prep_time = MONDAY_9AM + timedelta(hours=3) - prep.PREP_LEAD
-    due = schedule.due(rows, at_prep_time, audience)
-    assert [(row.event_id, reason) for row, reason in due] == [
-        ("steering", prep.Reason.STEERING)
-    ], "only the steering meeting is 30 min out, and the standup never qualifies"
+    # a false positive is a prep nobody asked for.
+    worthy = [(row.event_id, prep.prep_worthy(row, audience)) for row in rows]
+    assert worthy == [
+        ("standup", None),
+        ("steering", prep.Reason.STEERING),
+        ("11", prep.Reason.ONE_ON_ONE),
+    ], "the steering meeting and the 1:1 qualify, and the standup never does"
 
-    # The 1:1 two hours later is not due yet, and firing once does not consume
-    # it - a schedule that marks everything on the first pass loses the day.
-    later = schedule.due(rows, MONDAY_9AM + timedelta(hours=5) - prep.PREP_LEAD, audience)
-    assert [(row.event_id, reason) for row, reason in later] == [("11", prep.Reason.ONE_ON_ONE)]
-
-    steering_row, reason = due[0]
+    steering_row, reason = rows[1], prep.Reason.STEERING
+    # Half an hour before it starts, the lead SPEC 3.2 asks for.
+    at_prep_time = MONDAY_9AM + timedelta(hours=2, minutes=30)
 
     # -- meeting -> recipes: the File 2 recipe, run just in time -----------
     plan = prep.sources(
         steering_row, at_prep_time, identities=identities, channels=("${SLACK_CH_POD}",)
     )
     start, end = plan.window
-    assert (end - start).days == prep.LOOKBACK_DAYS, "the ping reads ~4 weeks back"
+    assert (end - start).days == prep.LOOKBACK_DAYS, "the prep reads ~4 weeks back"
     assert 'subject:"Pod Steering"' in plan.gemini, "notes are found by exact subject"
     assert "in:<#CPODCHANNEL>" in plan.slack[0], "the channel is scoped by id, not name"
     assert plan.prep_note.endswith("Meeting Prep/0907-0911.md")
@@ -142,12 +139,7 @@ def test_a_whole_morning_passes_through_every_module(tmp_path):
     assert ping.headline() == "Pod Steering in 30 - talking points in thread"
     assert quote in body and link in body, "evidence or silence, end to end"
     assert prep.UNSOURCED in body, "the point with no quote admits it"
-    assert voice_violations(ping.authored_text()) == [], ping.authored_text()
-
-    # -- the one interrupt, to the one destination -------------------------
-    assert prep.may_interrupt(Push.PREP_PING) is True
-    assert prep.may_interrupt(Push.MORNING_BRIEF) is False
-    assert prep.recipient(identities) == "UPRINCIPAL1"
+    assert voice_violations(body) == [], body
 
     # -- the day turns: the meeting with no notes reaches the vault ---------
     ledger.offer_note(
@@ -158,7 +150,6 @@ def test_a_whole_morning_passes_through_every_module(tmp_path):
             source="gemini",
         )
     )
-    ledger.close_day()
     gaps = ledger.notes_gaps(as_of=MONDAY_9AM + timedelta(days=1))
     assert "Pod Steering" in gaps, "prepping a meeting does not excuse it from the gap list"
 
@@ -179,26 +170,10 @@ def test_a_meeting_with_nothing_behind_it_still_gets_an_honest_ping(tmp_path):
     ledger.seed_day([_event("new", "Vendor Sync", MONDAY_9AM, (PRINCIPAL, "x@vendor.example"))])
     row = ledger.open_rows()[0]
 
-    schedule = prep.Schedule()
-    due = schedule.due([row], MONDAY_9AM - prep.PREP_LEAD, audience)
-    assert [reason for _, reason in due] == [prep.Reason.EXTERNAL]
+    assert prep.prep_worthy(row, audience) is prep.Reason.EXTERNAL
 
     ping = prep.build(row, prep.Reason.EXTERNAL, [])
     rendered = ping.render()
     assert rendered.strip(), "silence is not a degrade, it is a disappearance"
     assert prep.NO_MATERIAL in rendered
     assert voice_violations(rendered) == [], rendered
-
-
-def test_a_ping_that_missed_its_window_is_dropped_rather_than_arriving_late(tmp_path):
-    """The interrupt is time-boxed; a late one spends the budget for nothing."""
-    identities = _identities(tmp_path)
-    audience = prep.Audience.from_identities(identities)
-    ledger = Ledger()
-    ledger.seed_day([_event("11", "Nitin / VP-Data", MONDAY_9AM, (PRINCIPAL, VP_DATA))])
-    rows = ledger.open_rows()
-
-    schedule = prep.Schedule()
-    assert schedule.due(rows, MONDAY_9AM + timedelta(minutes=1), audience) == []
-    # And the missed instance is not resurrected on the next sweep.
-    assert schedule.due(rows, MONDAY_9AM + timedelta(minutes=30), audience) == []

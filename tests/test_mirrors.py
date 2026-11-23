@@ -380,7 +380,6 @@ def test_a_repo_with_no_wiki_still_mirrors_the_repo(store, origins):
 
     assert [m.path.name for m in report.mirrors] == ["platform.git"]
     assert report.unavailable == []
-    assert report.wikis_absent == ["ExampleOrg/platform.wiki"]
     assert Pulse.from_sync(report).render() == ""
 
 

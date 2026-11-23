@@ -62,7 +62,6 @@ WHAT WAS VERIFIED (2026-10-18)
 from __future__ import annotations
 
 import json
-import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -152,8 +151,6 @@ def goes_through_perk(category: str) -> bool:
 
 #: Every travel GL at CMG starts with this; anything else on a trip line is flagged.
 TRAVEL_GL_PREFIX = "6071"
-
-_MONEY = re.compile(r"-?[\d,]*\.?\d+")
 
 
 def _decimal(value: Any) -> Decimal | None:

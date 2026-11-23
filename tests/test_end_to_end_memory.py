@@ -19,6 +19,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from daydag import run
+from daydag.call_notes import CHASED
 from daydag.config import Identities
 from daydag.state import EventLog, StateFolder
 
@@ -169,7 +170,7 @@ def test_a_private_chase_item_never_reaches_the_vault_through_the_runner_when_ru
     gate - or it becomes a second writer with its own idea of the rules.
     Under the rule-7 switch since #180; see the sibling below for the default."""
     log = EventLog.open(home["log"])
-    log.record("carry_forward", sensitivity="private", owner="VP-AI", ask="SECRET-ASK", key="k1")
+    log.record(CHASED, sensitivity="private", owner="VP-AI", ask="SECRET-ASK", key="k1")
 
     run.render(
         "morning",
@@ -192,7 +193,7 @@ def test_a_private_chase_item_reaches_state_md_through_the_runner_by_default(hom
     """#180: house rule 7 no longer withholds from the vault - the runner's
     projection files a private item exactly as it files a normal one."""
     log = EventLog.open(home["log"])
-    log.record("carry_forward", sensitivity="private", owner="VP-AI", ask="SECRET-ASK", key="k1")
+    log.record(CHASED, sensitivity="private", owner="VP-AI", ask="SECRET-ASK", key="k1")
 
     run.render(
         "morning",

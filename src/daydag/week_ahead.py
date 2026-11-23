@@ -9,7 +9,8 @@ USING IT
         pulse=pulse,             # optional: the shipping block
     )
     pushed.render()              # the one Slack DM
-    pushed.monday_preps          # Monday meetings due prep, and how to source them
+    pushed.monday_preps          # Monday's qualifying meetings and their source
+                                 # queries; computed, printed by nothing (contract 4)
 
 CONTRACTS - break one and the guarantee is gone
     1. Read, never re-derive (SPEC 3.6, and ARCHITECTURE's ownership table).
@@ -27,8 +28,13 @@ CONTRACTS - break one and the guarantee is gone
     4. Monday prep is pre-built, not pre-sent (rule 2). ``monday_preps`` names
        every Monday meeting that qualifies, reusing :mod:`daydag.ledger` for
        qualification and :mod:`daydag.prep` for the reason and the source
-       queries - so the loop that threads the actual ping does not re-derive
-       either, only fetches and reads what the query already names.
+       queries. NOTHING READS IT: `render` does not print the queue and `run`
+       keeps only the rendered text, because the loop that was to thread the
+       points under this push was never built. What the queue can change in
+       the push is one degrade line: a Monday record missing a field its
+       ledger reads (`attendees`, `summary`, `end`) costs "couldn't check
+       monday prep". Retiring the queue removes that line, which is a change
+       to the push, so it stayed when the 30-minute ping retired (2026-11-21).
     5. Evidence or silence, same as `brief`: every claim carries a permalink
        or a note path#line, or says out loud that it has neither.
     6. Silence is information: an empty section is omitted, not labelled -
@@ -123,13 +129,12 @@ _WEEK_TITLES = 3
 
 @dataclass(frozen=True)
 class MondayPrep:
-    """A Monday meeting that qualifies for a prep ping, and how to source it.
+    """A Monday meeting that qualifies for prep, and how to source it.
 
     Not a :class:`daydag.prep.PrepPing` - point selection needs the raw
-    evidence fetched and read, which stays the orchestrating loop's job, the
-    same way it already is for a same-day prep ping (`prep.py`'s module
-    docstring). What this saves the loop is re-deriving *whether* a meeting
-    qualifies and *what to search for* - both already computed here.
+    evidence fetched and read, and no loop does that for this queue
+    (contract 4). What it holds is *whether* a meeting qualifies and *what
+    to search for* - both computed here, neither rendered.
     """
 
     meeting: str
@@ -147,7 +152,7 @@ class WeekAhead:
     sections: tuple[Section, ...]
     #: Display names of sources that could not be read this run.
     unreachable: tuple[str, ...] = ()
-    #: Monday meetings due a prep ping, for the loop that threads them.
+    #: Monday meetings that qualify for prep. Not rendered - see contract 4.
     monday_preps: tuple[MondayPrep, ...] = ()
 
     def render(self) -> str:
@@ -165,9 +170,10 @@ class WeekAhead:
 # names cross module boundaries in this package (see `README.md`'s module
 # table and `prep.py`'s own naive-start guard, which does the same rather
 # than reaching into `brief._local`). `UNSOURCED`'s wording is imported,
-# though: it is `brief.unsourced_claims`'s only lexical anchor for "this line
-# admits it has no evidence", so a second string here would silently stop
-# being recognised by the shared check.
+# though: it is the only lexical anchor the suite's `unsourced_claims`
+# (`tests/voice_check.py`) has for "this line admits it has no evidence", so
+# a second string here would silently stop being recognised by the shared
+# check.
 # --------------------------------------------------------------------------
 
 

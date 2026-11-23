@@ -16,18 +16,18 @@ All planning work is orchestrated from this repo. Four skills were copied **verb
 
 ## Every skill here carries a `daydag:` manifest
 
-Frontmatter block: `writes` / `reads` / `consumes` / `emits` / `schedule` / `sensitivity`. The Skill loader ignores it; `daydag.manifests` reads it and hands the set to `daydag.registry`, which refuses to load two writers for one artifact and refuses to route a `sensitivity: private` skill anywhere with an audience above one. Run `python -m daydag.manifests` to see the ownership table and schedule as declared; `scripts/preflight.sh` runs the same check on every push.
+Frontmatter block: `writes` / `reads` / `consumes` / `emits` / `schedule` / `sensitivity`. The Skill loader ignores it; `daydag.manifests` reads it and checks the set: it refuses to load two writers for one artifact, and its `Registry.route` refuses a `sensitivity: private` skill any surface with an audience above one. Run `python -m daydag.manifests` to see the ownership table and schedule as declared; `scripts/preflight.sh` runs the same check on every push. Preflight and the test suite are where the check happens - nothing loads the manifests when a loop runs.
 
 Three consequences worth knowing before you edit one:
 
 - **`weekly-feedback-scan` is `sensitivity: private`** and stays that way. SPEC §10.1 is the strictest rule in the repo and this key is what makes it mechanical. A guardrail test asserts it.
-- **`Fact Base/Workstreams.md` is `weekly-planning`'s** until the custody cut (#37). Adding it to another skill's `writes:` is a startup error, on purpose.
+- **`Fact Base/Workstreams.md` is `weekly-planning`'s** until the custody cut (#37). Adding it to another skill's `writes:` fails `python -m daydag.manifests` and the test suite, on purpose.
 - **The block is validated strictly.** An unknown key or an unknown `sensitivity` fails to load, because both of those failures are otherwise silent: `write:` for `writes:` leaves an artifact unowned, and `privat` reads as "not private".
 
 Two limits worth knowing rather than rediscovering:
 
 - **`writes:` holds artifact ids, `route()` takes surfaces.** Different namespaces. `weekly-feedback-scan` writes the artifact `drive:${GDRIVE_FEEDBACK_LOG_FOLDER}/` onto the surface `drive:private`; nothing derives one from the other yet, so passing an artifact id to `route()` gets a refusal that looks like a guardrail firing and is really a category error. `slack:dm-nitin` is a surface only - it is the one place every skill may land output, so no skill declares it as an artifact.
-- **Ids are matched exactly.** A trailing `/` records that a skill owns a folder; it does not authorise the files inside it, and it does not collide with a sibling skill declaring one of those files. Prefix matching is a registry change, not a manifest one.
+- **Ids are matched exactly.** A trailing `/` records that a skill owns a folder; it is a different id from every file inside it, so it does not collide with a sibling skill declaring one of those files. Nothing checks a write as it happens, so an id records custody and no more. Prefix matching is a change to `daydag.manifests`, not to a manifest.
 
 ### Skill vs reference file vs code
 

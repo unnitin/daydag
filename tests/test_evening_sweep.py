@@ -169,6 +169,17 @@ def test_no_channels_block_is_no_channels():
     assert recipes.watched_channels("# Watchlist\n\n## repos\n\n- a/b\n") == []
 
 
+def test_the_channels_block_keeps_its_own_block_rules():
+    """Not the rules `pulse.read_watchlist` reads repos and jira by: here a
+    bold label neither opens nor closes the block and a rule does not end it.
+    Pinned so that folding this reader into that one is a decision about
+    these lines rather than a side effect."""
+    assert recipes.watched_channels("**channels**\n- CBOLDLABEL  a bold label\n") == []
+    assert recipes.watched_channels(
+        "## channels\n- CPODCHANNEL\n---\n- CAFTERRULE\n**notes**\n- CAFTERBOLD\n## jira\n- CDI\n"
+    ) == ["CPODCHANNEL", "CAFTERRULE", "CAFTERBOLD"]
+
+
 # --------------------------------------------------------------------------
 # the plan
 # --------------------------------------------------------------------------

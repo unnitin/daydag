@@ -37,25 +37,39 @@ COVERED (behavioural - real code, real assertions)
       `state.withholds_private()`
     - a pending decision never reads its own text as an answer
     - `sensitivity: private` is un-routable to any shared surface
-    - the registry's one-writer check fires regardless of declaration order
+    - the registry's one-writer check fires regardless of declaration order,
+      and `python -m daydag.manifests` exits 1 over the shipped skills plus
+      one planted second claim
     - a downed source degrades to a named "could not fetch" line and the rest
       of the report still ships
-    - a connector that raises, or answers with an overflow, degrades to a named
-      "couldn't check X" line and the pre-flight run still returns a report
-      (in `tests/test_smoke_run.py`, which carries its own guardrail marks)
+    - a source that raises, was never fetched, or came back as something other
+      than a list of records degrades to a named "couldn't check X" line and
+      the push still ships (in `tests/test_brief.py` for `brief.Reader` and
+      `tests/test_run.py` for the render path, which carry their own guardrail
+      marks; the `smoke` pre-flight that used to hold these is retired)
     - a stale mirror contributes no items, is reported as stale, and carries the
       time of the last fetch that actually worked
     - untrusted Slack text is parsed for ticket keys only, never echoed or acted on
-    - the vault write path joins only literal names onto the folder root
-    - `notes_gaps` carries the same sensitivity channel `chase` and `watch` do,
-      via `NotesGap`, so a meeting whose own title is sensitive is withheld the
-      same way a private chase or watch item is when the rule-7 switch is on
+    - the vault write path joins only literal names onto the folder root, and
+      a `State.md` that is a symlink out of the vault is never written through
+    - `notes_gaps` carries the same sensitivity channel `chase` does, via
+      `NotesGap`, so a meeting whose own title is sensitive is withheld the
+      same way a private chase item is when the rule-7 switch is on
       (was GAP 3, #61)
-    - `daydag.delivery.deliver_push` and `deliver_prep_ping` have no
-      destination parameter at all - the resolved principal id is the only
-      channel a send can ever name (#10, full coverage in `tests/test_delivery.py`)
+    - `daydag.delivery.deliver_push` has no destination parameter at all - the
+      resolved principal id is the only channel a send can ever name (#10,
+      full coverage in `tests/test_delivery.py`)
+    - that id is read from a real `.env` and checked for its SHAPE: missing,
+      empty, a display name or an id with an inline comment glued on is
+      refused before anything is posted. These three were `prep.recipient`'s
+      guardrails in `tests/test_prep.py`; when the 30-minute ping retired
+      they moved onto `delivery`'s twin of that check, the one a send goes
+      through
     - a message for anyone else is a `Draft`, and no function in `daydag.delivery`
       accepts a `Draft` and a `Transport` together
+    - every Atlassian tool an unattended run's allowlist names (`scripts/*.sh`)
+      is a read - the request half of "read the board, never drive it", read
+      off the shipped wrappers rather than driven
 
 TRIPWIRES (no implementation exists - these fail when one lands unguarded)
     - no literal Slack/Gmail/Calendar client call anywhere in `src/daydag/`
@@ -64,9 +78,14 @@ TRIPWIRES (no implementation exists - these fail when one lands unguarded)
       alongside this rather than replacing it
     - no Jira write path (transition, comment, assign)
     - no inbound command surface, so no injection parser and no sender check
-    - no connector client besides the git mirror: every other source is probed
-      through a callable the caller injects (`daydag.smoke`), so nothing in the
-      package can reach a connector on its own
+    - no connector client besides the git mirror: every other source reaches
+      the package as a payload the agent fetched (`daydag.run`) or through a
+      callable the caller injects (`brief.Sources`, `delivery.Transport`), so
+      nothing in the package can reach a connector on its own
+    - no push can fire on the package's own clock: nothing in `src/daydag/`
+      waits, polls or schedules. Was behavioural - `prep.may_interrupt`, "the
+      prep ping is the only push allowed off schedule" - until the ping's
+      machinery retired with nothing to fire it (tag `pre-retirement`)
 
 GAPS - not covered here, and not pretended to be
     1. Decisions. The queue that read a "yes"/"no" beside a line retired with
@@ -77,6 +96,12 @@ GAPS - not covered here, and not pretended to be
     2. Guardrail 4 (discrepancies surfaced, never auto-resolved) is covered for
        the ledger's ambiguous-note case in `tests/test_ledger.py`; there is no
        general discrepancy surface to test yet.
+
+    4. Undeclared writes. Nothing checks a write as it happens, so a skill that
+       writes an artifact it never put in `writes:` is caught by no code.
+       `Registry.check_write` was that check; it had no caller outside the
+       tests and retired with `registry.py`. Its guardrail covers the half with
+       a live subject: a DECLARED second claim fails `python -m daydag.manifests`.
 
     GAP 3 (`notes_gaps` had no sensitivity channel) moved to COVERED above,
     #61. GAP 1 and GAP 2 went the same way earlier - the unsourced `Item`
@@ -93,15 +118,18 @@ from __future__ import annotations
 import ast
 import inspect
 import re
+import shutil
 import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
-from daydag import delivery
+from daydag import delivery, manifests
+from daydag.call_notes import CHASED
+from daydag.config import Identities
+from daydag.manifests import PRIVATE_SURFACES, Registry, RegistryError
 from daydag.pulse import Item, Mirror, Pulse
-from daydag.registry import PRIVATE_SURFACES, Registry, RegistryError
 from daydag.state import EventLog, NotesGap, StateFolder
 from daydag.voice import Push
 
@@ -224,7 +252,7 @@ def folder(tmp_path: Path) -> StateFolder:
 #: Kept whole, including "slack send" (#10): `daydag.delivery` is now a real
 #: send path, but it holds no literal Slack-client symbol - the transport is
 #: an injected callable, never `slack_send_message`/`postMessage` themselves
-#: (contract 4). So this tripwire still fires exactly as before if some OTHER
+#: (contract 3). So this tripwire still fires exactly as before if some OTHER
 #: module in the package ever calls a Slack client directly, bypassing
 #: `daydag.delivery`'s channel resolution and its `Draft`/`Transport` split.
 #: What changed is not this dict, but that the send path it defends against
@@ -293,6 +321,153 @@ def test_the_only_autonomous_destination_is_the_resolved_principal_id():
     assert seen["channel"] == "UPRINCIPAL1" == sent.channel
 
 
+def _env(tmp_path: Path, text: str) -> Identities:
+    """Identities read the way a run reads them: from a `.env` on disk."""
+    env = tmp_path / ".env"
+    env.write_text(text, encoding="utf-8")
+    return Identities.from_file(env)
+
+
+def _recorder() -> tuple[delivery.Transport, list[str]]:
+    """A transport that posts nothing, and every channel it was handed."""
+    channels: list[str] = []
+
+    def transport(*, channel: str, text: str, thread_ts: str | None = None):
+        channels.append(channel)
+        return {"ts": "100.001"}
+
+    return transport, channels
+
+
+@pytest.mark.guardrail
+def test_the_push_goes_to_the_principals_own_dm_and_nowhere_else(tmp_path: Path):
+    """BEHAVIOURAL. Guardrail 1, from a `.env` that holds other ids too.
+
+    Was `prep.recipient`'s guardrail (`test_the_ping_goes_to_...`). The 30-minute
+    ping retired with nothing to fire it; the destination rule did not, and the
+    code that holds it for a send is `deliver_push`. A real `.env` carries
+    channel ids beside the principal's - the one message goes to his and to
+    nothing else in the file.
+    """
+    identities = _env(
+        tmp_path,
+        "SLACK_USER_PRINCIPAL=UPRINCIPAL1\n"
+        "SLACK_CH_POD=CPODCHANNEL\n"
+        "ORG_EMAIL_DOMAIN=example.com\n"
+        "PREP_LEADERSHIP=sponsor@example.com\n",
+    )
+
+    transport, channels = _recorder()
+
+    sent = delivery.deliver_push(
+        "hello", kind=Push.MORNING_BRIEF, transport=transport, identities=identities
+    )
+
+    assert channels == ["UPRINCIPAL1"], f"a push went somewhere else: {channels}"
+    assert sent.channel == "UPRINCIPAL1"
+
+
+@pytest.mark.guardrail
+@pytest.mark.parametrize(
+    "value",
+    [
+        "",
+        "   ",
+        "nitin",
+        "@nitin",
+        "UPRINCIPAL1        # the person the agent works for",
+    ],
+)
+def test_a_principal_id_that_is_not_an_id_is_refused(tmp_path: Path, value: str):
+    """BEHAVIOURAL. Guardrail 1's one permitted destination is the one that must
+    be checked.
+
+    `slack_search` already refuses a non-id because a display name matches
+    nothing *silently*. The DM target had no such floor, so a hand-edited `.env`
+    - the last line of the file, with an inline comment glued on, which is how
+    `.env.example` teaches the format - addressed the push at a conversation id
+    that is not one, instead of failing loudly.
+
+    Was `prep.recipient`'s guardrail, same five values. `brief._principal` and
+    `run._principal` resolve the same key and do NOT check its shape - they
+    build queries with it - so this is held by `delivery`, the code that
+    addresses a message, and it now also asserts that nothing was posted.
+    """
+    identities = _env(tmp_path, f"SLACK_USER_PRINCIPAL={value}\n")
+    transport, channels = _recorder()
+
+    with pytest.raises(delivery.DeliveryError):
+        delivery.deliver_push(
+            "hello", kind=Push.MORNING_BRIEF, transport=transport, identities=identities
+        )
+    assert channels == [], "a destination that is not an id reached the transport"
+
+
+@pytest.mark.guardrail
+def test_a_missing_principal_id_is_an_error_not_a_guess(tmp_path: Path):
+    """BEHAVIOURAL. No fallback destination: another id in the file is not his.
+
+    Was `prep.recipient`'s guardrail; held today by `deliver_push`.
+    """
+    identities = _env(tmp_path, "SLACK_CH_POD=CPODCHANNEL\n")
+    transport, channels = _recorder()
+
+    with pytest.raises(delivery.DeliveryError):
+        delivery.deliver_push(
+            "hello", kind=Push.MORNING_BRIEF, transport=transport, identities=identities
+        )
+    assert channels == [], "with no principal id the push went somewhere anyway"
+
+
+#: What it takes for the package to fire a push at a moment of its own choosing:
+#: something that waits on a clock. Identifiers only - "sleep" in a string is
+#: prose - and anchored, so `registry.schedule` (the manifests' `schedule:` keys,
+#: printed as a table) is not a hit.
+SELF_FIRING_PATTERNS = {
+    "a wait": r"^(sleep|Timer|call_later|call_at|setitimer|alarm)$",
+    "a scheduler": (
+        r"^(sched|scheduler|apscheduler|BackgroundScheduler|BlockingScheduler|run_pending)$"
+    ),
+}
+
+
+@pytest.mark.guardrail
+def test_no_push_can_fire_on_the_packages_own_clock():
+    """TRIPWIRE. ARCHITECTURE's interaction model: nothing arrives off-schedule.
+
+    This was behavioural while the 30-minute prep ping had a send path -
+    `prep.may_interrupt`'s truth table, "the prep ping is the only push allowed
+    off schedule". Nothing was ever built to fire that ping, so the gate, the
+    due window and the threaded send retired together (tag `pre-retirement`)
+    and what is left of the property is an absence: no code in `src/daydag/`
+    waits on a clock, so a push exists only because somebody, or launchd, ran
+    a loop.
+
+    It fires the day a wait, a timer or a scheduler lands in the package. What
+    is required then is the gate back, not an exemption here: one function
+    naming which `Push` kinds may arrive unasked - it was `Push.PREP_PING` and
+    nothing else - consulted by whatever fires, with its truth table pinned in
+    this file.
+
+    Not covered, and not pretended to be: a schedule added OUTSIDE the package,
+    as a launchd job or a script under `scripts/`. That is a reviewer's read
+    against ARCHITECTURE's scheduling table, not this scan's.
+    """
+    _self_check_scanner()
+    for label, name in (("a wait", "sleep"), ("a wait", "Timer"), ("a scheduler", "sched")):
+        assert re.search(SELF_FIRING_PATTERNS[label], name), (
+            f"the {label!r} pattern no longer matches {name!r} - this tripwire is vacuous"
+        )
+    hits = _scan(SELF_FIRING_PATTERNS, include_strings=False)
+    assert not hits, _tripwire(
+        "a push that can fire on the package's own clock",
+        "one gate naming which Push kinds may arrive off-schedule (the retired "
+        "`prep.may_interrupt` allowed Push.PREP_PING and nothing else), consulted "
+        "by whatever fires; every other push waits for its scheduled slot.",
+        hits,
+    )
+
+
 @pytest.mark.guardrail
 def test_a_draft_never_reaches_the_transport():
     """BEHAVIOURAL. Guardrail 1's other half: anyone else gets a `Draft`, not a send.
@@ -324,7 +499,7 @@ def test_a_draft_never_reaches_the_transport():
 
 @pytest.mark.guardrail
 def test_delivery_respects_the_registry_for_a_private_skill():
-    """BEHAVIOURAL. `daydag.registry.route` is consulted, not bypassed, by delivery.
+    """BEHAVIOURAL. `Registry.route` is consulted, not bypassed, by delivery.
 
     The DM is inside `PRIVATE_SURFACES`, so a private skill may always reach
     it - but an unregistered skill still fails closed, which is what proves
@@ -444,7 +619,6 @@ def test_a_loop_rewrites_no_vault_file_but_state_md_and_only_with_its_old_text_k
 
     folder.update_state(
         chase=[{"owner": "vp-data", "ask": "compute consolidation"}],
-        watch=[{"what": "nightly ingest job"}],
         notes_gaps=["1:1 with no notes"],
     )
 
@@ -491,6 +665,34 @@ def test_the_vault_write_path_joins_only_literal_names(tmp_path: Path):
     for path in (folder.state_path, folder.decisions_path, folder.watchlist_path):
         assert path.resolve().is_relative_to(folder.root.resolve())
     assert sorted(p.name for p in (tmp_path / "vault").iterdir()) == ["DayDAG"]
+
+
+@pytest.mark.guardrail
+def test_a_state_file_linked_out_of_the_vault_is_never_written_through(tmp_path: Path):
+    """BEHAVIOURAL. The write half of "a symlink pointing out of the vault is
+    refused".
+
+    That refusal was `vault.Vault.note`, which resolved a path against the
+    vault root before anything read it. No caller built a note through it and
+    it was retired on 2026-11-21, so nothing refuses a link today: a
+    `State.md` that is a symlink is READ through. What the code that runs does
+    hold is the half that loses data. The write is a temp file and
+    `os.replace`, which swaps the link for a file inside the folder - the
+    file it pointed at is not written.
+    """
+    folder = StateFolder.create(tmp_path / "vault" / "DayDAG")
+    outside = tmp_path / "outside.md"
+    outside.write_text(folder.read_state(), encoding="utf-8")
+    folder.state_path.unlink()
+    folder.state_path.symlink_to(outside)
+    before = outside.read_bytes()
+
+    filed = folder.update_state(chase=[{"key": "NEW-1", "owner": "vp-ai", "ask": "wave 2 scope"}])
+
+    assert filed == 1, "nothing was written, so nothing was exercised"
+    assert outside.read_bytes() == before, "the write went through the link, out of the vault"
+    assert "wave 2 scope" in folder.read_state()
+    assert folder.state_path.resolve().is_relative_to(folder.root.resolve())
 
 
 # --------------------------------------------------------------------------
@@ -598,13 +800,15 @@ def test_no_jira_write_path_exists_unguarded():
     of one. Nobody else's ticket is transitioned or commented on.
 
     This was vacuous when it was written: there was no Jira client in the
-    package at all. `board.py` (#12) is now the package's first Jira reader,
-    so "there is nothing to drive" stopped being true - but "nothing here
-    drives it" still is, and that is what stays asserted here across the
-    *whole* package rather than just the one module most likely to grow a
-    write. `tests/test_board.py` carries the same check scoped to that module
-    (`test_the_module_exposes_no_way_to_drive_the_board`), parsing its source
-    directly rather than trusting this one to have caught everything.
+    package at all. There still is none - the eod plan hands the agent one
+    bounded read per project (`recipes.jira_moved_on`), and `pulse` reads the
+    project keys off the watchlist - but there is a board to drive now, so
+    "nothing here drives it" is what stays asserted here across the *whole*
+    package rather than just the one module most likely to grow a write.
+    `tests/test_pulse.py` carries the same check scoped to that module
+    (`test_the_module_exposes_no_way_to_drive_the_board`, which came with
+    `board.py` when it folded in), parsing its source directly rather than
+    trusting this one to have caught everything.
 
     The token is the strongest layer: `read:jira-work` plus Confluence read
     and no write scope at all, so a transition is refused one level below any
@@ -619,6 +823,62 @@ def test_no_jira_write_path_exists_unguarded():
         "yes, the same gate as a Slack draft; reads stay unrestricted.",
         hits,
     )
+
+
+#: An MCP tool as an allowlist names it: `mcp__<server>__<tool>`.
+_MCP_TOOL = re.compile(r"mcp__[\w-]+")
+
+#: A grant of every tool under a prefix: `mcp__*`, `mcp__<server>__*`.
+_MCP_WILDCARD = re.compile(r"mcp__[\w-]*\*")
+
+#: How an Atlassian read tool's own name starts. Verbs that are allowed, not
+#: a list of ones that are not: the write tools `JIRA_WRITE_PATTERNS` names
+#: start create, edit, transition, add or assign, and a tool nobody has seen
+#: yet fails as well.
+ATLASSIAN_READ_VERBS = ("search", "get")
+
+
+@pytest.mark.guardrail
+def test_an_unattended_run_asks_for_atlassian_reads_only():
+    """What DayDAG asks to be granted, read off what ships: the Atlassian
+    tools in the unattended wrappers' allowlists. A write tool there is a
+    request to be granted one, and the request is the thing to catch in review.
+
+    A headless run can call only the tools its wrapper's `--allowedTools` list
+    names, so the wrappers in `scripts/` are where this repo asks for Atlassian
+    access at all. Every tool they name has to be a read. A bare server name
+    or a wildcard fails too: that asks for every tool the connector has. So
+    does a wrapper that grants a wildcard of MCP tools without naming
+    Atlassian, or that skips the allowlist altogether - either one grants the
+    Atlassian writes without ever spelling the word.
+
+    This was `test_the_module_asks_for_read_scopes_only`, over a
+    `READ_ONLY_SCOPES` tuple in `board.py` that declared `read:jira-work` and
+    Confluence read. Nothing read the tuple, so it went when `board.py` folded
+    into `pulse.py`; the scopes themselves are granted in the connector,
+    outside this repo. The allowlists are the request the repo actually makes.
+    """
+    wrappers = {
+        script.name: script.read_text(encoding="utf-8")
+        for script in sorted((REPO_ROOT / "scripts").glob("*.sh"))
+    }
+    for name, text in wrappers.items():
+        assert "--dangerously-skip-permissions" not in text, f"{name} skips the allowlist"
+        assert not _MCP_WILDCARD.search(text), f"{name} grants a wildcard of MCP tools"
+
+    asked = sorted(
+        {
+            tool
+            for text in wrappers.values()
+            for tool in _MCP_TOOL.findall(text)
+            if "atlassian" in tool.casefold()
+        }
+    )
+
+    assert asked, "no wrapper asks for an Atlassian tool, so this asserts nothing"
+    for tool in asked:
+        name = tool.rsplit("__", 1)[-1]
+        assert name.startswith(ATLASSIAN_READ_VERBS), f"{tool!r} is not a read"
 
 
 # --------------------------------------------------------------------------
@@ -648,28 +908,30 @@ def test_a_private_item_reaches_state_md_like_a_normal_one_and_no_other_vault_fi
 
     The principal, 2026-09-25, after discussing the tradeoff: "i think we
     should treat sensitive items the same" / "i think wire everything
-    consistently for now, we can change later". So a private chase or watch
-    item is written to `State.md` exactly as a normal one is. What still
+    consistently for now, we can change later". So a private chase item or
+    notes gap is written to `State.md` exactly as a normal one is. What still
     holds: it lands in `State.md` and in no other vault file, and the event
     log keeps its private mark, so the rule can be switched back
     (`state.WITHHOLD_PRIVATE`, pinned below) with nothing to re-derive.
+
+    Both lists `update_state` takes. It took a third, `watch`, until
+    2026-11-21 (no caller passed it); the private item on the second list
+    here is a notes gap now.
     """
     marker = "growth-area-carry-forward"
     log = EventLog.open(":memory:")
-    log.record("carry_forward", owner="sam", ask=marker, key="k", sensitivity="private")
-    log.record(
-        "loop_opened", sensitivity="normal", key="DATA-812", ask="compute consolidation", day=0
-    )
+    log.record(CHASED, owner="sam", ask=marker, key="k", sensitivity="private")
+    log.record(CHASED, sensitivity="normal", key="DATA-812", ask="compute consolidation", day=0)
 
     folder.update_state(
         chase=log.chase_items(),
-        watch=[{"what": f"{marker} watch", "sensitivity": "private"}, {"what": "nightly job"}],
+        notes_gaps=[{"title": f"{marker} review", "sensitivity": "private"}, "Pod Steering"],
     )
 
     assert _files_holding(folder, marker) == [Path("State.md")]
     written = folder.read_state()
-    assert f"{marker} watch" in written
-    assert "compute consolidation" in written and "nightly job" in written
+    assert f"{marker} review" in written
+    assert "compute consolidation" in written and "Pod Steering" in written
     assert [i.sensitivity for i in log.chase_items() if i.ask == marker] == ["private"]
 
 
@@ -677,25 +939,21 @@ def test_a_private_item_reaches_state_md_like_a_normal_one_and_no_other_vault_fi
 def test_switching_rule_7_back_withholds_private_items_from_every_vault_file(
     folder: StateFolder, withholding
 ):
-    """BEHAVIOURAL. The pre-#180 guarantee, under its one switch: chase, watch
-    and notes_gaps alike, and in every file of the folder - a private item in
+    """BEHAVIOURAL. The pre-#180 guarantee, under its one switch: chase and
+    notes_gaps alike, and in every file of the folder - a private item in
     Watchlist or a Proposal would have leaked just as completely."""
     marker = "growth-area-carry-forward"
     log = EventLog.open(":memory:")
-    log.record("carry_forward", owner="sam", ask=marker, key="k", sensitivity="private")
-    log.record(
-        "loop_opened", sensitivity="normal", key="DATA-812", ask="compute consolidation", day=0
-    )
+    log.record(CHASED, owner="sam", ask=marker, key="k", sensitivity="private")
+    log.record(CHASED, sensitivity="normal", key="DATA-812", ask="compute consolidation", day=0)
 
     folder.update_state(
         chase=log.chase_items(),
-        watch=[{"what": marker, "sensitivity": "private"}, {"what": "nightly ingest job"}],
         notes_gaps=[{"title": marker, "sensitivity": "private"}, "Pod Steering"],
     )
 
     assert not _files_holding(folder, marker), "private content reached the vault"
     assert "compute consolidation" in folder.read_state(), "the filter ate the normal items too"
-    assert "nightly ingest job" in folder.read_state()
     assert "Pod Steering" in folder.read_state()
 
 
@@ -835,11 +1093,35 @@ def test_a_third_writer_is_caught_even_behind_two_clean_skills():
 
 
 @pytest.mark.guardrail
-def test_an_undeclared_write_is_refused_even_by_the_owner_of_another_file():
-    """BEHAVIOURAL. Owning one artifact does not license writing a neighbour."""
-    registry = Registry.load([{"name": "owner", "daydag": {"writes": ["vault:DayDAG/State.md"]}}])
-    with pytest.raises(RegistryError, match="undeclared"):
-        registry.check_write("owner", "vault:Weekly Notes/0907-0911.md")
+def test_claiming_a_neighbours_artifact_fails_the_shipped_manifest_check(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+):
+    """BEHAVIOURAL. Owning one artifact does not license claiming a neighbour's.
+
+    Drives `python -m daydag.manifests`, the preflight step, over a copy of the
+    shipped skills: clean, it exits 0; plant a skill that owns a file of its
+    own and also declares `vault:DayDAG/State.md`, and it exits 1 naming both
+    claimants.
+
+    Re-pointed from `Registry.check_write`, which had no caller outside the
+    tests and retired with `registry.py`. The write nobody declared is GAP 4.
+    """
+    skills = tmp_path / "skills"
+    for source in (REPO_ROOT / ".claude" / "skills").glob("*/SKILL.md"):
+        (skills / source.parent.name).mkdir(parents=True)
+        shutil.copy(source, skills / source.parent.name)
+    assert manifests.main([str(skills)]) == 0
+    assert "vault:DayDAG/State.md" in capsys.readouterr().out
+
+    (skills / "intruder").mkdir()
+    (skills / "intruder" / "SKILL.md").write_text(
+        "---\nname: intruder\ndaydag:\n"
+        "  writes: [vault:DayDAG/Intruder.md, vault:DayDAG/State.md]\n---\n",
+        encoding="utf-8",
+    )
+    assert manifests.main([str(skills)]) == 1
+    refusal = capsys.readouterr().err
+    assert all(word in refusal for word in ("vault:DayDAG/State.md", "daily-loops", "intruder"))
 
 
 # --------------------------------------------------------------------------
@@ -901,13 +1183,14 @@ CONNECTOR_PATTERNS = {
 def test_no_connector_client_exists_without_a_degrade_path():
     """TRIPWIRE. No source is read by code that lives in this package.
 
-    `Mirror.mark_fetch_failed` covers git, and `daydag.smoke` covers everything
-    else - but only over probes the caller injects, so there is still no client
-    here and no failure mode of one to drive. That is what this holds open: the
-    day a real client lands, its degrade path has to be built rather than
-    assumed from the smoke run. Databricks is the case that proves the point,
-    since expired OAuth surfaces there as a schema error rather than an auth
-    error, so "it returned something" is not proof the source was reachable.
+    `Mirror.mark_fetch_failed` covers git, and `brief.Reader` covers the sources
+    the morning brief and the EOD wrap read - but only over payloads the agent
+    fetched and callables the caller injects, so there is still no client here
+    and no failure mode of one to drive. That is what this holds open: the day
+    a real client lands, its degrade path has to be built rather than assumed
+    from the payload path. Databricks is the case that proves the point, since
+    expired OAuth surfaces there as a schema error rather than an auth error,
+    so "it returned something" is not proof the source was reachable.
     """
     _self_check_scanner()
     hits = _scan(CONNECTOR_PATTERNS, include_strings=False)

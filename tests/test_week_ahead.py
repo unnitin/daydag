@@ -16,11 +16,10 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from daydag import brief
 from daydag.pulse import Mirror, Pulse
 from daydag.state import StateFolder
-from daydag.voice import voice_violations
 from daydag.week_ahead import WeekAheadError, assemble
+from voice_check import unsourced_claims, voice_violations
 
 PT = ZoneInfo("America/Los_Angeles")
 
@@ -156,11 +155,9 @@ def test_a_closing_week_with_no_note_carries_nothing_and_is_not_an_error():
     assert "the closing week's note" not in pushed.unreachable
 
 
-def test_chase_and_watch_are_read_out_of_state_like_brief_reads_them(state):
-    state.update_state(
-        chase=[{"owner": "VP-Data", "ask": "cutover rehearsal"}],
-        watch=[{"what": "10k e2e run"}],
-    )
+def test_chase_and_watch_are_read_out_of_state_like_brief_reads_them(state, hand_written_watch):
+    state.update_state(chase=[{"owner": "VP-Data", "ask": "cutover rehearsal"}])
+    hand_written_watch(state, "10k e2e run")
     pushed = _assemble(sources=FakeSources(), state=state)
     carrying = next(s for s in pushed.sections if s.heading.startswith("carrying in"))
     assert "cutover rehearsal" in carrying.render()
@@ -440,9 +437,9 @@ def test_a_quiet_pulse_adds_no_shipping_section():
 # --------------------------------------------------------------------------
 
 
-def test_a_dead_calendar_degrades_to_one_line_and_the_push_still_ships(state):
+def test_a_dead_calendar_degrades_to_one_line_and_the_push_still_ships(state, hand_written_watch):
     """Seven day-windows can all fail; the degrade line still names it once."""
-    state.update_state(watch=[{"what": "10k e2e run"}])
+    hand_written_watch(state, "10k e2e run")
     pushed = _assemble(sources=FakeSources(broken=["calendar"]), state=state)
     assert pushed.unreachable == ("calendar",), "the same failing source was named more than once"
     assert any(s.heading == "watch" for s in pushed.sections), "a dead calendar took the rest down"
@@ -458,11 +455,9 @@ def test_render_carries_the_unreachable_footer():
 # --------------------------------------------------------------------------
 
 
-def test_a_fully_loaded_week_is_evidenced_and_clean_in_the_house_voice(state):
-    state.update_state(
-        chase=[{"owner": "VP-Data", "ask": "cutover rehearsal"}],
-        watch=[{"what": "10k e2e run"}],
-    )
+def test_a_fully_loaded_week_is_evidenced_and_clean_in_the_house_voice(state, hand_written_watch):
+    state.update_state(chase=[{"owner": "VP-Data", "ask": "cutover rehearsal"}])
+    hand_written_watch(state, "10k e2e run")
     sources = FakeSources(
         events=[
             _event("steering", "Pod Steering", datetime(2026, 9, 7, 9, 0, tzinfo=PT)),
@@ -486,7 +481,7 @@ def test_a_fully_loaded_week_is_evidenced_and_clean_in_the_house_voice(state):
     pushed = _assemble(sources=sources, state=state)
     text = pushed.render()
 
-    assert brief.unsourced_claims(text) == [], f"a claim shipped with no evidence:\n{text}"
+    assert unsourced_claims(text) == [], f"a claim shipped with no evidence:\n{text}"
     assert voice_violations(text) == [], f"broke the house voice:\n{voice_violations(text)}\n{text}"
 
 
@@ -495,7 +490,7 @@ def test_a_thin_week_still_renders_a_short_honest_push():
     pushed = _assemble(sources=FakeSources())
     text = pushed.render()
     assert text.startswith("week ahead")
-    assert brief.unsourced_claims(text) == []
+    assert unsourced_claims(text) == []
     assert voice_violations(text) == []
 
 

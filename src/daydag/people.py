@@ -98,7 +98,7 @@ def _tokens(text: str) -> set[str]:
 def _name_tokens(handle: str) -> set[str]:
     """Name tokens in an address or display name, domain discarded.
 
-    Same rule as `prep_selector._person_tokens`, and for the same reason: every
+    Same rule as `prep._person_tokens`, and for the same reason: every
     colleague shares the domain, so matching it matches everybody.
     """
     return _tokens(str(handle).split("@", 1)[0])

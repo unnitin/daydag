@@ -21,6 +21,7 @@ from datetime import UTC, date, datetime
 import pytest
 
 from daydag import brief, recipes, run
+from daydag.call_notes import CHASED
 from daydag.config import Identities
 from daydag.state import StateFolder
 
@@ -189,6 +190,119 @@ def test_render_refuses_a_naive_now(identities):
             identities=identities,
             payloads=_payloads(),
         )
+
+
+# --------------------------------------------------------------------------
+# the degrade path, on the push that ships (guardrail 6)
+#
+# Four properties the `smoke` pre-flight held over its own probes. No loop ran
+# it, and it is retired, so they are held here on the path a run goes through:
+# `_Payloads` raises for a payload that is absent or the wrong shape and
+# `brief.Reader` turns that into one named line; the evening sources are named
+# by `_unchecked`.
+# --------------------------------------------------------------------------
+
+#: 16:40 Pacific on the same Monday - the hour an EOD wrap runs.
+MONDAY_EVENING = datetime(2026, 9, 7, 23, 40, tzinfo=UTC)
+
+
+def _evening_payloads(**over):
+    """Every source the Monday wrap reads, each answering with nothing."""
+    base = _payloads(
+        slack_sent=[], gmail_sent=[], slack_sweep=[], jira=[], github=[], vault_notes={}
+    )
+    base.update(over)
+    return base
+
+
+#: The clock each loop runs at, and its payloads when every source answers with
+#: nothing - the quiet day a degrade must not be mistaken for.
+_CLOCK = {"morning": MONDAY_PT, "eod": MONDAY_EVENING}
+_QUIET = {"morning": _payloads, "eod": _evening_payloads}
+
+
+def _couldnt_check(identities, loop, payloads):
+    """The "couldn't check" lines of one render, in the order the push has them."""
+    text = run.render(loop, now=_CLOCK[loop], identities=identities, payloads=payloads)
+    return [line for line in text.splitlines() if "couldn't check" in line]
+
+
+@pytest.mark.guardrail
+def test_the_unfetched_source_is_named_in_the_line_the_push_ships(identities):
+    """Guardrail 6 verbatim: one "couldn't check X" line, and it names the source."""
+    payloads = _payloads()
+    del payloads["gmail"]
+
+    assert _couldnt_check(identities, "morning", payloads) == ["- couldn't check gmail"]
+
+
+@pytest.mark.guardrail
+@pytest.mark.parametrize(
+    ("loop", "key"), [("morning", "calendar"), ("eod", "jira"), ("eod", "github")]
+)
+def test_an_answer_that_never_arrived_is_not_a_quiet_day(identities, loop, key):
+    """An overflow returns nothing, and nothing must not read as nothing happened.
+
+    The #2 audit measured three: Calendar at 156,681 chars, Jira at 125,231 and
+    60,000. None raised and none arrived. On this path that is a key the agent
+    could not fill, or the connector's complaint handed back where the records
+    belong. Both name the source. Only a list that arrived empty is a quiet day.
+
+    `render` does not measure a payload, so one that did arrive oversized is
+    not caught here; the plan's bounds are what keep it from being asked for.
+    """
+    quiet = _QUIET[loop]()
+    absent = {name: value for name, value in quiet.items() if name != key}
+    complaint = {**quiet, key: "response exceeds maximum length"}
+
+    assert _couldnt_check(identities, loop, absent) == [f"- couldn't check {key}"]
+    assert _couldnt_check(identities, loop, complaint) == [f"- couldn't check {key}"]
+    assert _couldnt_check(identities, loop, quiet) == [], "an empty list is the quiet day"
+
+
+@pytest.mark.guardrail
+@pytest.mark.parametrize(
+    ("loop", "key", "payload"),
+    [
+        ("morning", "calendar", {"calendars": []}),
+        ("morning", "gmail", {"messages": []}),
+        ("morning", "slack", {"members": []}),
+        ("eod", "jira", {"issues": []}),
+        ("eod", "github", {"repositories": []}),
+    ],
+)
+def test_a_call_that_did_not_raise_is_still_not_proof_the_source_answered(
+    identities, loop, key, payload
+):
+    """The failure mode the audit found: silence that looks like success.
+
+    Each payload came back from a call that raised nothing, and none is the
+    list of records the source is read as. Taking it for an empty list is how a
+    push reports a quiet day on a source that was never read, so it is named.
+    """
+    payloads = _QUIET[loop](**{key: payload})
+
+    assert _couldnt_check(identities, loop, payloads) == [f"- couldn't check {key}"], (
+        f"{payload!r} was read as a reachable {key}"
+    )
+
+
+@pytest.mark.guardrail
+def test_a_run_handed_no_payloads_names_every_source_and_assumes_none(identities):
+    """An agent that fetched nothing must fail closed, and say so per source.
+
+    Each source the brief reads gets its own line, the meeting count is unknown
+    rather than zero, and the push is still a message.
+    """
+    text = run.render("morning", now=MONDAY_PT, identities=identities, payloads={})
+
+    assert [line for line in text.splitlines() if "couldn't check" in line] == [
+        "- couldn't check calendar",
+        "- couldn't check the weekly note",
+        "- couldn't check slack",
+        "- couldn't check gmail",
+    ]
+    assert "? meetings" in text and "0 meetings" not in text
 
 
 # --------------------------------------------------------------------------
@@ -1111,14 +1225,14 @@ def test_ingest_lines_are_bulleted_like_every_other_section(identities):
 
 def test_a_carried_chase_item_keeps_its_quote_and_permalink(identities, tmp_path):
     """House rule 1. Bare `owner: ask` dropped both, and was invisible to
-    `brief.unsourced_claims` for want of a bullet."""
+    `voice_check.unsourced_claims` for want of a bullet."""
     from daydag.state import EventLog, StateFolder
 
     folder = StateFolder.create(tmp_path / "vault" / "DayDAG")
     folder.update_state(chase=[{"owner": "VP-Data", "ask": "the compute plan"}])
     log = tmp_path / "events.db"
     EventLog.open(log).record(
-        "carry_forward",
+        CHASED,
         sensitivity="normal",
         owner="VP-AI",
         ask="confirm the cutover",

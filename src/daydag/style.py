@@ -160,13 +160,6 @@ class Rules:
     seeded: bool = False
     notes: tuple[str, ...] = ()
 
-    def sections(self) -> tuple[str, ...]:
-        seen: list[str] = []
-        for r in self.rules:
-            if r.section not in seen:
-                seen.append(r.section)
-        return tuple(seen)
-
 
 @dataclass(frozen=True)
 class Selection:

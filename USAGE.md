@@ -201,8 +201,11 @@ Narrow it with words from the title - `"ruwen / nitin"` - rather than hoping it
 picks right. Prep for the wrong meeting is worse than none: you read it, trust
 it, and walk into the other one cold.
 
-Naming a meeting skips the "is this worth interrupting you" gate, so a standup
-you ask about is a standup you get prepped.
+Naming a meeting skips the "is this worth prepping unprompted" gate, so a
+standup you ask about is a standup you get prepped. Without `--for`, `prep`
+takes the next meeting that passes the gate. Either way it runs when you run
+it: nothing ever scheduled the 30-minute ping SPEC 3.2 describes, and the code
+written for one is retired (tag `pre-retirement`).
 
 ## Prepping tomorrow's important calls
 

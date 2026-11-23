@@ -5,7 +5,7 @@ daydag:
   # Orchestration only: it owns the ORDER, the two skills own every artifact,
   # so this list is empty on purpose rather than by omission. Declaring any of
   # them here would be a second writer on an artifact that already has one,
-  # which the registry refuses at startup - that refusal is the whole point.
+  # which the registry refuses at load - that refusal is the whole point.
   #
   # Where the data actually goes, so this does not have to be read as a
   # question mark. Step 1, via `weekly-progress-reporting`:

@@ -303,7 +303,7 @@ def test_an_attended_call_carries_no_provenance_warning():
 
 
 def test_every_priority_line_carries_the_note_permalink():
-    from daydag.brief import unsourced_claims
+    from voice_check import unsourced_claims
 
     text = _eod_text()
     assert not unsourced_claims(text), unsourced_claims(text)

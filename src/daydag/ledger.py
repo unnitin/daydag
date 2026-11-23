@@ -6,7 +6,6 @@ USING IT
     ledger.offer_note(note)             # -> Match; attaches to a row
     ledger.notes_gaps()                 # meetings that produced NO notes
     ledger.ambiguous()                  # note matched >1 row, needs a human
-    ledger.close_day()
 
     title_from_gemini_subject(subject)  # 'Notes: "<title>" <date>' -> title
 
@@ -151,7 +150,6 @@ class Row:
     summary: str
     attendees: list[str]
     note: Match | None = None
-    day_closed: bool = False
     #: Display names, aligned with `attendees`, "" where google gave none. Kept
     #: APART from the addresses on purpose: every consumer of `attendees` -
     #: `Audience.has_external`, `has_leadership`, `_score`, the prep selector's
@@ -295,7 +293,6 @@ class Ledger:
     def __init__(self) -> None:
         self._rows: dict[tuple[str, datetime], Row] = {}
         self._ambiguous: list[Match] = []
-        self._reingest: list[str] = []
 
     # -- calendar drives -------------------------------------------------
 
@@ -343,7 +340,7 @@ class Ledger:
             )
             earlier = self._rows.get(row.key)
             if earlier is not None:
-                row.note, row.day_closed = earlier.note, earlier.day_closed
+                row.note = earlier.note
             self._rows[row.key] = row
 
     def _retract(self, event: Mapping[str, Any]) -> None:
@@ -353,17 +350,6 @@ class Ledger:
             # An unhashable `start` - google's all-day `{"date": ...}` - was
             # never a row, so there is nothing to remove.
             pass
-
-    def close_day(self) -> None:
-        """Mark open rows as belonging to a finished day.
-
-        Rows are *not* closed for matching - Notion lands about a week late, so
-        an unmatched row keeps being re-checked. This only records that the day
-        has turned, which is what makes a late arrival a backfill.
-        """
-        for row in self._rows.values():
-            if row.note is None:
-                row.day_closed = True
 
     # -- notes attach ----------------------------------------------------
 
@@ -451,10 +437,6 @@ class Ledger:
 
     def _attach(self, row: Row, note: Match) -> Row:
         row.note = note
-        if row.day_closed:
-            # A late arrival is new information about a meeting already reported
-            # as a gap, so ingestion runs again for it.
-            self._reingest.append(row.event_id)
         return row
 
     # -- what the brief asks for -----------------------------------------
@@ -469,10 +451,6 @@ class Ledger:
     def ambiguous(self) -> list[Match]:
         """Notes that could not be confidently placed, for a human to settle."""
         return list(self._ambiguous)
-
-    def reingest_queue(self) -> list[str]:
-        """Event ids whose notes arrived late and need ingestion re-run."""
-        return list(self._reingest)
 
     def notes_gaps(self, as_of: datetime) -> list[str]:
         """Meetings finished before ``as_of`` that still have no notes.

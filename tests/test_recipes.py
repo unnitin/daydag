@@ -251,19 +251,14 @@ def test_a_titled_lookup_searches_the_subject():
     assert "from:gemini-notes@google.com" in query
 
 
-def test_the_subject_parser_is_the_ledger_s_own():
-    """One parser. A second implementation is a second set of bugs."""
-    assert recipes.title_from_gemini_subject is title_from_gemini_subject
-
-
 def test_a_real_subject_round_trips_into_a_lookup():
-    title = recipes.title_from_gemini_subject("Notes: “Discovery sync” Sep 3, 2026")
+    title = title_from_gemini_subject("Notes: “Discovery sync” Sep 3, 2026")
     assert title == "Discovery sync"
     assert 'subject:"Discovery sync"' in recipes.gmail_gemini_notes(title=title)
 
 
 def test_an_unparseable_subject_gives_no_title_and_so_no_titled_query():
-    assert recipes.title_from_gemini_subject("Re: lunch?") is None
+    assert title_from_gemini_subject("Re: lunch?") is None
     with pytest.raises(RecipeError):
         recipes.gmail_gemini_notes(title=None)
 
@@ -347,6 +342,41 @@ def test_an_unusable_vault_root_raises_rather_than_writing_somewhere_odd(root):
 def test_a_missing_vault_root_names_the_key():
     with pytest.raises(RecipeError, match="VAULT_ROOT"):
         recipes.vault_path({}, "DayDAG", "State.md")
+
+
+@pytest.mark.guardrail
+def test_a_local_path_escaping_the_vault_is_refused(tmp_path):
+    """The decoy: `Weekly Notes/` also exists at the vault's parent (#6), and a
+    write once landed `claude-write-test.md` there.
+
+    Was `test_vault.py::test_a_path_escaping_the_vault_is_refused`, on
+    `vault.Vault.note` - a root check nothing built a note through, retired on
+    2026-11-21. The refusal that runs is this one: `vault_path` is how a local
+    path into the vault is built, and it will not build one that walks out.
+    """
+    documents = tmp_path / "Documents"
+    (documents / "Create Music Group").mkdir(parents=True)
+    (documents / "Weekly Notes").mkdir()
+    (documents / "Weekly Notes" / "claude-write-test.md").write_text("x", encoding="utf-8")
+    identities = {"VAULT_ROOT": str(documents)}
+
+    with pytest.raises(RecipeError, match="escapes the vault"):
+        recipes.vault_path(identities, "../Weekly Notes/claude-write-test.md")
+    with pytest.raises(RecipeError, match="escapes the vault"):
+        recipes.vault_path(identities, "..", "Weekly Notes", "claude-write-test.md")
+
+
+@pytest.mark.guardrail
+def test_an_absolute_local_path_outside_the_vault_is_refused(tmp_path):
+    """Was `test_vault.py::test_an_absolute_path_outside_the_vault_is_refused`.
+    A segment that is an absolute path would replace the vault root outright
+    in a join, so `vault_path` refuses it rather than joining it."""
+    identities = {"VAULT_ROOT": str(tmp_path / "Documents")}
+
+    with pytest.raises(RecipeError, match="escapes the vault"):
+        recipes.vault_path(identities, str(tmp_path / "elsewhere.md"))
+    with pytest.raises(RecipeError, match="escapes the vault"):
+        recipes.vault_path(identities, "DayDAG", str(tmp_path / "elsewhere.md"))
 
 
 # ---------------------------------------------------------------------------

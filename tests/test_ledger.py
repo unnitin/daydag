@@ -224,12 +224,13 @@ def test_unparseable_subject_falls_back_instead_of_crashing():
     assert len(led.open_rows()) == 1
 
 
-def test_late_notion_note_backfills_and_retriggers_ingestion():
-    """Notion lags ~a week, so an unmatched row is re-checked, not closed."""
+def test_a_late_notion_note_still_attaches_to_the_open_row():
+    """Notion lags ~a week, so an unmatched row is re-checked, not closed.
+    (The queue that also re-ran ingestion for the late note had no reader and
+    was retired on 2026-11-21.)"""
     led = Ledger()
     led.seed_day([ev()])
-    led.close_day()
-    led.offer_note(
+    attached = led.offer_note(
         Match(
             title="Discovery sync",
             arrived=T + timedelta(days=6),
@@ -237,7 +238,8 @@ def test_late_notion_note_backfills_and_retriggers_ingestion():
             source="notion",
         )
     )
-    assert led.reingest_queue() == ["e1"]
+    assert attached is not None and attached.event_id == "e1"
+    assert led.open_rows() == []
 
 
 def test_unmatched_by_next_morning_becomes_a_notes_gap():

@@ -42,27 +42,23 @@ artifact is the load-bearing rule; the rest is plumbing.
 | Module | What it is |
 |---|---|
 | `config` | Identifiers resolved from a local `.env`. This repo is public; nothing real is committed |
-| `registry` | The ownership table as startup checks — two writers to one artifact is an error, not a convention |
-| `manifests` | Reads the `daydag:` block out of every `.claude/skills/*/SKILL.md`, so those checks run over what ships |
+| `manifests` | Reads the `daydag:` block out of every `.claude/skills/*/SKILL.md` and checks the set: two writers to one artifact is an error, not a convention. Run by preflight and the test suite, not by a loop |
 | `state` | The `DayDAG/` vault folder and the SQLite event log. Two stores, opposite requirements |
 | `ledger` | Calendar-driven meeting rows, so a meeting that produced **no** notes is visible |
-| `pulse` | Repo state: local mirrors for history, API for review state |
+| `pulse` | Repo state: local mirrors for history, API for review state. Also the reader of the watchlist's `repos` and `jira` blocks and the one definition of a ticket key; the board join and deltas are retired at tag `pre-retirement` until a loop needs them |
 | `repos` | The first step of every recap: fetch or clone the mirrors of every watched repo and fast-forward his clean working copies, without moving a pulse cursor |
-| `board` | The watchlist's `jira` and `projects` blocks, and ticket keys in a line; the join and deltas are retired at tag `pre-retirement` until a loop needs them |
 | `closure` | Open is a verdict, not a default: the reply under every ask is read before the ask is reported open |
-| `vault` | Targeted line edits to a note, with an iCloud-aware compare-and-swap |
-| `voice` | The house voice as assertions, and the templates for every push |
-| `smoke` | One pre-flight pass over every source: reached, skipped, or never connected |
+| `vault` | The write under `State.md` and `Style.md`: a whole-note replace that is atomic, a compare-and-swap against what was read, and refuses an iCloud placeholder. The line-edit planner was retired with no caller |
+| `voice` | The template for every push, the sanctioned warning glyph and the one-line clip. The house voice itself is asserted by the suite (`tests/voice_check.py`), not at run time |
 | `runlog` | One row per run in the event log, so a brief that never arrived can still be explained |
 | `recipes` | SPEC §4's prose as literal, testable queries |
 | `payloads` | Reading a connector's answer while it is still unvalidated - `recipes` asks, this reads |
 | `brief` | SPEC §3.1's morning brief: the assembler every other loop composes from |
 | `budget` | The morning push fitted to one Slack message: ranked, capped, every cut counted where he can find it, overflow in one threaded reply (#185) |
 | `eod_wrap` | SPEC §3.5's EOD wrap: what closed, what moved, tomorrow's first meeting |
-| `prep` | Meeting prep pings: the one interrupt, 30 min out, qualified by the ledger |
+| `prep` | Meeting prep: the next meeting worth it, or the one he named (asking, never guessing, when a name fits two), why it qualifies, and its talking points. Nothing ever scheduled SPEC §3.2's 30-minute ping, so the parts only a poller needs are retired at tag `pre-retirement` |
 | `week_ahead` | SPEC §3.6's Sunday week-ahead: a read of Friday's plan, assembled into one push |
-| `delivery` | The one autonomous send - the principal's DM - and the threaded prep reply |
-| `prep_selector` | Naming the meeting to prep for, and refusing to guess between two |
+| `delivery` | The one autonomous send: a rendered push to the principal's DM. The threaded prep reply is retired at tag `pre-retirement` with the ping |
 | `prep_ahead` | Day-before prep for the calls his `## Prep rules` name - rows he edits, not code |
 | `people` | Who someone is - ids, title, DM, groups, how often met - with stated facts outranking inferred ones |
 | `run` | The two-phase contract that makes a loop runnable: plan the fetch, assemble the push |

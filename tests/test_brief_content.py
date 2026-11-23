@@ -14,12 +14,13 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from daydag import brief, call_notes, run
+from daydag import call_notes, run
 from daydag.brief import UNSOURCED
 from daydag.ledger import Ledger
 from daydag.people import People
 from daydag.state import EventLog, StateFolder
 from test_brief import IDENTITIES, NOW, FakeSources, _assemble, _event, _message
+from voice_check import unsourced_claims
 
 STATE = """# State
 
@@ -119,7 +120,7 @@ def test_his_own_steps_are_owed_by_him(tmp_path):
     assert not any("send the deck" in line for line in owed_by.lines), (
         "his hand-kept Owed by you section holds narrative; the brief reads only chase rows"
     )
-    assert brief.unsourced_claims(assembled.render()) == []
+    assert unsourced_claims(assembled.render()) == []
 
 
 def test_without_an_owner_check_only_an_arrow_to_him_moves(tmp_path):

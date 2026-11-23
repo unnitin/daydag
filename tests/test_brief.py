@@ -17,11 +17,11 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from daydag import brief as brief_module
-from daydag.brief import BriefError, assemble, red_items, unsourced_claims
+from daydag.brief import BriefError, assemble, red_items
 from daydag.ledger import Ledger
 from daydag.pulse import Item, Mirror, Pulse
 from daydag.state import StateFolder
-from daydag.voice import voice_violations
+from voice_check import unsourced_claims, voice_violations
 
 PT = ZoneInfo("America/Los_Angeles")
 
@@ -215,6 +215,44 @@ def test_the_note_layout_does_not_have_to_match_a_template(note):
 def test_a_ticked_item_is_closed_and_does_not_come_back():
     """Practice beats stated convention: closed items are ticked in place."""
     assert red_items("- [x] 🔴 done already") == []
+
+
+@pytest.mark.guardrail
+def test_an_item_ticked_in_place_is_closed_with_nothing_moved_to_done():
+    """reference/vault-recipes: closed items are ticked in place. Practice
+    wins (invariant 6).
+
+    The note's own preamble says a closed item is struck and moved to
+    `# Done this week`; in practice every closed item is `- [x]` where it sits
+    and Done holds nothing but its comment. So the tick IS the close: read
+    where it sits it is closed and not open, and an empty Done changes neither
+    answer.
+
+    Was `test_vault.py::test_ticking_does_not_move_the_item_to_done`, on the
+    tick planner nothing called (retired 2026-11-21). Nothing in the package
+    ticks a checkbox - the agent edits the note - so the half of the practice
+    the code holds today is the reader's, and that is what this pins.
+    """
+    from daydag.brief import closed_red_items
+
+    note = (
+        "# Week of August 17-21, 2026\n"
+        "\n"
+        "# Priorities\n"
+        "## 🔴 High - needs my hand this week\n"
+        "- [ ] **Compute consolidation** *(mine)* - land the plan\n"
+        "- [x] **Wave 2 scope** *(tracking: VP-AI)* - shipped\n"
+        "\n"
+        "# Done this week\n"
+        "<!-- nothing moves here; items are ticked in place -->\n"
+    )
+
+    assert [text for _, text in closed_red_items(note)] == [
+        "**Wave 2 scope** *(tracking: VP-AI)* - shipped"
+    ]
+    assert [text for _, text in red_items(note)] == [
+        "**Compute consolidation** *(mine)* - land the plan"
+    ]
 
 
 def test_a_legend_naming_every_colour_is_not_a_priority():
@@ -464,11 +502,9 @@ def _busy_sources():
     )
 
 
-def test_a_full_brief_reads_in_his_voice(state, fake_repo):
-    state.update_state(
-        chase=[{"owner": "VP-Data", "ask": "silver trigger"}],
-        watch=[{"what": "10k e2e run"}],
-    )
+def test_a_full_brief_reads_in_his_voice(state, fake_repo, hand_written_watch):
+    state.update_state(chase=[{"owner": "VP-Data", "ask": "silver trigger"}])
+    hand_written_watch(state, "10k e2e run")
     text = _assemble(
         _busy_sources(),
         state=state,
@@ -516,6 +552,47 @@ def test_one_downed_source_costs_one_line_and_the_brief_still_ships():
     assert text.count("couldn't check") == 1
     assert "couldn't check slack" in text
     assert "top of the note" in text, "one dead source suppressed a healthy one"
+
+
+class _GmailRaises(FakeSources):
+    """Every source as given, except that gmail raises exactly what it is handed."""
+
+    def __init__(self, failure, **kwargs):
+        super().__init__(**kwargs)
+        self._failure = failure
+
+    def gmail(self, query):
+        raise self._failure
+
+
+@pytest.mark.guardrail
+@pytest.mark.parametrize(
+    "failure",
+    [
+        RuntimeError("connection reset by peer"),
+        TimeoutError("timed out"),
+        KeyError("token"),
+        ValueError(""),
+    ],
+)
+def test_whatever_a_source_raises_the_brief_ships_and_names_it(failure: Exception):
+    """Guardrail 6, for whatever is thrown and not only the error a fake picks.
+
+    A connector client raises what it likes. `Reader` turns each of these into
+    the source's name on `unreachable`: the brief comes back, the healthy
+    source still renders, and the dead one gets its one line.
+
+    Held by the `smoke` pre-flight over its own probes until that module was
+    retired with no caller. `Reader` is where a loop degrades a source.
+    """
+    result = _assemble(_GmailRaises(failure, events=[_event("a", "pod steering", 9)]))
+    text = result.render()
+
+    assert result.unreachable == ("gmail",)
+    assert "pod steering" in text, "one dead source suppressed a healthy one"
+    assert [line for line in text.splitlines() if "couldn't check" in line] == [
+        "- couldn't check gmail"
+    ]
 
 
 @pytest.mark.guardrail
@@ -911,7 +988,7 @@ def test_first_meeting_line_picks_the_earliest_by_instant_not_by_order():
 
 
 def test_first_meeting_line_admits_a_missing_link():
-    from daydag.brief import first_meeting_line, unsourced_claims
+    from daydag.brief import first_meeting_line
 
     event = _event("a", "mystery hold", 9)
     del event["permalink"]
@@ -1007,9 +1084,15 @@ def _gemini(minutes_ago):
     }
 
 
+@pytest.mark.guardrail
 def test_no_slack_at_all_on_a_night_notes_landed_is_said_not_shown_as_quiet():
     """Shape A of #183 returned "No results found" with no error and rendered
-    exactly like a quiet night."""
+    exactly like a quiet night.
+
+    A guardrail since the `smoke` pre-flight retired: its "a call that did not
+    raise is not proof the source answered" case for an empty Slack answer has
+    this check as its live subject.
+    """
     quiet = _assemble(FakeSources(messages=[], mail=[_gemini(600)]))
 
     assert any(name.startswith("slack for sure") for name in quiet.unreachable)

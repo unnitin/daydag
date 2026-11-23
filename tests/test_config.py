@@ -34,20 +34,6 @@ def test_membership_does_not_raise_for_a_missing_key(tmp_path):
     assert "NOPE" not in ids
 
 
-def test_expands_references_in_text(tmp_path):
-    env = tmp_path / ".env"
-    env.write_text("SLACK_USER_PRINCIPAL=nitin-slack-id\n")
-    ids = Identities.from_file(env)
-    assert ids.expand("dm ${SLACK_USER_PRINCIPAL} now") == "dm nitin-slack-id now"
-
-
-def test_expand_rejects_unknown_reference(tmp_path):
-    env = tmp_path / ".env"
-    env.write_text("SLACK_USER_PRINCIPAL=nitin-slack-id\n")
-    with pytest.raises(ConfigError, match="NOPE"):
-        Identities.from_file(env).expand("hello ${NOPE}")
-
-
 @pytest.mark.guardrail
 def test_never_echoes_a_value_in_an_error(tmp_path):
     """An exception that prints the ID defeats the point of holding it in .env."""

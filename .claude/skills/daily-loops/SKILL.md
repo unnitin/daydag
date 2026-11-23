@@ -11,7 +11,7 @@ daydag:
     # Artifacts, not surfaces: the DM to Nitin is a destination `route()`
     # reasons about, not a thing with one owner, so it is not listed here.
     # A trailing `/` marks a folder - the registry matches ids exactly, so it
-    # owns the folder rather than authorising each file inside it.
+    # is the folder's id and not the id of any file inside it.
     - vault:DayDAG/README.md
     - vault:DayDAG/State.md
     - vault:DayDAG/Decisions.md

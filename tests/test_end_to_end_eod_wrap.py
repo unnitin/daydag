@@ -23,10 +23,9 @@ import subprocess
 from datetime import datetime, timedelta, timezone
 
 from daydag import eod_wrap
-from daydag.brief import unsourced_claims
 from daydag.ledger import Ledger, Match
 from daydag.pulse import Mirror, Pulse
-from daydag.voice import voice_violations
+from voice_check import unsourced_claims, voice_violations
 
 PT = timezone(timedelta(hours=-7))
 #: A Monday, run at the wrap's own time. "Tomorrow" is Tuesday - a real 1:1.
@@ -125,7 +124,6 @@ def test_a_whole_evening_arrives_as_one_assembled_wrap(tmp_path, git_env):
             }
         ]
     )
-    ledger.close_day()
     assert ledger.notes_gaps(as_of=MONDAY_WRAP) == ["VP-Data 1:1"], (
         "the fixture must be meaningful: last week's instance really has no note"
     )

@@ -66,7 +66,7 @@ flowchart TB
 
 DayDAG owns exactly two artifacts and one channel. Everything else it reads or drafts into. This is what keeps it from becoming the parallel task store principle 1 forbids.
 
-This table is **also a registry**, generated from the `daydag:` block of every `.claude/skills/*/SKILL.md` and checked before a loop runs, so a future skill can't quietly become a second writer. The manifests are the source; this table is the readable form of them. See [Extensibility](#extensibility--adding-skills-without-decaying).
+This table is **also a registry**, generated from the `daydag:` block of every `.claude/skills/*/SKILL.md` and checked in preflight and the test suite (`python -m daydag.manifests`), not before a loop runs, so a future skill can't declare itself a second writer and still pass. The manifests are the source; this table is the readable form of them. See [Extensibility](#extensibility--adding-skills-without-decaying).
 
 ## What DayDAG actually owns
 
@@ -112,7 +112,7 @@ So: **clone, and also keep the API.** The clones are not a replacement for API a
 
 Jira is the data team's plan of record; GitHub Projects is where pods that never moved to Jira still live. Both are read-only to DayDAG (ownership table), both feed the same `shipping` block, and both are joined to Slack, PRs and meeting notes on the **ticket key** — `ABC-123` in a branch name, a PR title, a Slack line, a meeting-note next-step. That join is the whole point; it's what turns "jasmeet said he'd do the compute-engine consolidation" into a ticket, a PR and a status without Nitin holding the mapping in his head.
 
-What's watched lives in `DayDAG/Watchlist.md`: a `jira` block (project key · board/sprint · saved JQL · linked workstream) and a `projects` block (org project number · linked workstream). The `repos` block feeds the mirrors — one bullet per repo, `owner/repo` or its github url, with anything after a `·` treated as notes **except two markers**, each of which must be a field of its own rather than a word appearing somewhere in the prose:
+What's watched lives in `DayDAG/Watchlist.md`. The design is a `jira` block (project key · board/sprint · saved JQL · linked workstream) and a `projects` block (org project number · linked workstream). The code reads less than that today: `pulse.read_watchlist` takes the project key each `jira` bullet leads with, which is what the eod plan asks Jira about, and everything after the first `·` is his note, a saved JQL or workstream included. A `jira` bullet that does not lead with a key is skipped with no line saying so, and a `projects` block is not read at all. The same reader takes the `repos` block, which feeds the mirrors - one bullet per repo, `owner/repo` or its github url, with anything after a `·` treated as notes **except two markers**, each of which must be a field of its own rather than a word appearing somewhere in the prose:
 
 - `wiki` — also mirrors that repo's `<repo>.wiki.git`.
 - `branch:<name>` — where landings appear, when that is not the default branch. Omitted means `HEAD`, which in a bare mirror is the remote's default. This exists because it is otherwise unsayable and the failure is silent: a repo that lands on `dev` contributes no items, is not stale, is not unavailable, gets no degrade line, and reads as healthy and quiet (#128). A named branch that doesn't resolve is reported with the branch in the message, because that one is fixed by editing the watchlist rather than by looking at git.
@@ -121,10 +121,10 @@ A bullet that isn't a recognisable slug is skipped, because that file is hand-ed
 
 Two mechanical notes worth writing down before someone rediscovers them:
 
-- **Projects v2 is GraphQL-only.** The REST API does not expose the new project boards at all. Column moves come from `ProjectV2ItemFieldValue` on the org project — `gh project item-list --owner CreateMusicGroup --format json` wraps it. The old REST `/projects` endpoints are the deprecated classic boards and will return nothing useful.
+- **Projects v2 is GraphQL-only**, and nothing in `src/` reads a Projects board yet. The REST API does not expose the new project boards at all. Column moves come from `ProjectV2ItemFieldValue` on the org project - `gh project item-list --owner CreateMusicGroup --format json` wraps it. The old REST `/projects` endpoints are the deprecated classic boards and will return nothing useful.
 - **The Atlassian connector is authorised** (the #2 connector audit's follow-up) with a read-only token — `read:jira-work` plus Confluence read, no write scope at all. The eod plan reads it through `recipes.jira_moved_on`, one project and one day per call; when the token itself is missing or expired, that step is a "couldn't check" line, not a blocker.
 
-The two flags the board delta exists to catch stay as spec'd: *a ticket he believes exists but was never made*, and *a ticket closed with nobody saying so*. The join and snapshot diff that computed them (`board.py`, #12) were never called by a loop and were retired on 2026-10-11 at tag `pre-retirement` (PR #199); today the eod plan reads what moved per project through `recipes.jira_moved_on` and `movement` proposes it as evidence. Restore from the tag when a loop needs the join.
+The two flags the board delta exists to catch stay as spec'd: *a ticket he believes exists but was never made*, and *a ticket closed with nobody saying so*. The join and snapshot diff that computed them (`board.py`, #12) were never called by a loop and were retired on 2026-10-11 at tag `pre-retirement` (PR #199); what was left of `board.py`, the watchlist's `jira` block and the ticket-key helper, has since folded into `pulse.py`. Today the eod plan reads what moved per project through `recipes.jira_moved_on` and `movement` proposes it as evidence. Restore from the tag when a loop needs the join.
 
 ### Calendar ↔ Gemini — the meeting ledger
 
@@ -134,9 +134,9 @@ So the link is a ledger, and calendar is the driver.
 
 1. **Every qualifying event gets a row** at the start of the day — from the day-by-day calendar pull, keyed on `(event id, instance start)` so recurring 1:1s are distinct rows. Qualifying means **not declined**, ≥2 attendees, not OOO/focus/hold. Requiring *accepted* dropped 61% of real meetings when measured against five days of live calendar (#2) - most invites are never answered.
 2. **Ingestion attaches, it doesn't discover.** Each sweep (every 30 min through the working day, #168) tries to match unattached rows against Gemini mail from `gemini-notes@google.com`, the Notion DB, and Granola. Matching is title-first: Gemini's subject is structured (`Notes: "<title>" <date>`), so an exact title match settles it outright. Only when the title matches zero or several rows does it fall back to scoring - arrival inside `[event end - 45 min, event end + the source's window]` · fuzzy title · attendee overlap. The lower bound is negative because meetings finish early and Gemini writes up when they actually end; the upper bound is per-source and wide - 18h for Gemini - because the lag is generation, not delivery (`ledger.ARRIVAL_WINDOW`). High score attaches; **ambiguous surfaces rather than guesses** (invariant 5) — two 1:1s back to back with near-identical titles is the case that breaks naive matching.
-3. **A row stays open across sweeps.** Notion lands ~a week late, so an unmatched row is re-checked, not closed. Late arrival backfills and re-runs ingestion for that meeting, which is why the ledger lives in the event log rather than being derived fresh each run.
+3. **A row stays open across sweeps.** Notion lands ~a week late, so an unmatched row is re-checked, not closed. A late note attaches when it arrives and the gap closes, which is why the ledger lives in the event log rather than being derived fresh each run. (The queue that also re-ran ingestion for a late note had no reader and was retired on 2026-11-21.)
 4. **Unmatched by the next morning becomes a brief line** — "tue: 3 meetings w/ no notes — X, Y, Z. recorded anywhere?" That is the actual guarantee. Not that every meeting has notes; that a missing one is *visible* the next morning instead of discovered a month later.
-5. **The ledger is also the prep trigger** (§3.2) and the OOO detector — same rows, already pulled.
+5. **The ledger is also prep's input** (§3.2: `prep.prep_worthy` narrows its rows, nothing re-qualifies them) and the OOO detector - same rows, already pulled.
 
 Ledger rows live in the event log. `DayDAG/State.md` shows only the open gaps, so the markdown stays short and hand-editable.
 
@@ -148,7 +148,7 @@ The vault side and the event log are not redundant — they carry opposite requi
 |---|---|---|
 | holds | chase list, watch items, snoozes, open notes-gaps, pending decisions, watch config | every transition, observation, run; meeting ledger; repo cursors; §8 metrics |
 | shape | markdown, hand-editable, small | SQLite, append-mostly, unbounded |
-| why | Nitin corrects it directly; it is the reason this isn't a black box | markdown cannot answer "median days-to-answer", and five scheduled loops writing one file with no locking is a lost update |
+| why | Nitin corrects it directly; it is the reason this isn't a black box | markdown cannot answer a question over history - what was already filed, which run came last - and five scheduled loops writing one file with no locking is a lost update |
 | location | the vault | **outside the vault** — `~/.local/state/`, next to the git mirrors; iCloud syncs whole files and a WAL touched from two devices corrupts |
 
 The log accumulates; the markdown is the current-state view. A hand edit is itself an event, and wins over derived state.
@@ -163,7 +163,7 @@ Create Music Group/
     README.md          # what this folder is, what writes each file — read this first
     State.md           # chase list · watch items · snoozes · open notes-gaps  (agent-written, hand-correctable)
     Decisions.md       # pending decisions; Nitin answers in place              (both write it)
-    Watchlist.md       # repos · Jira projects · GH Projects · channels          (config; Nitin's, agent proposes)
+    Watchlist.md       # repos · Jira projects · channels · prep rules           (config; Nitin's, agent proposes)
     Style.md           # what feedback taught, one rule per row with scope and lifetime (Nitin's; agent appends `inferred` rows)
     Proposals/         # proposed diffs awaiting a yes, one file each            (agent-written, deleted on apply)
     Archive/           # pre-cutover snapshots of anything DayDAG took custody of
@@ -181,13 +181,13 @@ Four files rather than one, because they have genuinely different edit patterns 
 
 `README.md` in that folder is not decoration. It is the one thing that stops a future session from inventing a fifth file.
 
-**Sensitivity is a mark, and one switch decides what it does, in the vault and the DM.** Every record the log projects carries `sensitivity: private | normal`. Since #180 (the principal, 2026-09-25: *"i think we should treat sensitive items the same"* / *"wire everything consistently for now, we can change later"*) `state.WITHHOLD_PRIVATE` is off, and a private item is quoted in the DM and written to `State.md` like a normal one. Turning it back on restores the old rule in both places at once - withheld from the vault, minimally quoted in the DM - with nothing to re-derive. Only `state.withholds_private()` reads the switch, and a guardrail keeps it that way. `weekly-feedback-scan` is separate from this: it writes its own private Drive doc, its registry-level `sensitivity: private` routing is unchanged, and nothing records its carry-forward items in the event log. Wiring them in would now put them in `State.md`, so decide that when it comes up.
+**Sensitivity is a mark, and one switch decides what it does, in the vault and the DM.** Every record the log projects carries `sensitivity: private | normal`. Since #180 (the principal, 2026-09-25: *"i think we should treat sensitive items the same"* / *"wire everything consistently for now, we can change later"*) `state.WITHHOLD_PRIVATE` is off, and a private item is quoted in the DM and written to `State.md` like a normal one. Turning it back on restores the old rule in both places at once - withheld from the vault, minimally quoted in the DM - with nothing to re-derive. Only `state.withholds_private()` reads the switch, and a guardrail keeps it that way. `weekly-feedback-scan` is separate from this: it writes its own private Drive doc, its registry-level `sensitivity: private` routing is unchanged, and nothing records its carry-forward items in the event log (`carry_forward` left `state.VAULT_BOUND` on 2026-11-21 with no producer; the one vault-bound kind is `call_note_item`). Recording them under a vault-bound kind would put them in `State.md`, so decide that when it comes up.
 
 ## Invariants
 
 Six rules the whole thing rests on. Each was expensive to learn or is expensive to break.
 
-1. **One writer per artifact.** The ownership table is the architecture; the rest is plumbing. Enforced mechanically by `daydag.registry` over the manifests `daydag.manifests` loads — a documented invariant is one a hurried author breaks, so it is a startup error instead.
+1. **One writer per artifact.** The ownership table is the architecture; the rest is plumbing. Enforced mechanically by `daydag.manifests`, which loads every skill's manifest and refuses a set with two writers for one artifact - a documented invariant is one a hurried author breaks, so it is a failed preflight and a failed test instead.
 2. **Read, don't re-derive.** If a routine already produced it, consume its output. Violated twice in one session — a chase list copied out of Workstreams, and a Sunday brief re-synthesising Friday's plan.
 3. **Evidence or silence.** Verbatim quote plus permalink, or say it can't be sourced. `weekly-feedback-scan` states the same rule as *"no link, no claim."* The two halves apply at different levels, and conflating them is what let an unsourced item ship as `- title ()` for a milestone: a *source* that could not be read is named in one line, because a reader needs to know what is missing; a single *claim* with no link is not weakened, it is refused, because "could not source this" spends attention on something nobody can check or act on. `pulse.Item` and `voice.render` both raise; anything that produces claims later should too.
 4. **Drafts, not sends.** Exactly one autonomous channel: the DM to Nitin. Everything else waits for a per-item yes.
@@ -248,6 +248,8 @@ The scheduling table says when the agent *runs*. This says when it **expects som
 **Decisions are batched, never interrupted.** Guardrail 1 means a lot of things need a yes — every outbound draft, every loop the pulse thinks moved, every vault diff. If each one pinged on discovery, the DM becomes noise and gets ignored, which fails the guardrail more completely than not having it. So a pending decision waits for the next of the five scheduled pushes and rides along in a `decisions` section.
 
 **One interrupt exists:** the meeting-prep ping, 30 min before a qualifying meeting (§3.2). It's time-boxed by definition — after the meeting it's worthless — so it's the only thing allowed to arrive off-schedule.
+
+Status, 2026-11-21: that interrupt is the design and was never built. Nothing fires a prep ping, so the code written for a poller - `prep.Schedule`, `due_at`, `may_interrupt`, `recipient`, and `delivery.deliver_prep_ping` with its threaded reply - is retired at tag `pre-retirement`. What runs today: `prep` is a pull (`python -m daydag.run plan|render prep [--for "<meeting or person>"]`), the day-before `prep-ahead` is the one prep with a scheduled runner (`scripts/scheduled_loop.sh`), and nothing arrives off-schedule. A tripwire in `tests/test_guardrails.py` fails when a timer or a poller lands in `src/daydag/`, and names the gate to restore before one ships.
 
 ### The decision queue
 
@@ -318,14 +320,16 @@ daydag:
 ---
 ```
 
-DayDAG loads every manifest at the top of each loop and the registry does four jobs prose can't:
+`daydag.manifests` loads every manifest - in preflight and the test suite, not at the top of each loop - and the registry does four jobs prose can't:
 
-1. **Enforces one-writer.** Two skills declaring `writes:` on the same artifact is a startup error, not a corrupted Workstreams file discovered on a Friday. Invariant 1 stops being a convention.
-2. **Makes the schedule data.** The Scheduling table becomes a projection of the manifests. Adding a routine means shipping a skill, not editing this doc and remembering to also edit crontab.
-3. **Routes evidence.** `consumes:` is how the pulse feeds `weekly-progress-reporting` and `weekly-feedback-scan` without any of the three knowing about the others.
+1. **Enforces one-writer.** Two skills declaring `writes:` on the same artifact is a load error, not a corrupted Workstreams file discovered on a Friday. Invariant 1 stops being a convention.
+2. **Makes the schedule data.** The Scheduling table becomes a projection of the manifests. Adding a routine means shipping a skill, not editing this doc and remembering to also edit crontab. Today the projection is what `python -m daydag.manifests` prints; nothing fires a loop from it.
+3. **Checks the evidence wiring.** `consumes:` is how `weekly-progress-reporting` and `weekly-feedback-scan` name the pulse they are fed without any of the three knowing about the others, and a topic no loaded skill `emits:` is a load error. Nothing routes evidence from it yet - that is the bus below.
 4. **Carries sensitivity mechanically.** `sensitivity: private` lets the orchestrator *refuse* to route that skill's output into a brief or a channel draft. §10.1's strictest guardrail becomes a check instead of a paragraph — which is the only form of it that survives contact with a future author.
 
-**Built, and actually loaded.** All five shipped skills carry the block. `daydag.registry` holds the checks; `daydag.manifests` reads `.claude/skills/*/SKILL.md` and hands them over. That second half matters more than it looks: for a while the registry existed and nothing called it, so the one-writer check ran only over dictionaries typed into its own unit test — a check that cannot fail. It now runs over the real set from `python -m daydag.manifests` (a `scripts/preflight.sh` step, so every push) and from `tests/test_manifests.py`. Plant a second `writes:` on `Fact Base/Workstreams.md` and both go red.
+**Built, and actually loaded.** Every shipped skill carries the block. `daydag.manifests` reads `.claude/skills/*/SKILL.md` and runs the checks over what it read; the checks were a separate `daydag.registry` module until the two folded together. The reading half matters more than it looks: for a while the registry existed and nothing called it, so the one-writer check ran only over dictionaries typed into its own unit test - a check that cannot fail. It now runs over the real set from `python -m daydag.manifests` (a `scripts/preflight.sh` step, so every push) and from `tests/test_manifests.py`. Plant a second `writes:` on `Fact Base/Workstreams.md` and both go red.
+
+That is where it runs, and the only place. No loop loads the manifests before it starts, and nothing checks a write as it happens: no code catches a skill that writes an artifact it never declared.
 
 Two validation rules exist because the failures they catch are silent rather than loud: an unknown key in the block is an error (`write:` for `writes:` would leave an artifact with no declared owner, so a second writer sails through), and so is an unknown `sensitivity:` (`privat` reads as "not private").
 

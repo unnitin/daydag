@@ -24,10 +24,11 @@ from __future__ import annotations
 import subprocess
 from datetime import datetime, timedelta, timezone
 
-from daydag import brief, week_ahead
+from daydag import week_ahead
+from daydag.call_notes import CHASED
 from daydag.pulse import Mirror, Pulse
 from daydag.state import EventLog, StateFolder
-from daydag.voice import voice_violations
+from voice_check import unsourced_claims, voice_violations
 
 PT = timezone(timedelta(hours=-7))
 SUNDAY = datetime(2026, 9, 6, 17, 30, tzinfo=PT)
@@ -77,7 +78,9 @@ class Connectors:
         return []
 
 
-def test_a_sunday_evening_arrives_as_one_assembled_week_ahead(tmp_path, git_env):
+def test_a_sunday_evening_arrives_as_one_assembled_week_ahead(
+    tmp_path, git_env, hand_written_watch
+):
     """The integration path, asserted at each seam rather than only at the end."""
     # -- a real weekly note -> the closing week's open red item -------------
     # (read via brief.red_items - never re-derived, contract 1)
@@ -113,7 +116,7 @@ def test_a_sunday_evening_arrives_as_one_assembled_week_ahead(tmp_path, git_env)
     folder = StateFolder.create(tmp_path / "DayDAG")
     log = EventLog.open(tmp_path / "events.db")
     log.record(
-        "loop_opened",
+        CHASED,
         sensitivity="normal",
         key="CDI-596",
         owner="VP-Data",
@@ -121,17 +124,15 @@ def test_a_sunday_evening_arrives_as_one_assembled_week_ahead(tmp_path, git_env)
         day=1,
     )
     log.record(
-        "carry_forward",
+        CHASED,
         sensitivity="private",
         key="perf-conversation",
         owner="VP-Data",
         ask="perf-conversation follow-up",
         day=1,
     )
-    folder.update_state(
-        chase=log.chase_items(),
-        watch=[{"what": "10k e2e run"}],
-    )
+    folder.update_state(chase=log.chase_items())
+    hand_written_watch(folder, "10k e2e run")
     assert "perf-conversation" in folder.read_state(), "fixture must be meaningful"
 
     # -- real calendar events -> a real ledger -> prep's own qualification --
@@ -199,7 +200,7 @@ def test_a_sunday_evening_arrives_as_one_assembled_week_ahead(tmp_path, git_env)
     assert "shipping" in text
     assert "CDI-596 cutover rehearsal" in text
 
-    assert brief.unsourced_claims(text) == [], f"a claim shipped with no evidence:\n{text}"
+    assert unsourced_claims(text) == [], f"a claim shipped with no evidence:\n{text}"
     assert voice_violations(text) == [], f"broke the house voice:\n{voice_violations(text)}\n{text}"
 
 
@@ -260,5 +261,5 @@ def test_a_dead_connector_and_a_stale_mirror_both_degrade_into_the_same_push(tmp
     # a dead vault read on a DIFFERENT note must not take it down
     assert "Pod Steering" in text
     assert any(p.meeting == "Pod Steering" for p in pushed.monday_preps)
-    assert brief.unsourced_claims(text) == []
+    assert unsourced_claims(text) == []
     assert voice_violations(text) == []

@@ -298,11 +298,13 @@ def test_ingest_ranks_against_open_decisions_in_the_vault(identities, tmp_path):
 
 
 def test_ingest_files_only_call_note_items_not_other_producers(identities, tmp_path):
-    """Scope (#180): ingest projects its own kind. A `loop_opened` row the log
-    carries is still the morning/EOD projection's to file."""
+    """Scope (#180): ingest projects its own kind and nothing else the log
+    carries. Its own is the only vault-bound kind today (`loop_opened`, which
+    this row used to be, left `VAULT_BOUND` with no producer), so the row here
+    is simply another kind's."""
     log = tmp_path / "events.db"
     EventLog.open(log).record(
-        "loop_opened", sensitivity="normal", key="CDI-1", ask="compute consolidation", day=0
+        "another_producer", sensitivity="normal", key="CDI-1", ask="compute consolidation", day=0
     )
     run.render(
         "ingest", now=SWEEP, identities=identities, payloads=_payloads(), log=log, write_state=True

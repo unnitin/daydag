@@ -1,11 +1,16 @@
-"""Watchlist to State.md: the pulse walk, end to end.
+"""Watchlist to the brief: the pulse walk, end to end.
 
 One of four `test_end_to_end_*` suites, each following a different path across
 the modules - this one is the repo half. A hand-edited `Watchlist.md` is read,
 the mirrors it names are provisioned and fetched against a controlled clock,
-the pulse renders the shipping block, and `State.md` is written from what came
-out. Nothing here reaches the network - the origins are local repos from
+the pulse renders the shipping block, and the morning brief is assembled with
+it. Nothing here reaches the network - the origins are local repos from
 `conftest.py` and the clock is hand-wound.
+
+The last hop was `State.md` until 2026-11-21: the block went in as watch items
+through `update_state(watch=...)`, a parameter no loop passed. Where the block
+reaches him is the brief's `shipping` section, so that is where the walk ends
+now.
 
 It exists because both failure modes it asserts are *composition* failures. An
 item with no permalink and a stale mirror with no date each look fine in
@@ -19,6 +24,7 @@ from datetime import UTC, datetime
 
 import pytest
 
+from daydag import brief
 from daydag.pulse import Item, MirrorStore, Pulse, WatchedRepo, read_watchlist
 from daydag.state import EventLog, StateFolder
 
@@ -27,6 +33,23 @@ MONDAY = datetime(2026, 9, 7, 6, 40, tzinfo=UTC)
 
 #: An item line, split into what it claims and what backs the claim.
 ITEM_LINE = re.compile(r"^- (?P<claim>.+) \((?P<source>[^()]*)\)$")
+
+
+class QuietSources:
+    """The brief's four reads, all answering "nothing": the walk under test is
+    the pulse's, and an empty day keeps every other section out of its way."""
+
+    def calendar(self, window):
+        return []
+
+    def weekly_note(self, path):
+        return ""
+
+    def slack(self, query):
+        return []
+
+    def gmail(self, query):
+        return []
 
 
 @pytest.fixture
@@ -85,20 +108,26 @@ def morning(tmp_path, make_origin, clock):
             a cursor advances only once the caller has the result.
             """
             report = self.store.sync(watchlist, cursors=cursors or {})
-            block = Pulse.from_sync(report).render()
+            self.pulse = Pulse.from_sync(report)
+            block = self.pulse.render()
             return block, {m.label: m.cursor for m in report.mirrors}
 
         def ship(self, block):
-            """Put the block where a human reads it, the way a loop would."""
-            watch = [{"what": line.removeprefix("- ")} for line in block.splitlines()]
-            folder.update_state(watch=watch)
-            return folder.read_state()
+            """Put the block where he reads it, the way the morning does: the
+            brief assembled around the same pulse, rendered."""
+            assert self.pulse.render() == block, "the block shipped is not the one that was read"
+            return brief.assemble(
+                now=clock(),
+                sources=QuietSources(),
+                identities={"SLACK_USER_PRINCIPAL": "UPRINCIPAL1"},
+                pulse=self.pulse,
+            ).render()
 
     return Morning()
 
 
-def test_the_whole_morning_walks_from_watchlist_to_state_file(morning, add_commit):
-    """Watchlist -> clone -> fetch -> pulse -> State.md, with no step mocked."""
+def test_the_whole_morning_walks_from_watchlist_to_the_brief(morning, add_commit):
+    """Watchlist -> clone -> fetch -> pulse -> the brief, with no step mocked."""
     morning.add_repo("service-a")
     morning.add_repo("service-b")
     watchlist = morning.watchlist("service-a", "service-b")
@@ -142,7 +171,7 @@ def test_a_broken_mirror_degrades_and_the_rest_still_ships(morning, add_commit, 
     assert "as of last run" not in block, "the undated wording survived"
     assert "no updates" not in block
     assert "2026-09-04 06:40 UTC" in morning.ship(block), (
-        "the date was lost on the way to the vault"
+        "the date was lost on the way to the brief"
     )
 
 

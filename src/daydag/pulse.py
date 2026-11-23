@@ -1,14 +1,17 @@
 """Engineering pulse: git mirrors for history, the API for review state.
 
 USING IT
-    watchlist = read_watchlist(path)        # DayDAG/Watchlist.md
+    watchlist = read_watchlist(path)        # DayDAG/Watchlist.md: repos + jira
+    [p.key for p in watchlist.projects]     # the eod plan's one Jira read each
+    keys_in("VP-Data said he'd do CDI-596")  # -> {"CDI-596"}
+
     store = MirrorStore(mirror_root(ids))
     report = store.sync(watchlist.repos)    # clone or fetch, push disabled
 
     pulse = Pulse.from_sync(report)
     pulse.observe_slack(message)            # ticket keys only, never echoed
-    pulse.observe_pr(pr)
-    pulse.apply_evidence()
+    pulse.observe_pr(title=title, number=number, state=state)
+    loop = pulse.apply_evidence(loop)       # marks moved, never closes
     pulse.items()                           # -> [Item]; each one sourced
     pulse.render()
 
@@ -24,6 +27,15 @@ CONTRACTS
        the time of the last fetch that actually worked. Silence is not health.
     5. Untrusted Slack text is parsed for ticket keys and nothing else. It is
        never echoed into output and never acted on.
+    6. The board is read, never driven. No name this module defines or binds -
+       public, private, callable or imported - is shaped like a write to
+       someone else's ticket, bar two named exemptions that carry a verb by
+       accident; `tests/test_pulse.py` parses the source and asserts that
+       rather than trusting this sentence, and asserts that no HTTP or
+       Atlassian client is imported here.
+    7. One definition of a ticket key. `keys_in` delegates to `Pulse._keys`; a
+       second regex is how a Slack line and a board row stop being the same
+       fact.
 
 WHY IT EXISTS
     Split by what the data physically IS. Git objects hold code and history and
@@ -31,10 +43,28 @@ WHY IT EXISTS
     repo at any clone depth. So merges and code questions come from a local
     mirror against a stored cursor, and everything social comes from the API.
 
+    The watchlist reader is here because the mirrors were its first consumer.
+    The `jira` block and `keys_in` joined it when `board.py` folded in: the
+    eod plan asks Jira what moved in each watched project
+    (`recipes.jira_moved_on`), and `movement` has to know a ticket key when it
+    sees one. The ticket join, snapshot diff, discrepancy flags and board
+    report `board.py` carried from #12 were retired on 2026-10-11 (tag
+    `pre-retirement`, PR #199) because no loop called them. Restore from the
+    tag when a loop needs the join rather than rebuilding it.
+
 KNOWN LIMIT
     A mirror that has never been cloned is `MirrorUnavailable`, and
     `repo_is_absent` distinguishes "no such repo" from "the network failed".
     Calling both absent would delete a real problem from the report.
+
+    `read_watchlist` reads two blocks, `repos` and `jira`. A `jira` bullet
+    gives its leading project key and nothing else - whatever follows a `·`
+    is his note - and one that does not lead with a key is skipped with no
+    line saying so (a repo line with a `/` that fails to parse is reported).
+    A `projects` block is not read: GitHub Projects v2 is GraphQL-only and
+    nothing here calls it. `channels` is read by `recipes.watched_channels`,
+    which does not share these block rules - only a `#` heading opens or
+    closes its block, and a rule does not end it.
 """
 
 from __future__ import annotations
@@ -50,6 +80,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from daydag.config import ConfigError
+from daydag.recipes import PROJECT_KEY
 
 #: Words that would turn this into a productivity metric. Asserted against.
 FORBIDDEN_IN_OUTPUT = ("commits", "lines changed", "+/-", "contributions")
@@ -156,7 +187,6 @@ class Item:
 
     title: str
     permalink: str
-    kind: str = "merge"
 
     def __post_init__(self) -> None:
         permalink = (self.permalink or "").strip()
@@ -503,6 +533,8 @@ _BOLD_HEADING = re.compile(r"^\*\*(?P<name>[^*]+)\*\*:?$")
 #: A horizontal rule, which ends whatever block was open.
 _RULE = re.compile(r"-{3,}|\*{3,}|_{3,}")
 _BULLET = re.compile(r"^[-*]\s+(?P<body>.+?)\s*$")
+#: Field separators in a hand-edited watchlist bullet, repo or project.
+_FIELDS = re.compile(r"[·|]")
 _MD_LINK = re.compile(r"^\[[^\]]*\]\((?P<url>[^)]+)\)(?P<rest>.*)$")
 _GITHUB_URL = re.compile(r"^(?:https?://|git@)github\.com[/:](?P<path>.+)$")
 _NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
@@ -557,7 +589,7 @@ def _parse_repo_line(body: str) -> WatchedRepo | None:
     link = _MD_LINK.match(body)
     if link:
         body = f"{link['url']} {link['rest']}"
-    fields = [field_.strip().strip("()") for field_ in re.split(r"[·|]", body)]
+    fields = [field_.strip().strip("()") for field_ in _FIELDS.split(body)]
     head = fields[0].split()
     if not head:
         return None
@@ -579,54 +611,104 @@ def _parse_repo_line(body: str) -> WatchedRepo | None:
 
 
 @dataclass(frozen=True)
+class WatchedProject:
+    """One ``jira`` bullet: the project the eod plan asks Jira about.
+
+    The key is all that is read. Whatever follows a ``·`` on the bullet is his
+    note, a ``jql:`` or ``workstream:`` field included.
+    """
+
+    key: str
+
+
+def _parse_project_line(body: str) -> WatchedProject | None:
+    """One ``jira`` bullet body to a project, or ``None`` if it leads with no key."""
+    head = _FIELDS.split(body)[0].strip().strip("()")
+    # `recipes.PROJECT_KEY`, the same pattern `jira_moved_on` refuses a key
+    # against: a second copy here is how the two drifted apart once already.
+    return WatchedProject(head) if PROJECT_KEY.fullmatch(head) else None
+
+
+#: The blocks `read_watchlist` reads. Any other heading closes whichever is open.
+_BLOCKS = frozenset({"repos", "jira"})
+
+
+@dataclass(frozen=True)
 class Watchlist:
-    """The repos block, plus the lines that looked like repos and were not."""
+    """The repos and jira blocks, plus the lines that looked like repos and were not."""
 
     repos: list[WatchedRepo] = field(default_factory=list)
-    #: Carried, not discarded: a slug with a typo silently stops being watched,
-    #: and nothing else in the system would ever notice it had gone.
+    #: Repo lines only. Carried, not discarded: a slug with a typo silently
+    #: stops being watched, and nothing else in the system would ever notice
+    #: it had gone. The pulse renders each one, so nothing else goes in here.
     unparsed: list[str] = field(default_factory=list)
+    #: The jira block in file order, a repeated key repeated: the eod plan
+    #: makes one Jira read per entry.
+    projects: list[WatchedProject] = field(default_factory=list)
 
 
 def read_watchlist(path: str | Path) -> Watchlist:
-    """Parse the ``repos`` block of ``Watchlist.md``.
+    """Parse the ``repos`` and ``jira`` blocks of ``Watchlist.md``.
+
+    Returns the `Watchlist`: ``repos`` for the mirrors, ``projects`` for the
+    eod plan's Jira reads, ``unparsed`` for repo lines that tried and failed.
+
+    One pass and one set of block rules, because both blocks are read off the
+    *same file*. A `#` heading or a `**bold**` label opens a block when it is
+    exactly `repos` or `jira` and closes whichever was open when it is not; a
+    horizontal rule closes it too. Indentation is ignored, so a nested bullet
+    is read like any other. As two parsers, a disagreement about where a
+    `---` ends a block would have leaked board rows into the mirror's clone
+    queue, and `CDI/whatever` would have become a repo the pulse tries to
+    fetch.
 
     That file is config Nitin edits by hand, so it holds prose, trailing notes
     and markdown links alongside the slugs. A line that does not name a repo is
     skipped rather than raising - but one that *tried* to (it has a `/` or a
-    github url in it) is kept as unparsed so the brief can say so.
+    github url in it) is kept as unparsed so the brief can say so. A jira
+    bullet that does not lead with a project key is skipped the same way and
+    is NOT kept: nothing renders it, so a typo there costs that project its
+    read with no line saying so.
 
-    A missing or unreadable file raises ``PulseError`` rather than an ``OSError``
-    from three frames down. It is a real failure - nothing is being watched - so
-    it is not swallowed, but it stays inside the family the pulse degrades on:
-    the vault is iCloud-synced, and an evicted placeholder is a documented
-    hazard, not a reason for the 6:40am run to die on a traceback.
+    Raises:
+        PulseError: the file is missing or unreadable, rather than an
+            ``OSError`` from three frames down. It is a real failure - nothing
+            is being watched - so it is not swallowed, but it stays inside the
+            family the pulse degrades on: the vault is iCloud-synced, and an
+            evicted placeholder is a documented hazard, not a reason for the
+            6:40am run to die on a traceback.
     """
     try:
         text = Path(path).read_text(encoding="utf-8")
     except OSError as unreadable:
         raise PulseError(f"could not read the watchlist at {path}: {unreadable}") from unreadable
     watchlist = Watchlist()
-    in_repos = False
+    block = ""
     for line in text.splitlines():
         stripped = line.strip()
         heading = _HEADING.match(stripped) or _BOLD_HEADING.match(stripped)
         if heading:
-            # Exactly `repos`, not any heading starting with it: `## Reporting
-            # cadence` in a hand-edited file would otherwise put its prose
-            # bullets through the repo parser.
-            in_repos = heading["name"].strip().casefold().rstrip(":") == "repos"
+            # Exactly `repos` or `jira`, not any heading starting with one:
+            # `## Reporting cadence` in a hand-edited file would otherwise put
+            # its prose bullets through the repo parser.
+            name = heading["name"].strip().casefold().rstrip(":")
+            block = name if name in _BLOCKS else ""
             continue
         if _RULE.fullmatch(stripped):
             # A horizontal rule ends the block. Without this a `---` divider
-            # followed by a `**jira**` label leaks board rows into the clone
-            # queue, and `ABC/board-4` becomes a repo DayDAG tries to fetch.
-            in_repos = False
+            # followed by scratch notes leaks them into the clone queue, and a
+            # trailing `- CDI` becomes a project the evening asks Jira about.
+            block = ""
             continue
-        bullet = _BULLET.match(stripped) if in_repos else None
+        bullet = _BULLET.match(stripped) if block else None
         if bullet is None:
             continue
         body = bullet["body"].replace("`", "")
+        if block == "jira":
+            project = _parse_project_line(body)
+            if project is not None:
+                watchlist.projects.append(project)
+            continue
         repo = _parse_repo_line(body)
         if repo is not None:
             watchlist.repos.append(repo)
@@ -692,11 +774,8 @@ class SyncReport:
     mirrors: list[Mirror] = field(default_factory=list)
     cloned: list[str] = field(default_factory=list)
     #: Watched repos with no usable mirror - reported, never silently dropped.
+    #: The one exception is a wiki that does not exist; see `MirrorStore.sync`.
     unavailable: list[Unavailable] = field(default_factory=list)
-    #: Wikis that do not exist. Not a failure: GitHub creates a wiki lazily, so
-    #: a repo whose wiki was never written has no `.wiki.git` to clone, and
-    #: saying "could not clone" about it would put a permanent line in the brief.
-    wikis_absent: list[str] = field(default_factory=list)
     #: Watchlist lines that look like repos but do not parse.
     unreadable: list[str] = field(default_factory=list)
 
@@ -931,9 +1010,11 @@ class MirrorStore:
             try:
                 mirror = self.ensure(repo, cursors.get(repo.slug, FIRST_SIGHT))
             except MirrorUnavailable as unavailable:
-                if optional and unavailable.repo_is_absent:
-                    report.wikis_absent.append(repo.slug)
-                else:
+                # A wiki that does not exist is not a failure and gets no
+                # line: GitHub creates a wiki lazily, so a repo whose wiki was
+                # never written has no `.wiki.git` to clone, and saying "could
+                # not clone" about it would put a permanent line in the brief.
+                if not (optional and unavailable.repo_is_absent):
                     report.unavailable.append(Unavailable(repo.slug, unavailable.reason))
                 continue
             if newly:
@@ -1074,3 +1155,15 @@ class Pulse:
         for line in self._unreadable:
             lines.append(f"- watchlist line not understood, so not watched: {line}")
         return "\n".join(lines)
+
+
+def keys_in(text: str) -> set[str]:
+    """Ticket keys in a line, using `Pulse._keys`' definition of one.
+
+    A one-line delegation rather than a second regex - deliberately. A key is
+    the spine of the whole pulse: it is what makes a Slack line, a branch, a
+    PR title and a board row the same fact, and two definitions of what one
+    looks like drift apart the first time a project puts a digit somewhere
+    unusual in its key.
+    """
+    return Pulse._keys(text)

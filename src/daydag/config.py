@@ -39,8 +39,6 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-_REFERENCE = re.compile(r"\$\{([A-Z0-9_]+)\}")
-
 #: A value that is *entirely* one reference, e.g. "${SLACK_USER_PRINCIPAL}".
 _WHOLE_REFERENCE = re.compile(r"^\$\{([A-Z0-9_]+)\}$")
 
@@ -181,7 +179,3 @@ class Identities(Mapping[str, str]):
 
     def __len__(self) -> int:
         return len(self._values)
-
-    def expand(self, text: str) -> str:
-        """Replace every ``${VAR}`` with its value, raising on an unknown name."""
-        return _REFERENCE.sub(lambda m: self[m.group(1)], text)

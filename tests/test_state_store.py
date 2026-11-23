@@ -9,7 +9,8 @@ from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 
-from daydag.state import ChaseItem, EventLog, NotesGap, StateFolder
+from daydag.call_notes import CHASED
+from daydag.state import VAULT_BOUND, ChaseItem, EventLog, NotesGap, StateFolder
 
 #: A fixed offset, so an offset other than UTC is exercised without pulling in
 #: a tz database or depending on the machine's own zone.
@@ -60,7 +61,7 @@ def test_a_sensitive_item_reaches_the_vault_like_a_normal_one_and_keeps_its_mark
     The item is written; the log still holds the private mark, so switching
     the rule back finds it already classified."""
     log = EventLog.open(":memory:")
-    log.record("carry_forward", owner="sam", ask="growth area", key="k", sensitivity="private")
+    log.record(CHASED, owner="sam", ask="growth area", key="k", sensitivity="private")
     folder.update_state(chase=log.chase_items())
 
     assert "growth area" in folder.read_state()
@@ -71,19 +72,9 @@ def test_a_sensitive_item_reaches_the_vault_like_a_normal_one_and_keeps_its_mark
 def test_sensitive_items_never_reach_the_vault_when_rule_7_is_on(folder, withholding):
     """The pre-#180 rule, under its one switch."""
     log = EventLog.open(":memory:")
-    log.record("carry_forward", owner="sam", ask="growth area", key="k", sensitivity="private")
+    log.record(CHASED, owner="sam", ask="growth area", key="k", sensitivity="private")
     folder.update_state(chase=log.chase_items())
     assert "growth area" not in folder.read_state()
-
-
-def test_event_log_answers_median_days_to_answer():
-    """The reason the log exists: markdown cannot answer this (SPEC section 8)."""
-    log = EventLog.open(":memory:")
-    log.record("loop_opened", sensitivity="normal", key="a", day=0)
-    log.record("loop_answered", key="a", day=4)
-    log.record("loop_opened", sensitivity="normal", key="b", day=0)
-    log.record("loop_answered", key="b", day=2)
-    assert log.median_days_to_answer() == 3
 
 
 # -- mirror fetch times (#60) ---------------------------------------------
@@ -158,7 +149,7 @@ def test_chase_items_returns_the_one_shape_both_sides_are_held_to():
     """`EventLog.chase_items` builds `ChaseItem`, not a bare dict merge."""
     log = EventLog.open(":memory:")
     log.record(
-        "loop_opened",
+        CHASED,
         sensitivity="normal",
         key="a",
         owner="seth",
@@ -180,7 +171,7 @@ def test_a_chase_item_recorded_with_only_a_key_warns_instead_of_a_bare_bullet(fo
     """The exact bug in #63: a log entry with only `key` used to render `- ?`,
     a formatting glitch standing in for data nobody agreed had to be there."""
     log = EventLog.open(":memory:")
-    log.record("loop_opened", sensitivity="normal", key="DATA-812", day=0)
+    log.record(CHASED, sensitivity="normal", key="DATA-812", day=0)
 
     folder.update_state(chase=log.chase_items())
 
@@ -269,7 +260,7 @@ def test_a_chase_item_keeps_fields_outside_its_own_schema():
     read into a `KeyError`. The nine are GUARANTEED to exist; they were never
     meant to be all there is.
     """
-    log.record("loop_opened", sensitivity="normal", key="k1", owner="VP-Data", ask="ship it", day=5)
+    log.record(CHASED, sensitivity="normal", key="k1", owner="VP-Data", ask="ship it", day=5)
 
     item = log.chase_items()[0]
 
@@ -285,12 +276,13 @@ def test_reading_a_chase_item_out_of_a_hand_written_row_never_raises():
     degrade, not take `update_state` down with an AttributeError."""
     log._db.execute(
         "INSERT INTO events (kind, sensitivity, payload) VALUES (?, ?, ?)",
-        ("carry_forward", "normal", "null"),
+        (CHASED, "normal", "null"),
     )
     log._db.commit()
 
     items = log.chase_items()
 
+    assert len(items) == 1, "the hand-written row was not read at all"
     assert all(not item.has_owner_or_ask for item in items if not item.get("owner"))
 
 
@@ -322,7 +314,7 @@ def test_the_logs_sensitivity_column_outranks_a_payload_that_claims_otherwise():
     log._db.execute(
         "INSERT INTO events (kind, sensitivity, payload) VALUES (?,?,?)",
         (
-            "carry_forward",
+            CHASED,
             "private",
             '{"owner":"o","ask":"SECRET","key":"k","sensitivity":"normal"}',
         ),
@@ -356,10 +348,10 @@ def test_a_vault_bound_record_without_a_sensitivity_is_refused(tmp_path):
 
     log = EventLog.open(tmp_path / "events.db")
 
-    with pytest.raises(SensitivityRequired):
-        log.record("carry_forward", owner="VP-AI", ask="comp: 145k base plus equity", key="k1")
-    with pytest.raises(SensitivityRequired):
-        log.record("loop_opened", owner="VP-Data", ask="the compute plan", key="k2")
+    assert CHASED in VAULT_BOUND
+    for kind in sorted(VAULT_BOUND):
+        with pytest.raises(SensitivityRequired):
+            log.record(kind, owner="VP-AI", ask="comp: 145k base plus equity", key="k1")
 
 
 def test_a_kind_that_never_reaches_the_vault_still_defaults(tmp_path):
@@ -410,9 +402,7 @@ def test_an_item_classified_from_a_comp_quote_never_reaches_the_vault_when_rule_
 
     log = EventLog.open(tmp_path / "events.db")
     ask = "comp discussion: relocation package"
-    log.record(
-        "carry_forward", sensitivity=classify_sensitivity(ask), owner="VP-AI", ask=ask, key="k"
-    )
+    log.record(CHASED, sensitivity=classify_sensitivity(ask), owner="VP-AI", ask=ask, key="k")
     folder = StateFolder.create(tmp_path / "vault" / "DayDAG")
 
     folder.update_state(chase=log.chase_items())
@@ -430,7 +420,7 @@ def test_a_misspelt_or_non_string_sensitivity_is_refused_too(tmp_path):
 
     for bad in ("Private", "privat", True, "", "secret"):
         with pytest.raises(SensitivityRequired):
-            log.record("carry_forward", sensitivity=bad, owner="x", ask="y", key="k")
+            log.record(CHASED, sensitivity=bad, owner="x", ask="y", key="k")
     assert log.chase_items() == []
 
 

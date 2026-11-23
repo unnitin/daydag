@@ -8,28 +8,34 @@ rather than a matter of taste.
 The sharpest one: the vault uses plain U+26A0 (the text-presentation warning
 sign), not the emoji-presentation U+FE0F variant. The difference is invisible in
 most editors and visible in the vault.
+
+The scanner and its data (`voice_violations`, `SANCTIONED_EMOJI`, `SAMPLE_DATA`)
+live beside these tests in `voice_check.py`, because the suite is their only
+caller. What `daydag.voice` holds is what the loops call - the templates,
+`WARN` and the one-line clip.
 """
 
 import itertools
 
 import pytest
 
-from daydag.voice import (
-    SAMPLE_DATA,
-    SANCTIONED_EMOJI,
-    Push,
-    clipped,
-    one_line,
-    render,
-    voice_violations,
-)
+from daydag import brief, week_ahead
+from daydag.voice import WARN, Push, clipped, one_line, render
+from voice_check import SAMPLE_DATA, SANCTIONED_EMOJI, voice_violations
 
 
 @pytest.mark.guardrail
 def test_sanctioned_emoji_are_the_text_presentation_forms():
-    """SPEC section 5 calls out plain U+26A0, not the emoji-presentation variant."""
+    """SPEC section 5 calls out plain U+26A0, not the emoji-presentation variant.
+
+    Held in two places, and both are checked: the set the scanner allows, and
+    the named constant the loops print from - `voice.WARN`, and the literal
+    copies `brief.WARN` and `week_ahead.WARN`.
+    """
     assert "\u26a0" in SANCTIONED_EMOJI
     assert "\u26a0\ufe0f" not in SANCTIONED_EMOJI
+    for glyph in (WARN, brief.WARN, week_ahead.WARN):
+        assert glyph == "\u26a0", f"a live WARN is not the plain glyph: {glyph!r}"
 
 
 @pytest.mark.guardrail
@@ -131,7 +137,7 @@ def test_the_emoji_ranges_do_not_overlap():
     """
     import re as _re
 
-    from daydag.voice import _EMOJI
+    from voice_check import _EMOJI
 
     bounds = [(ord(lo), ord(hi)) for lo, hi in _re.findall(r"(.)-(.)", _EMOJI.pattern)]
     assert bounds, "could not parse the ranges out of the pattern"
@@ -156,10 +162,11 @@ def test_every_sanctioned_glyph_still_passes(glyph):
 # --------------------------------------------------------------------------
 # the shared text primitives
 #
-# `brief._short` and `smoke._one_line` each hand-rolled "collapse to one line,
-# then clip" with their own cap and their own truncation rule. One idea, two
-# implementations, and the pair drifts the next time either is tuned - which is
-# the same note review left on the duplicated env-reference regex in #57.
+# `brief.short` and `_one_line` in the since-retired `smoke` each hand-rolled
+# "collapse to one line, then clip" with their own cap and their own truncation
+# rule. One idea, two implementations, and the pair drifts the next time either
+# is tuned - which is the same note review left on the duplicated env-reference
+# regex in #57.
 # --------------------------------------------------------------------------
 
 

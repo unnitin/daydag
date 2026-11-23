@@ -47,8 +47,10 @@ WHY IT EXISTS
     conversation and follow-ups - "in the future there could be more calls to
     prepare for". So more calls are rows, not releases.
 
-    The 30-minute ping (`prep.py`) is an interrupt and has to be narrow. This is
-    a scheduled evening push, so it can afford the reading a deck needs.
+    SPEC 3.2's 30-minute ping was an interrupt and had to be narrow; nothing
+    ever scheduled it, and `prep.py` keeps its qualification and its points.
+    This is a scheduled evening push, so it can afford the reading a deck
+    needs.
 
 KNOWN LIMIT
     Working days skip weekends only, not holidays. `next_working_day` is the
@@ -99,7 +101,7 @@ __all__ = [
 #: The three ingredients a rule can ask for.
 RECIPES = frozenset({"deck", "past-notes", "ideas"})
 
-#: How far back past notes are read. Longer than the ping's 28 days because the
+#: How far back past notes are read. Longer than `prep.sources`' 28 days because the
 #: calls he named are monthly ("1 x month" is in the labs invite itself), and
 #: 28 days of a monthly series is one instance, sometimes none.
 PAST_NOTES_DAYS = 56

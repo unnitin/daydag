@@ -25,3 +25,8 @@ docs/api.md
 /trip.json
 /calendar.json
 /confirmations.json
+
+# scratch the headless morning builds its payload in (jq programs, per-source
+# json). It carries real names and ids, and its stray .py files failed
+# `ruff check .` in the main checkout. Never part of the repo.
+.payload-tmp/

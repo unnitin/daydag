@@ -16,8 +16,9 @@ device Nitin owns. Both failures pass a unit test of `runlog` alone, because
 neither module is wrong on its own.
 
 So this walks a morning with real objects: a real git repo, a real SQLite log, a
-real vault folder in a temp dir, real `smoke` rows from injected probes. The
-clock is injected, and no test here touches the network.
+real vault folder in a temp dir. The rows it observes are written out by hand in
+the shape the run log takes. The clock is injected, and no test here touches the
+network.
 
 Named for its walk, and self-contained, on purpose: several parallel branches
 each grew a `test_end_to_end.py`, and the convention that settled it is one
@@ -33,19 +34,44 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from daydag import smoke
+from daydag.call_notes import CHASED
 from daydag.pulse import Mirror, Pulse
-from daydag.runlog import FAILURE_LIMIT, RUN, UNCHECKED, RunLog, RunRow
+from daydag.runlog import (
+    FAILURE_LIMIT,
+    NO_PROBE,
+    REACHED,
+    RUN,
+    SKIPPED,
+    UNCHECKED,
+    RunLog,
+    RunRow,
+)
 from daydag.state import EventLog, StateFolder
 
 PT = timezone(timedelta(hours=-7))
 #: 6:40am PT: the pre-brief slot, which is the run whose absence gets noticed.
 SIX_FORTY = datetime(2026, 9, 8, 6, 40, tzinfo=PT)
 
-#: Two of the real `smoke` checks, so the walk is fed genuine rows rather than
-#: hand-written dicts. Calendar is probed and answers; Jira is given no probe,
-#: which is the case that must never come out the far end as "reached".
-RUNLOG_CHECKS = tuple(check for check in smoke.CHECKS if check.name in {"calendar", "jira"})
+#: The two rows this morning hands the run log. The calendar answered; nothing
+#: was asked of Jira, which is the case that must never come out the far end as
+#: "reached". Captured from the retired `smoke` pre-flight's `as_rows()` and
+#: inlined, so the walk is fed exactly the rows it was fed before.
+MORNING_ROWS = (
+    {
+        "name": "calendar",
+        "source": "calendar",
+        "status": REACHED,
+        "reason": "",
+        "detail": "one day of events",
+    },
+    {
+        "name": "jira",
+        "source": "jira",
+        "status": SKIPPED,
+        "reason": NO_PROBE,
+        "detail": "no probe was supplied, so this source was not checked at all",
+    },
+)
 
 
 @pytest.fixture
@@ -78,9 +104,9 @@ def _first_commit(repo, git_env):
     ).stdout.strip()
 
 
-def _morning_smoke():
-    """One pre-flight pass: the calendar answers, nothing probed Jira."""
-    return smoke.run({"calendar": lambda: {"events": []}}, checks=RUNLOG_CHECKS).as_rows()
+def _morning_rows():
+    """What the morning observed: the calendar answered, nothing asked Jira."""
+    return [dict(row) for row in MORNING_ROWS]
 
 
 def test_a_morning_run_leaves_its_row_in_the_log_and_nothing_in_the_vault(
@@ -98,7 +124,7 @@ def test_a_morning_run_leaves_its_row_in_the_log_and_nothing_in_the_vault(
 
     # -- the morning, inside the run --------------------------------------
     with runlog.run("morning brief") as run:
-        run.observe(_morning_smoke())
+        run.observe(_morning_rows())
 
         pulse = Pulse(
             mirrors=[Mirror.attach(morning_repo, cursor=_first_commit(morning_repo, git_env))]
@@ -106,7 +132,7 @@ def test_a_morning_run_leaves_its_row_in_the_log_and_nothing_in_the_vault(
         assert [item.title for item in pulse.items()] == ["CDI-596 cutover rehearsal"]
 
         log.record(
-            "loop_opened",
+            CHASED,
             sensitivity="normal",
             key="CDI-596",
             owner="VP-Data",
@@ -114,27 +140,27 @@ def test_a_morning_run_leaves_its_row_in_the_log_and_nothing_in_the_vault(
             day=1,
         )
         log.record(
-            "carry_forward",
+            CHASED,
             sensitivity="private",
             key="perf-conversation",
             owner="VP-Data",
             ask="perf-conversation follow-up",
             day=1,
         )
-        folder.update_state(chase=log.chase_items(), watch=[], notes_gaps=[])
+        folder.update_state(chase=log.chase_items(), notes_gaps=[])
 
     # -- the row is in the log, stamped, and names what it could not read --
     (payload,) = log.recorded(RUN)
     row = RunRow.from_payload(payload)
     assert row.at == SIX_FORTY.isoformat(), "the row is stamped by the injected clock"
     assert row.completed and row.reached == ("calendar",)
-    assert [(skip.name, skip.reason) for skip in row.skipped] == [("jira", smoke.NO_PROBE)]
+    assert [(skip.name, skip.reason) for skip in row.skipped] == [("jira", NO_PROBE)]
 
     # -- and the vault, rewritten from the same log, carries none of it -----
     written = folder.read_state()
     assert "cutover rehearsal" in written, "the walk must be doing real work"
     assert "perf-conversation" in written, "#180: private chase items are written like normal"
-    for leaked in ("morning brief", "reached:", smoke.NO_PROBE):
+    for leaked in ("morning brief", "reached:", NO_PROBE):
         assert leaked not in written, f"{leaked!r} reached a synced markdown file"
 
     # The one line the vault MAY carry keeps the wording of nothing.
@@ -158,7 +184,7 @@ def test_a_morning_that_dies_partway_still_leaves_a_row(tmp_path, morning_repo, 
     # which is the operating system's to phrase.
     with pytest.raises(Exception, match=r"gone\.git"):
         with runlog.run("morning brief") as run:
-            run.observe(_morning_smoke())
+            run.observe(_morning_rows())
             Pulse(mirrors=[Mirror.attach(tmp_path / "gone.git", cursor="HEAD")]).items()
 
     row = RunRow.from_payload(log.recorded(RUN)[0])
@@ -204,9 +230,9 @@ def test_a_dead_loop_is_still_visible_beside_a_healthy_one(tmp_path):
 
     with pytest.raises(RuntimeError):
         with runlog.run("morning brief") as run:
-            run.observe(_morning_smoke())
+            run.observe(_morning_rows())
             raise RuntimeError("calendar auth expired")
-    runlog.record("noon chaser", _morning_smoke())
+    runlog.record("noon chaser", _morning_rows())
 
     assert runlog.last_run().loop == "noon chaser", "the fixture must be meaningful"
     brief = next(line for line in runlog.projection_lines() if "morning brief" in line)
