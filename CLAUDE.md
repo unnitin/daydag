@@ -6,7 +6,7 @@ Orientation for Claude Code sessions building Nitin's DayDAG agent. The full pro
 
 ## 1. What this is
 
-A persistent agent for Nitin Srivastava (SVP Data & AI, Create Music Group) that: builds a morning brief, preps meetings, ingests meeting notes to update itself, tracks open loops (questions asked / asks assigned / jobs watched), pulls GitHub on a schedule for team-progress context, and delivers everything via Slack DM. Obsidian is the system of record; the agent adopts Nitin's existing weekly-note + Workstreams system rather than inventing a task store.
+A persistent agent for Nitin (SVP Data & AI, Create Music Group; his full name is `${PRINCIPAL_NAME}`) that: builds a morning brief, preps meetings, ingests meeting notes to update itself, tracks open loops (questions asked / asks assigned / jobs watched), pulls GitHub on a schedule for team-progress context, and delivers everything via Slack DM. Obsidian is the system of record; the agent adopts Nitin's existing weekly-note + Workstreams system rather than inventing a task store.
 
 **Build order (Phase 1):** package as a skill; loops in priority order — (1) morning brief, (2) meeting-notes ingestion, (3) GitHub progress snapshot, (4) open-loop chaser, (5) meeting prep pings, (6) on-demand commands (sweep / prep / find / draft / status / progress / done / add / snooze).
 
@@ -81,7 +81,7 @@ gh api repos/CreateMusicGroup/createos-discovery-services --jq .pushed_at
 
 **Atlassian/Jira:** authorized Sep 6, 2026, `createmusic.atlassian.net`, cloud id in `${ATLASSIAN_CLOUD_ID}`. **Read-only token** (`read:jira-work`) - the agent cannot transition or comment on anyone's ticket, by construction. The data team's live board is **`CDI`**; `DED`/`CING`/`DCTF` returned nothing in 14 days. Bound every JQL - an unbounded 4-project query returned 125k chars and blew the output limit.
 
-**Notion:** meeting-notes DB is reliable for notes older than ~1 week; the last few days land in Gmail (Gemini) first — check Gmail before declaring a meeting note missing. Finding a person's docs: filter `created_by_user_ids` (VP-AI: `${NOTION_USER_JONATHAN}`) + date range beats keyword search.
+**Notion:** meeting-notes DB is reliable for notes older than ~1 week; the last few days land in Gmail (Gemini) first — check Gmail before declaring a meeting note missing. Finding a person's docs: filter `created_by_user_ids` (VP-AI: `${NOTION_USER_VP_AI}`) + date range beats keyword search.
 
 **Google Calendar:** query **day-by-day** — full-week pulls exceed output limits. Watch for OOO/flight events; a half-day "flight Thu" can hide a multi-week OOO (confirm real return dates via Gmail "Upcoming OOO" notices).
 
@@ -91,7 +91,7 @@ gh api repos/CreateMusicGroup/createos-discovery-services --jq .pushed_at
 
 ## 4. Source access patterns (hard-won, don't rediscover)
 
-- **Slack search:** `from:<@USERID>` + `in:<#CHANNELID>` + `after:/before:` filters beat keyword search. Display-name `from:@miko` silently fails — resolve to ID first. The claude.ai connector has no free-text query field: a bare mention `<@ID>` and quoted phrases go in `keywords`; `from:<@ID>`, `in:<#ID>`, `after:`, `before:` go in `filters`; chronology goes in its own `sort=timestamp` / `sort_dir` parameters — never as `sort:` tokens anywhere. Get it wrong and it fails quietly: sort tokens plus sort params return "No results found" with no error, a mention pasted into `filters` returns every bot post in his channels, and `from:<@ID>` in `keywords` returns nothing (#183). DayDAG's plan steps carry `keywords`/`filters` already split. "First time X said Y": `filters=from:<@ID>` + a broad keyword + `sort_dir=asc`, then read the thread via `slack_read_thread` with the parent `message_ts`.
+- **Slack search:** `from:<@USERID>` + `in:<#CHANNELID>` + `after:/before:` filters beat keyword search. Display-name `from:@nilo` silently fails — resolve to ID first. The claude.ai connector has no free-text query field: a bare mention `<@ID>` and quoted phrases go in `keywords`; `from:<@ID>`, `in:<#ID>`, `after:`, `before:` go in `filters`; chronology goes in its own `sort=timestamp` / `sort_dir` parameters — never as `sort:` tokens anywhere. Get it wrong and it fails quietly: sort tokens plus sort params return "No results found" with no error, a mention pasted into `filters` returns every bot post in his channels, and `from:<@ID>` in `keywords` returns nothing (#183). DayDAG's plan steps carry `keywords`/`filters` already split. "First time X said Y": `filters=from:<@ID>` + a broad keyword + `sort_dir=asc`, then read the thread via `slack_read_thread` with the parent `message_ts`.
 - **Slack reads:** top-level channel reads miss threaded replies — always follow `message_ts` into threads for anything with a reply count.
 - **Gmail reads:** `get_message` with PLAIN_TEXT format for full bodies; search results alone are metadata.
 - **Obsidian semantic search is unreliable for recency** — it surfaces old notes. For "latest weekly note," list the directory and sort filenames; use search only for topical lookup.

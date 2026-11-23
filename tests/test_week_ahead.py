@@ -221,14 +221,14 @@ def test_a_day_with_nothing_on_it_is_omitted_not_labelled_open():
 def test_the_week_section_counts_meetings_and_names_them():
     sources = FakeSources(
         events=[
-            _event("a", "Ivan/Ruwen Sync", datetime(2026, 9, 8, 10, 0, tzinfo=PT)),
+            _event("a", "Otto/Rowan Sync", datetime(2026, 9, 8, 10, 0, tzinfo=PT)),
             _event("b", "1:1", datetime(2026, 9, 8, 15, 0, tzinfo=PT)),
         ]
     )
     pushed = _assemble(sources=sources)
     week = next(s for s in pushed.sections if s.heading == "the week").render()
     assert "tue: 2 meetings" in week
-    assert "Ivan/Ruwen Sync" in week and "1:1" in week
+    assert "Otto/Rowan Sync" in week and "1:1" in week
 
 
 # --------------------------------------------------------------------------
@@ -241,16 +241,16 @@ def test_a_meeting_with_a_travelling_attendee_is_flagged_with_both_links():
         events=[
             _event(
                 "sync",
-                "Ivan/Ruwen Sync",
+                "Otto/Rowan Sync",
                 datetime(2026, 9, 8, 10, 0, tzinfo=PT),
-                attendees=["nitin", "ruwen"],
+                attendees=["nitin", "rowan"],
             ),
             _event(
                 "ooo",
-                "Ruwen OOO",
+                "Rowan OOO",
                 datetime(2026, 9, 8, 0, 0, tzinfo=PT),
                 minutes=24 * 60,
-                attendees=["ruwen"],
+                attendees=["rowan"],
                 kind="ooo",
                 link="https://calendar.example.com/e/ooo",
             ),
@@ -258,7 +258,7 @@ def test_a_meeting_with_a_travelling_attendee_is_flagged_with_both_links():
     )
     pushed = _assemble(sources=sources)
     week = next(s for s in pushed.sections if s.heading == "the week").render()
-    assert "Ruwen OOO" in week, "the flag names the travel event"
+    assert "Rowan OOO" in week, "the flag names the travel event"
     assert "move it" in week
     assert "https://calendar.example.com/e/sync" in week
     assert "https://calendar.example.com/e/ooo" in week
@@ -269,16 +269,16 @@ def test_an_ooo_event_is_not_itself_counted_as_a_meeting():
         events=[
             _event(
                 "sync",
-                "Ivan/Ruwen Sync",
+                "Otto/Rowan Sync",
                 datetime(2026, 9, 8, 10, 0, tzinfo=PT),
-                attendees=["nitin", "ruwen"],
+                attendees=["nitin", "rowan"],
             ),
             _event(
                 "ooo",
-                "Ruwen OOO",
+                "Rowan OOO",
                 datetime(2026, 9, 8, 0, 0, tzinfo=PT),
                 minutes=24 * 60,
-                attendees=["ruwen"],
+                attendees=["rowan"],
                 kind="ooo",
             ),
         ]
@@ -291,7 +291,7 @@ def test_an_ooo_event_is_not_itself_counted_as_a_meeting():
 def test_a_meeting_with_no_travelling_attendee_is_not_flagged():
     sources = FakeSources(
         events=[
-            _event("sync", "Ivan/Ruwen Sync", datetime(2026, 9, 8, 10, 0, tzinfo=PT)),
+            _event("sync", "Otto/Rowan Sync", datetime(2026, 9, 8, 10, 0, tzinfo=PT)),
             _event(
                 "ooo",
                 "Someone Else OOO",
@@ -463,16 +463,16 @@ def test_a_fully_loaded_week_is_evidenced_and_clean_in_the_house_voice(state, ha
             _event("steering", "Pod Steering", datetime(2026, 9, 7, 9, 0, tzinfo=PT)),
             _event(
                 "sync",
-                "Ivan/Ruwen Sync",
+                "Otto/Rowan Sync",
                 datetime(2026, 9, 8, 10, 0, tzinfo=PT),
-                attendees=["nitin", "ruwen"],
+                attendees=["nitin", "rowan"],
             ),
             _event(
                 "ooo",
-                "Ruwen OOO",
+                "Rowan OOO",
                 datetime(2026, 9, 8, 0, 0, tzinfo=PT),
                 minutes=24 * 60,
-                attendees=["ruwen"],
+                attendees=["rowan"],
                 kind="ooo",
             ),
         ],

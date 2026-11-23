@@ -174,7 +174,7 @@ def _seed():
 def test_the_seed_rules_match_the_calls_he_named_and_nothing_else():
     events = [
         _event("Pod Steering", "a@x.com", "b@x.com", at="09:00"),
-        _event(" Status | CreateOS Labs", "wren.cfo@x.com", "eddie@x.com"),
+        _event(" Status | CreateOS Labs", "wren.cfo@x.com", "basil@x.com"),
         _event("Jo <> Principal", "jo@x.com", at="15:00"),
         _event("Jo Other <> Prin Connect", "jo.other@x.com", at="16:00"),
         _event("DE Standup", "a@x.com", "b@x.com", at="10:00"),
@@ -248,7 +248,7 @@ def test_a_rule_with_one_matchable_role_does_not_warn_about_the_other():
 def test_notes_from_a_different_meeting_are_not_this_series(identities, log):
     """Measured 2026-09-25: gmail's subject search for "Status | CreateOS Labs"
     returned the notes of "Relaunching CreateOS labs (mandatory)"."""
-    labs = _event(" Status | CreateOS Labs", "wren.cfo@x.com", "eddie@x.com")
+    labs = _event(" Status | CreateOS Labs", "wren.cfo@x.com", "basil@x.com")
     near_miss = {
         "subject": "Notes: “Relaunching CreateOS labs (mandatory)” Sep 10, 2026",
         "permalink": "https://mail/other",
@@ -325,7 +325,7 @@ def test_with_the_calendar_the_plan_names_each_matched_meetings_reads(identities
                 {"fileUrl": "https://drive.google.com/file/d/r", "mimeType": "video/mp4"},
             ],
         ),
-        _event(" Status | CreateOS Labs", "wren.cfo@x.com", "eddie@x.com"),
+        _event(" Status | CreateOS Labs", "wren.cfo@x.com", "basil@x.com"),
         _event("Jo <> Principal", "jo@x.com", at="15:00"),
         _event("DE Standup", "a@x.com", "b@x.com", at="10:00"),
     ]
@@ -389,7 +389,7 @@ def _render(identities, log, calendar, per_meeting):
 
 
 def test_render_preps_the_matches_with_sourced_points_and_nothing_else(identities, log):
-    labs = _event(" Status | CreateOS Labs", "wren.cfo@x.com", "eddie@x.com")
+    labs = _event(" Status | CreateOS Labs", "wren.cfo@x.com", "basil@x.com")
     standup = _event("DE Standup", "a@x.com", "b@x.com", at="10:00")
     text = _render(
         identities,
@@ -424,7 +424,7 @@ def test_render_preps_the_matches_with_sourced_points_and_nothing_else(identitie
 
 def test_ideas_are_labelled_suggestions_and_only_for_the_ideas_recipe(identities, log):
     ceo = _event("Jo <> Principal", "jo@x.com", at="15:00")
-    labs = _event(" Status | CreateOS Labs", "wren.cfo@x.com", "eddie@x.com")
+    labs = _event(" Status | CreateOS Labs", "wren.cfo@x.com", "basil@x.com")
     idea = {
         "what": "ask about the label summit",
         "why_now": "he raised it",
@@ -510,7 +510,7 @@ def test_the_cli_says_nothing_to_post_on_stderr_not_stdout(tmp_path, monkeypatch
 
 
 def test_more_than_five_points_are_capped(identities, log):
-    labs = _event(" Status | CreateOS Labs", "wren.cfo@x.com", "eddie@x.com")
+    labs = _event(" Status | CreateOS Labs", "wren.cfo@x.com", "basil@x.com")
     points = [
         {"what": f"p{n}", "why_now": "because", "quote": f"q{n}", "permalink": f"https://s/{n}"}
         for n in range(8)
@@ -522,7 +522,7 @@ def test_more_than_five_points_are_capped(identities, log):
 
 
 def test_the_render_is_in_his_voice(identities, log):
-    labs = _event(" Status | CreateOS Labs", "wren.cfo@x.com", "eddie@x.com")
+    labs = _event(" Status | CreateOS Labs", "wren.cfo@x.com", "basil@x.com")
     steering = _event("Pod Steering", "a@x.com", "b@x.com", at="09:00")
 
     text = _render(identities, log, [labs, steering], {labs["id"]: {"notes": []}})

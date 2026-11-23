@@ -61,7 +61,7 @@ Tolerant parse — roughly a third of items omit one or more parts:
 
 ## Deltas from SPEC §1 / §3.3 — five corrections
 
-1. **Tags are italicised, and the vocabulary is different.** Spec says `(mine)` / `(tracking: name)` / `(x-team)`. Reality: `*(mine)*`, `*(tracking: VP-Data / Declan)*`, and compound forms the spec doesn't anticipate — `*(mine w/ Stakeholder-1 / VP-AI / VP-Data)*`, `*(mine; Gov-Lead HM)*`. **`(x-team)` does not appear anywhere.** Cross-team work is expressed structurally instead, as a `**Cross-teaming (…)**` bold sub-header under 🟢.
+1. **Tags are italicised, and the vocabulary is different.** Spec says `(mine)` / `(tracking: name)` / `(x-team)`. Reality: `*(mine)*`, `*(tracking: VP-Data / Fintan)*`, and compound forms the spec doesn't anticipate — `*(mine w/ Stakeholder-1 / VP-AI / VP-Data)*`, `*(mine; Gov-Lead HM)*`. **`(x-team)` does not appear anywhere.** Cross-team work is expressed structurally instead, as a `**Cross-teaming (…)**` bold sub-header under 🟢.
 
 2. **Closed items are ticked in place, not struck and moved.** Both the spec *and this note's own preamble* say "close an item → strike it (~~…~~ ✓) and move it to **Done**." In practice every closed item is `- [x]` where it sits, and `# Done this week` is empty but for its HTML comment. **Write-back (#16) must follow the practice, not the stated rule** — moving items to Done would be the agent imposing a convention its owner abandoned.
 
@@ -69,7 +69,7 @@ Tolerant parse — roughly a third of items omit one or more parts:
 
 4. **Priority headers carry trailing prose** — `## 🔴 High — needs my hand this week`. Match on the emoji, not the full string.
 
-5. **`# Meetings` contains arbitrary free-form prose.** In 0817-0821 three sets of interview notes (Rhamses, Gabriel, Ethan) are pasted mid-section as deep nested numbered lists, with `###` and `##` headings that break the day sequence. Any parser walking headings under Meetings must tolerate unrelated structure rather than assuming `### <Day> M/D`.
+5. **`# Meetings` contains arbitrary free-form prose.** In 0817-0821 three sets of interview notes (one per candidate) are pasted mid-section as deep nested numbered lists, with `###` and `##` headings that break the day sequence. Any parser walking headings under Meetings must tolerate unrelated structure rather than assuming `### <Day> M/D`.
 
 ## Meetings section format
 

@@ -8,6 +8,14 @@ code reference them as `${VAR_NAME}`; `src/daydag/config.py` resolves them.
 
 `.env.example` is the committed schema. Add a key there whenever you add one to `.env`.
 
+**People are config too.** A colleague appears in the tree as a role token (`VP-Data`,
+`CTO`) or, where an example needs a person, an invented name. Who the tokens are lives in
+the people directory (`python -m daydag.people show <role>`), on this machine. The scanner
+blocks real names from a list that is also local, because a list of names cannot be
+published: `~/.config/daydag/names.txt`, one name or phrase per line. Add a name the day
+it first shows up. CI has no list, so it checks ids and addresses only; the pre-commit
+hook and `preflight.sh` on a machine that has the list are what catch a name.
+
 `scripts/scan_secrets.py` enforces this as a pre-commit hook and again in CI over every
 tracked file. If it blocks you, the fix is to move the value into `.env` - never to
 weaken the scanner.

@@ -90,7 +90,7 @@ Structure **mirrors the Priorities-tab goal dimensions exactly**, so the report 
 - **One or two bullets per dimension, at goal altitude.** Each a self-contained statement of how the stated goal moved.
 - **`↑ Update vs. doc`** marks where the real goal has drifted from the written goal — the single most valuable thing in the report. Recurring examples: Data foundations "separate analytics space + medallion revamp" → full Databricks platform build; AI foundations "Not Started" → live demoed build + dedicated pod; Opex "$1M savings" → value framework (Finance reframed the bar); Team building band/criteria → active build-out.
 - **Carry the doc's own status tags** in parentheses — `(doc: IN PROGRESS)`, `(doc: Not Started)`, `(doc: DONE)` — so stated-vs-actual sit side by side.
-- **Emergent-priorities section is mandatory** — the work not in the goals doc is where the quarter's bandwidth actually goes (DistroKid/Project Dream, the migration agent, streaming-analytics, Kiwi renegotiation, Google/GCP). Name the workstream + its open decision, not its mechanics.
+- **Emergent-priorities section is mandatory** — the work not in the goals doc is where the quarter's bandwidth actually goes (Project Dream, the migration agent, streaming-analytics, Kiwi renegotiation, Google/GCP). Name the workstream + its open decision, not its mechanics.
 - **Source-basis line at the bottom**; offer to expand any line.
 - **Preserve edits.** Diff against the live tab; keep tightened wording and corrections; layer in only genuinely new movement.
 
@@ -134,5 +134,5 @@ Leave the email as a **draft** (`Gmail:create_draft` with `replyToMessageId`). *
 - **One continuous "Data & AI — Weekly Progress" thread;** each week replies to the last send.
 - **Audience:** **Sponsor** (interim sponsor; Former-Sponsor departed CMG). Confirm from the live thread each time; CC has been Enablement-Lead, VP-AI, VP-Data, Eng-3.
 - **Recurring decisions/asks that surface:** Kiwi finalize-vs-RFP (value-framing folded in); SIA contractor-vs-FTE; new Staff/Lead AI/ML band; Claude enterprise/GCP-bundled licensing (GCP multi-year commit now confirmed *not* signing); GCP/BigQuery cost-view refresh.
-- **People:** Sponsor (sponsor), VP-Data (data platform/ingestion/devops/security), VP-AI (A&R Discovery + AI Platform), Enablement-Lead (Kiwi / CreateOS Labs), Gov-Lead (governance/roadmap), Analytics-Partner (analytics), Eng-3 (data eng), AJ (Kiwi), Michael Bale (Finance / value framework).
+- **People:** Sponsor (sponsor), VP-Data (data platform/ingestion/devops/security), VP-AI (A&R Discovery + AI Platform), Enablement-Lead (Kiwi / CreateOS Labs), Gov-Lead (governance/roadmap), Analytics-Partner (analytics), Eng-3 (data eng), the Kiwi contact, the Finance lead for the value framework. Names are in the people directory (`python -m daydag.people show <role>`).
 - **Atlassian space "D"** 404s are permissions, not bad IDs — corroborate via Slack.

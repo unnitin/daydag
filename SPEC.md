@@ -1,6 +1,6 @@
 # DayDAG — Spec v0.1
 
-> Owner: Nitin Srivastava · Drafted: Sep 4, 2026
+> Owner: Nitin · Drafted: Sep 4, 2026
 > Purpose: a persistent agent that plans Nitin's day, keeps itself current from meeting notes, tracks tasks and open loops, and pushes proactive updates through Slack — built on the sources and conventions he already uses (Obsidian weekly notes + Workstreams, Slack, Google Calendar, Gmail/Gemini notes, Notion, GitHub, Jira).
 
 ---
@@ -9,7 +9,7 @@
 
 The spec is grounded in three observed behavior sets rather than a generic assistant template.
 
-**How Nitin uses Slack.** His messages are dominated by five patterns: (1) status-verification questions to named people — "yea I thought there was a task to move everything to one compute engine on the board — did that not get done?", "please answer if we already merged all PRs and are ready to run end to end test for 10k samples"; (2) delegation with explicit owners and deadlines — "@DataEng-1 please take whatever rafael has implemented… then we should prioritize dev for it"; (3) pipeline-state coordination — "which bronze tables did you just refresh?", "Any chance you could trigger silver as well?"; (4) process probes — "team are you all colliding while testing on astro? is this worth self organizing and solving?"; and (5) scheduling/logistics — moving the Modeler-Owner conversation because CTO can't make Tuesday. The implication: the agent's core job is not a to-do list — it is tracking **open loops**: questions Nitin asked that are owed an answer, asks he assigned to named people, and running jobs he's watching.
+**How Nitin uses Slack.** His messages are dominated by five patterns: (1) status-verification questions to named people — "yea I thought there was a task to move everything to one compute engine on the board — did that not get done?", "please answer if we already merged all PRs and are ready to run end to end test for 10k samples"; (2) delegation with explicit owners and deadlines — "@DataEng-1 please take whatever Eng-2 has implemented… then we should prioritize dev for it"; (3) pipeline-state coordination — "which bronze tables did you just refresh?", "Any chance you could trigger silver as well?"; (4) process probes — "team are you all colliding while testing on astro? is this worth self organizing and solving?"; and (5) scheduling/logistics — moving the Modeler-Owner conversation because CTO can't make Tuesday. The implication: the agent's core job is not a to-do list — it is tracking **open loops**: questions Nitin asked that are owed an answer, asks he assigned to named people, and running jobs he's watching.
 
 **How Nitin tracks tasks in Obsidian.** The vault is already a working task system: `Weekly Notes/MMDD-MMDD.md` is the plan of record (Priorities triaged 🔴/🟡/🟢, every item a checkbox tagged `*(mine)*` / `*(tracking: name)*` and compound forms like `*(mine w/ Stakeholder-1 / VP-AI)*`; closed items ticked `- [x]` in place), `Fact Base/Workstreams.md` is the evergreen store (Status · Owner · Last moved · Open decision · Sources per block), `Meeting Prep/MMDD-MMDD.md` holds per-meeting talking points, and `Fact Base/Internal Links.md` holds canonical Slack channel IDs. The agent must **adopt this system, not replace it** — it reads and writes these files, using the existing `weekly-planning` skill's conventions (append/propose, never clobber; surface discrepancies, never silently resolve).
 
@@ -61,7 +61,7 @@ owed to you (2)
 
 shipping
 - R1.5 staging: DATA-812 → done, 4 PRs merged since tue incl. compute-engine consolidation [links]
-- DATA-790 (silver refresh) blocked 3d - blocker: waiting on ivan
+- DATA-790 (silver refresh) blocked 3d - blocker: waiting on otto
 - ⚠️ main red on createos-api since 11pm - nightly failed
 - 2 PRs waiting on your review, oldest 3d
 
@@ -85,7 +85,7 @@ Qualifying: 1:1s, steering/pod meetings, anything with Sponsor/CTO/external part
 
 **Pipeline per note:**
 1. Parse Summary / Decisions / Next steps (treat as evidence to verify, not gospel — existing house rule).
-2. Classify each item: **Nitin's commitment** ("I'll intro Daniel to CTO"), **ask he assigned** (owner + what + when), **decision made** (updates a Workstreams block's `Last moved` / `Open decision`), **new workstream**, or **noise**.
+2. Classify each item: **Nitin's commitment** ("I'll intro Marcel to CTO"), **ask he assigned** (owner + what + when), **decision made** (updates a Workstreams block's `Last moved` / `Open decision`), **new workstream**, or **noise**.
 3. Write back: commitments → checkbox under the weekly note's Priorities (correct tier, `*(mine)*` tag, ticked in place when closed); assigned asks → chase list with owner + clock; decisions → propose a Workstreams block diff (dry-run style: show the diff, apply on confirm or via append if write tools are limited — the vault connector currently supports create/append only, so block edits are proposed as paste-ready diffs).
 4. DM a one-line-per-item digest: "logged from the 2pm label call: 2 commitments (yours), 1 ask → Enablement-Lead, 1 decision → Workstreams#Artifacts. anything wrong, tell me and i'll fix."
 
@@ -120,15 +120,15 @@ monday
 - afternoon open - only real writing block this week
 
 the week
-- tue: ivan/ruwen sync - ⚠️ still on tue, ruwen flying. move it tonight?
+- tue: otto/rowan sync - ⚠️ still on tue, rowan flying. move it tonight?
 - wed: back-to-backs 10-1, clear after
-- thu: seth 1:1, sprint demo 2pm
+- thu: theo 1:1, sprint demo 2pm
 - fri: light - weekly-planning slot 4:30
 
 carrying in (3)
-- 🔴 note to Sponsor on data platform access - seth/jon feedback in, unsent since wed
+- 🔴 note to Sponsor on data platform access - theo/leo feedback in, unsent since wed
 - 🔴 R1.5 staging validation - still gated on gui sign-off
-- 🟡 compute-engine consolidation - asked jasmeet thu, clock hits tue
+- 🟡 compute-engine consolidation - asked marisol thu, clock hits tue
 
 watch
 - 10k e2e run - still going as of sun 5pm, no failures
@@ -151,7 +151,7 @@ Not a separate push. Three of Nitin's five observed Slack patterns are status-ve
 
 **Watch list.** `DayDAG/State.md` gains a `repos` block (repo · why watched · owner · linked workstream) and a `jira` block (project key · board/sprint · saved JQL · linked workstream). Editable by hand like the rest of the file; the agent proposes additions when a meeting note or Slack thread names a repo or ticket not on the list.
 
-**Ticket keys are the spine.** A Jira key (`ABC-123`) appears in Slack messages, PR titles/branches, and meeting-note next-steps. The pulse extracts keys from all three and joins on them, which is what lets "jasmeet said he'd do the compute-engine consolidation" resolve to a ticket, a PR, and a status without Nitin holding the mapping in his head. Where the data team's Jira ticket is the unit of work, it — not the PR — is what the `shipping` block reports.
+**Ticket keys are the spine.** A Jira key (`ABC-123`) appears in Slack messages, PR titles/branches, and meeting-note next-steps. The pulse extracts keys from all three and joins on them, which is what lets "marisol said he'd do the compute-engine consolidation" resolve to a ticket, a PR, and a status without Nitin holding the mapping in his head. Where the data team's Jira ticket is the unit of work, it — not the PR — is what the `shipping` block reports.
 
 **Computed each run (pre-brief 6:40am, pre-wrap 4:25pm, pre-week-ahead Sunday 5:25pm):**
 1. **Merges since last run** in watched repos — squashed to workstream level, not commit level ("R1.5 staging: 4 PRs merged incl. the compute-engine consolidation"), never a commit log.
@@ -162,7 +162,7 @@ Not a separate push. Three of Nitin's five observed Slack patterns are status-ve
 
 **Where it surfaces:** a `shipping` block in the morning brief (§3.1) *only when non-empty*; movement lines in the EOD wrap (§3.5); a five-day roll-up in the Sunday week-ahead (§3.6); and as Friday input to `weekly-progress-reporting`, which currently reconstructs this from memory and Slack.
 
-**Where it feeds the chaser (§3.4):** repo evidence is the strongest signal available for whether an assigned ask actually moved. If a chase-list loop names a repo/PR/ticket and that thing merged or closed, the loop is marked **evidence of movement** and surfaced for confirmation — "jasmeet's compute-engine ask: DATA-812 moved to done fri, PR #412 merged tue. close the loop?" It is **never** auto-closed. Per principle 5 the agent surfaces, it doesn't resolve; and merged ≠ what he asked for.
+**Where it feeds the chaser (§3.4):** repo evidence is the strongest signal available for whether an assigned ask actually moved. If a chase-list loop names a repo/PR/ticket and that thing merged or closed, the loop is marked **evidence of movement** and surfaced for confirmation — "marisol's compute-engine ask: DATA-812 moved to done fri, PR #412 merged tue. close the loop?" It is **never** auto-closed. Per principle 5 the agent surfaces, it doesn't resolve; and merged ≠ what he asked for.
 
 **Rules:**
 1. **State changes, not activity.** No commit counts, no lines-changed, nothing that reads as a productivity metric on named engineers. The unit is "did the thing he's tracking move."

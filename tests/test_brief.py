@@ -820,7 +820,7 @@ def test_the_brief_shows_each_priority_once_not_its_sub_bullets():
     note = (
         "## 🔴 High - needs my hand this week\n\n"
         "- [ ] **Databricks commit - close it or park it** *(mine)* - DocuSign reached Will\n"
-        "\t- [ ] decide with Seth's answer in hand\n"
+        "\t- [ ] decide with Theo's answer in hand\n"
         "\t- [x] Business Support waived\n"
         "\t- [ ] GCP funding mechanisms, Mon 1:00\n"
         "- [x] **Sponsor note** *(mine)* - sent\n"
@@ -1048,7 +1048,7 @@ def test_a_message_from_after_now_is_not_overnight():
         messages=[
             {
                 "ts": str(after_now),
-                "who": "Jonathan",
+                "who": "Leopold",
                 "text": "sent twelve hours after the brief ran",
                 "permalink": "https://slack/after",
             }

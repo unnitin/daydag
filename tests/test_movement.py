@@ -25,7 +25,7 @@ WEEKLY_NOTE = """# 0914-0918
 
 ## Priorities
 
-- [ ] 🔴 schedule the drokit walkthrough with the partner team *(mine)*
+- [ ] 🔴 schedule the acme walkthrough with the partner team *(mine)*
 - [ ] 🔴 compute consolidation plan *(tracking: VP-Data)*
 - [x] 🔴 send the pod update *(mine)*
 """
@@ -55,9 +55,7 @@ def test_open_items_come_from_both_the_chase_list_and_the_weekly_note():
 
     texts = [item.text for item in items]
     assert any("fruits metadata list" in t for t in texts), "the chase list was not read"
-    assert any("drokit walkthrough" in t for t in texts), (
-        "the weekly note's red items were not read"
-    )
+    assert any("acme walkthrough" in t for t in texts), "the weekly note's red items were not read"
 
 
 def test_an_item_he_has_already_closed_is_not_open():
@@ -81,13 +79,13 @@ def test_every_open_item_says_where_it_was_read_from():
 
 
 def test_a_meeting_that_now_exists_is_evidence_the_ask_was_scheduled():
-    """His own example, 2026-09-15: "drokit meeting w/ chris has been
+    """His own example, 2026-09-15: "acme meeting w/ blake has been
     scheduled, you can confirm that yourself through calendar"."""
     items = open_items(state="", note=WEEKLY_NOTE, note_path="p.md")
     calendar = [
         {
             "id": "abc",
-            "summary": "drokit walkthrough - partner team",
+            "summary": "acme walkthrough - partner team",
             "start": "2026-09-18T10:00:00-07:00",
             "htmlLink": "https://example.com/event/abc",
         }
@@ -95,10 +93,10 @@ def test_a_meeting_that_now_exists_is_evidence_the_ask_was_scheduled():
 
     found = detect(open_items=items, calendar=calendar, slack=[], gmail=[], now=NOW)
 
-    (row,) = [m for m in found if "drokit" in m.item.text]
+    (row,) = [m for m in found if "acme" in m.item.text]
     assert row.proposed == "scheduled"
     assert row.evidence[0].source == "calendar"
-    assert "drokit walkthrough - partner team" in row.evidence[0].quote
+    assert "acme walkthrough - partner team" in row.evidence[0].quote
 
 
 def test_a_message_naming_the_ask_is_evidence_it_moved():
@@ -175,7 +173,7 @@ def test_nothing_this_module_proposes_is_ever_a_closure():
     reply is not an answer."""
     items = open_items(state=STATE, note=WEEKLY_NOTE, note_path="p.md")
     slack = [_slack("fruits metadata list is done, closed, shipped, delivered")]
-    calendar = [{"id": "a", "summary": "drokit walkthrough", "start": "2026-09-18T10:00:00-07:00"}]
+    calendar = [{"id": "a", "summary": "acme walkthrough", "start": "2026-09-18T10:00:00-07:00"}]
 
     found = detect(open_items=items, calendar=calendar, slack=slack, gmail=[], now=NOW)
 
@@ -636,7 +634,7 @@ def test_the_new_sources_are_total_over_junk():
 
 
 def test_a_dm_cited_as_context_is_not_the_thread_the_ask_came_from():
-    """The sponsor's-question row cited VP-Data's DM in a sub-bullet ("seth's
+    """The sponsor's-question row cited VP-Data's DM in a sub-bullet ("theo's
     10:18 DM calls it the most urgent item"). He then wrote "sure will join
     back" in that DM, and the row was proposed `answered` - quoting a message
     about something else. A DM counts as the ask's own conversation only when
@@ -646,16 +644,16 @@ def test_a_dm_cited_as_context_is_not_the_thread_the_ask_came_from():
         "- **Sponsor → Owner-A · the youtube question**\n"
         "\t- coupling: the DM calls it urgent - "
         "https://x.slack.com/archives/DCONTEXT01/p1790356734421279\n"
-        "- **roland · does this time still work?** - "
+        "- **caspar · does this time still work?** - "
         "[slack](https://x.slack.com/archives/DASKED0001/p1789755681441679)\n"
     )
     items = open_items(state=state, note="", note_path="p.md")
     context = _sent_dm("sure will join back", channel="DCONTEXT01", name="DM with Other")
-    asked = _sent_dm("yes still works", channel="DASKED0001", name="DM with Roland R")
+    asked = _sent_dm("yes still works", channel="DASKED0001", name="DM with Caspar R")
 
     rows = detect(open_items=items, slack_sent=[context, asked], now=NOW)
 
-    assert [(row.item.text[:12], row.proposed) for row in rows] == [("**roland · d", "answered")]
+    assert [(row.item.text[:12], row.proposed) for row in rows] == [("**caspar · d", "answered")]
 
 
 def test_a_gmail_reaction_is_not_a_reply():
@@ -670,8 +668,8 @@ def test_a_gmail_reaction_is_not_a_reply():
 
 
 def test_the_names_of_the_people_in_the_room_are_not_what_it_was_about():
-    """Real false positive: "nitin+seth · establish a process..." matched a
-    DM on the two words `nitin` and `seth`. The owner field is who, not what,
+    """Real false positive: "nitin+theo · establish a process..." matched a
+    DM on the two words `nitin` and `theo`. The owner field is who, not what,
     and the conversation's participants are in every message in it."""
     state = "# State\n\n## Chase list\n\n- ownera+ownerb · establish a lineage process\n"
     items = open_items(state=state, note="", note_path="p.md")
@@ -681,10 +679,10 @@ def test_the_names_of_the_people_in_the_room_are_not_what_it_was_about():
 
 
 def test_mentions_and_urls_are_not_subject_matter():
-    """`<@U123|Seth Jensen>` and a pasted link's path segments are not words
+    """`<@U123|Theo Marlow>` and a pasted link's path segments are not words
     he wrote about the item."""
-    items = [OpenItem(key="k", text="claude artifact jensen review", owner="", source="s")]
-    msg = _slack("<@UPEER00001|Seth Jensen> see <https://claude.ai/artifact/abc|here>")
+    items = [OpenItem(key="k", text="claude artifact marlow review", owner="", source="s")]
+    msg = _slack("<@UPEER00001|Theo Marlow> see <https://claude.ai/artifact/abc|here>")
 
     assert detect(open_items=items, slack_sweep=[msg], now=NOW) == []
 

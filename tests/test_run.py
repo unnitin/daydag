@@ -1155,7 +1155,7 @@ def test_two_meetings_at_the_same_time_cluster_instead_of_crashing():
 
     at = datetime(2026, 9, 17, 18, 0, tzinfo=UTC)
     a = {"summary": "Finance x Data", "start": at, "end": at.replace(hour=19)}
-    b = {"summary": "Nitin x Tony", "start": at, "end": at.replace(hour=19)}
+    b = {"summary": "Nitin x Remy", "start": at, "end": at.replace(hour=19)}
 
     clusters = overlap_clusters([a, b])
 
@@ -1271,7 +1271,7 @@ def test_a_room_never_reaches_the_stored_attendees(identities):
                     _meeting(
                         "Finance x Data",
                         "principal@x.com",
-                        "yoni@x.com",
+                        "juno@x.com",
                         "c_1@resource.calendar.google.com",
                     )
                 ]
@@ -1280,7 +1280,7 @@ def test_a_room_never_reaches_the_stored_attendees(identities):
     )
     (row,) = ledger.open_rows()
 
-    assert row.attendees == ["principal@x.com", "yoni@x.com"]
+    assert row.attendees == ["principal@x.com", "juno@x.com"]
 
 
 def test_a_past_meeting_teaches_the_directory_and_a_future_one_does_not(identities, tmp_path):

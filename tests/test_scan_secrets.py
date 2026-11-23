@@ -58,3 +58,48 @@ def test_catches_truncated_ids_that_still_leak_a_prefix():
     """Docs abbreviate ids with an ellipsis; the prefix alone is enough to leak."""
     found = scan_text("VP Expectations `1zzQQ4xKmT7pLdW2…`")
     assert any(f[1] == "truncated google file id" for f in found), found
+
+
+# --------------------------------------------------------------------------
+# names: the list is config on this machine, never in the repo
+# --------------------------------------------------------------------------
+
+
+def _names_file(tmp_path, body):
+    path = tmp_path / "names.txt"
+    path.write_text(body, encoding="utf-8")
+    return path
+
+
+@pytest.mark.guardrail
+@pytest.mark.parametrize(
+    "text",
+    ["asked zaphod thu", "Zaphod's answer", "ZAPHOD / principal 1:1", "<@UPEER|Zaphod Quux>"],
+)
+def test_a_listed_name_is_caught_whatever_its_case(tmp_path, text):
+    """The repo is public and a colleague's name is not ours to publish. The
+    list of names cannot be in the repo either, so it is read from a file on
+    this machine."""
+    from scripts.scan_secrets import name_pattern
+
+    names = name_pattern(_names_file(tmp_path, "# colleagues\nzaphod\n\nquux\n"))
+    found = scan_text(text, names)
+    assert ("name", "zaphod") in {(label, value.lower()) for _, label, value in found}, found
+
+
+def test_a_name_is_a_whole_word_and_comments_are_not_names(tmp_path):
+    from scripts.scan_secrets import name_pattern
+
+    names = name_pattern(_names_file(tmp_path, "# colleagues\nzaphod\n"))
+    assert scan_text("the zaphodian option, for colleagues", names) == []
+
+
+def test_without_the_file_names_are_not_checked_and_ids_still_are(tmp_path):
+    """CI and a fresh clone have no list. That must not fail the scan, and it
+    must not switch the id checks off."""
+    from scripts.scan_secrets import name_pattern
+
+    assert name_pattern(tmp_path / "absent.txt") is None
+    assert name_pattern(_names_file(tmp_path, "# nothing listed yet\n")) is None
+    ((_, label, _),) = scan_text("zaphod said U0ZZ9XXQ4T2", None)
+    assert label == "slack user id"

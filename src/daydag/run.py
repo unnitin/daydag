@@ -1027,7 +1027,7 @@ def _calendar_windows(
         # works - Monday from a Friday, not an empty Saturday (#170).
         # `daydag.movement` reads today's, because a room that was asked for
         # and has now HAPPENED is the cheapest evidence there is that a loop
-        # moved - his own example for #134 was "drokit meeting w/ chris has
+        # moved - his own example for #134 was "acme meeting w/ blake has
         # been scheduled, you can confirm that yourself through calendar".
         # Today's window also carries the RSVPs the calls section labels
         # attendance from (#168). `_Payloads.calendar` filters by window, so the

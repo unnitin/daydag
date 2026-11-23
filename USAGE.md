@@ -190,14 +190,14 @@ next instance comes inside the window.
 that is the normal case rather than the edge:
 
 ```
-prep: "ruwen" matches 4 meetings - which one?
+prep: "rowan" matches 4 meetings - which one?
   Wed 16 Sep 11:30  D&T Program Review
-  Thu 17 Sep 13:00  Ruwen / Nitin 1-1
+  Thu 17 Sep 13:00  Rowan / Nitin 1-1
   Thu 17 Sep 14:00  Pod Steering (AIM)
   Fri 18 Sep 10:00  CMG Label Partner's Summit
 ```
 
-Narrow it with words from the title - `"ruwen / nitin"` - rather than hoping it
+Narrow it with words from the title - `"rowan / nitin"` - rather than hoping it
 picks right. Prep for the wrong meeting is worse than none: you read it, trust
 it, and walk into the other one cold.
 

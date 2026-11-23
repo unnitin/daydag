@@ -25,7 +25,7 @@ daydag:
   sensitivity: shared
 ---
 
-You are running Nitin Srivastava's weekly Data & AI workflow for Create Music Group (CMG). Run the steps IN ORDER. Today is the run date; "week ahead" = next Mon–Fri, "past week" = the Mon–Fri just ending.
+You are running Nitin's weekly Data & AI workflow for Create Music Group (CMG). Run the steps IN ORDER. Today is the run date; "week ahead" = next Mon–Fri, "past week" = the Mon–Fri just ending.
 
 SINGLE SOURCE OF TRUTH — this task is ORCHESTRATION ONLY (order + cross-cutting guardrails). All content mechanics — formats, the Priorities doc ID, audience, key people, Slack/Atlassian IDs, the Workstreams write-back — live in the two skills. Follow the skills; do NOT restate their mechanics here. If this file and a skill conflict on mechanics, the skill wins.
   - `weekly-progress-reporting` — Progress-tab structure, email house-style, threading + audience, Priorities doc ID, key facts/people.

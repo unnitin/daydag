@@ -414,9 +414,9 @@ def test_no_authored_text_carries_an_unrecognised_proper_noun(field):
 
 def test_the_proper_noun_scan_actually_catches_things():
     """A privacy check that cannot fail is worse than none - it reads as coverage."""
-    assert list(_unrecognised("The team asked Fernanda to check the contracts.")) == ["Fernanda"]
+    assert list(_unrecognised("The team asked Rosalind to check the contracts.")) == ["Rosalind"]
     assert list(_unrecognised("Move the pipelines onto Blacksmith runners.")) == ["Blacksmith"]
-    assert list(_unrecognised("Fernanda owns the contract mapping.")) == ["Fernanda"]
+    assert list(_unrecognised("Rosalind owns the contract mapping.")) == ["Rosalind"]
     assert list(_unrecognised("VP-Data will ask Eng-3 about it on Thursday.")) == []
 
 

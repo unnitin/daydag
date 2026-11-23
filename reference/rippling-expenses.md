@@ -199,7 +199,7 @@ approvals already reach him). Verified live on 2026-10-18:
 - **Confirmation:** `do-not-reply@ramp.com` replies in the forward's own
   thread. First forward 21:58:59Z, reply 21:59:12Z (13 s). Body: "Reimbursement
   created for this receipt / You have 1 draft reimbursement: / $11.98 at Uber /
-  Draft reimbursement · Nitin Srivastava · 10/05/26 / Review draft
+  Draft reimbursement · <his full name> · 10/05/26 / Review draft
   <https://app.ramp.com/s/reimbursements/<uuid>?email=...>". No category in the
   reply. `drafts_in` reads this shape (`_ramp_draft`).
 - **Nine Uber receipts forwarded** this way on 2026-10-18 ~15:00 PT, logged

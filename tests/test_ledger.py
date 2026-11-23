@@ -21,7 +21,7 @@ def ev(**kw):
         start=T,
         end=T + timedelta(hours=1),
         summary="Discovery sync",
-        attendees=["nitin", "jon"],
+        attendees=["nitin", "leo"],
         response_status="needsAction",
         kind="meeting",
     )
@@ -84,7 +84,7 @@ def test_attaches_a_note_arriving_in_the_window():
         Match(
             title="Discovery sync",
             arrived=T + timedelta(hours=2),
-            attendees=["nitin", "jon"],
+            attendees=["nitin", "leo"],
             source="gemini",
         )
     )
@@ -98,7 +98,7 @@ def test_note_outside_the_window_does_not_attach():
         Match(
             title="Discovery sync",
             arrived=T + timedelta(hours=20),
-            attendees=["nitin", "jon"],
+            attendees=["nitin", "leo"],
             source="gemini",
         )
     )
@@ -124,7 +124,7 @@ def test_ambiguous_match_surfaces_rather_than_guessing():
         Match(
             title="1:1 VP-Data",
             arrived=T + timedelta(hours=2, minutes=30),
-            attendees=["nitin", "seth"],
+            attendees=["nitin", "theo"],
             source="gemini",
         )
     )
@@ -217,7 +217,7 @@ def test_unparseable_subject_falls_back_instead_of_crashing():
         Match(
             title=title_from_gemini_subject("Fwd: something"),
             arrived=T + timedelta(hours=2),
-            attendees=["nitin", "jon"],
+            attendees=["nitin", "leo"],
             source="gemini",
         )
     )
@@ -234,7 +234,7 @@ def test_a_late_notion_note_still_attaches_to_the_open_row():
         Match(
             title="Discovery sync",
             arrived=T + timedelta(days=6),
-            attendees=["nitin", "jon"],
+            attendees=["nitin", "leo"],
             source="notion",
         )
     )
@@ -471,7 +471,7 @@ def test_a_declared_row_still_accepts_the_note_when_it_arrives():
         Match(
             title="Discovery sync",
             arrived=T + timedelta(hours=1, minutes=30),
-            attendees=["nitin", "jon"],
+            attendees=["nitin", "leo"],
             source="gemini",
         )
     )

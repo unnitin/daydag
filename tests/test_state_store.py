@@ -45,10 +45,10 @@ def test_state_is_added_to_each_loop_never_regenerated(folder):
     `tests/test_state_append.py` carries the rest of the behaviour - the round
     trip, the sub-bullets, the sections the writer never emits.
     """
-    folder.update_state(chase=[{"owner": "seth", "ask": "compute consolidation"}])
-    folder.update_state(chase=[{"owner": "jon", "ask": "wave 2 scope"}])
-    assert "seth" in folder.read_state(), "the first loop's item was overwritten"
-    assert "jon" in folder.read_state()
+    folder.update_state(chase=[{"owner": "theo", "ask": "compute consolidation"}])
+    folder.update_state(chase=[{"owner": "leo", "ask": "wave 2 scope"}])
+    assert "theo" in folder.read_state(), "the first loop's item was overwritten"
+    assert "leo" in folder.read_state()
 
 
 @pytest.mark.guardrail
@@ -152,7 +152,7 @@ def test_chase_items_returns_the_one_shape_both_sides_are_held_to():
         CHASED,
         sensitivity="normal",
         key="a",
-        owner="seth",
+        owner="theo",
         ask="compute consolidation",
         day=0,
     )
@@ -162,7 +162,7 @@ def test_chase_items_returns_the_one_shape_both_sides_are_held_to():
     assert isinstance(item, ChaseItem)
     # Both access styles work, so every existing caller - dict-style or
     # attribute-style - keeps working unchanged.
-    assert item["owner"] == "seth" == item.get("owner") == item.owner
+    assert item["owner"] == "theo" == item.get("owner") == item.owner
     assert item["ask"] == "compute consolidation"
     assert item.get("sensitivity") == "normal"
 
@@ -207,8 +207,8 @@ def test_a_private_chase_item_is_filtered_whether_it_arrives_as_a_dict_or_a_chas
     relies on."""
     folder.update_state(
         chase=[
-            ChaseItem(key="a", owner="seth", ask="growth area", sensitivity="private"),
-            {"owner": "seth", "ask": "compute consolidation"},
+            ChaseItem(key="a", owner="theo", ask="growth area", sensitivity="private"),
+            {"owner": "theo", "ask": "compute consolidation"},
         ]
     )
     written = folder.read_state()

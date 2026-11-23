@@ -80,7 +80,7 @@ and cannot be all of it, which is why the eval set counts the unmarked ones
 rather than asserting they do not exist.
 
 **2. The first-person signal does not exist.** §3.3 illustrates his own
-commitment as *"I'll intro Daniel to CTO"*. Gemini writes everything in the third
+commitment as *"I'll intro Marcel to CTO"*. Gemini writes everything in the third
 person; `I` and `I'll` appear nowhere in 22 notes. What separates his commitment
 from a description of his work is modality, not person — `[Principal] Send the
 recordings` against `Principal reworked the flow`. The set contains both.
